@@ -1,0 +1,32 @@
+version: '3.9'
+
+services:
+  chorus-web:
+    build:
+      # Contexte = racine du dépôt Chorus, pour que le Dockerfile puisse
+      # COPY Engine/ (Makefile.PL + lib/) et installer les modules Chorus::*
+      # nativement via perl Makefile.PL && make && make install.
+      context: ..
+      dockerfile: chorus-web/Dockerfile
+    ports:
+      - "3000:3000"
+    environment:
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - ANTHROPIC_MODEL=${ANTHROPIC_MODEL:-claude-sonnet-5}
+      # Chemin vu DEPUIS LE CONTENEUR (correspond au point de montage du volume ci-dessous),
+      # jamais le chemin hôte — sinon chorus.js/run.pl cherchent un répertoire inexistant.
+      - CHORUS_HOME=/chorus
+      # Racine des sandboxes — distincte de CHORUS_HOME pour pouvoir monter tout
+      # le dépôt. Pointe ici sur $CHORUS/sandboxes/cyber-sec (chemin hôte
+      # /home/civ/Documents/DEV/Chorus/sandboxes/cyber-sec, vu depuis le
+      # conteneur via le volume ${CHORUS_HOME}:/chorus ci-dessous).
+      - SANDBOXES=${SANDBOXES:-/chorus/Engine/sandboxes}
+      # Plus de PERL5LIB : les modules Chorus::* sont installés nativement
+      # dans l'image via Makefile.PL/make install (voir Dockerfile).
+      - PORT=3000
+    volumes:
+      # Monter tout le dépôt Chorus existant en lecture/écriture
+      # (run.pl écrit les rapports dans Engine/sandboxes/*/workspace/)
+      - ${CHORUS_HOME}:/chorus
+      # chorus-web.html est désormais copié dans l'image (voir Dockerfile) — plus de montage ici.
+    restart: unless-stopped

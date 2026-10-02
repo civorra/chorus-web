@@ -1,0 +1,17 @@
+# Dépendances Node (installées via npm install / dans l'image Docker)
+node_modules/
+
+# Secrets — ne jamais versionner la clé API réelle
+.env
+.env.local
+
+# Fichiers temporaires éditeur (Emacs backups, lock files & auto-save)
+*~
+.#*
+\#*\#
+
+# Logs
+*.log
+
+# Uploads temporaires (si générés localement hors /tmp)
+.chorus-uploads/
