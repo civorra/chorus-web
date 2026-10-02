@@ -423,11 +423,27 @@ input, select, textarea { font-family: inherit; }
   padding: 16px; backdrop-filter: blur(4px);
 }
 #corpus-modal-overlay[hidden] { display: none !important; }
+/* Sandbox corpus modal — même famille visuelle que #corpus-modal-overlay mais
+   réutilisée pour un panneau plus riche (5 onglets) nécessitant davantage de
+   largeur/hauteur ; cf. tailles inline sur .corpus-modal dans ce conteneur.
+   ⚠️ Avant ce correctif, #sb-corpus-overlay n'avait AUCUNE règle de
+   positionnement — le panneau s'affichait hors flux, mal centré et sans
+   exploiter l'espace disponible. */
+#sb-corpus-overlay {
+  position: fixed; inset: 0; z-index: 115;
+  background: rgba(5,10,20,.8);
+  display: flex; align-items: center; justify-content: center;
+  padding: 16px; backdrop-filter: blur(4px);
+}
+#sb-corpus-overlay[hidden] { display: none !important; }
 .corpus-modal {
   background: var(--bg-surface); border: 1px solid var(--border); border-radius: 12px;
   width: 100%; max-width: 700px; max-height: 82vh; display: flex; flex-direction: column;
   box-shadow: 0 24px 64px rgba(0,0,0,.5);
 }
+.sbc-agents-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; }
+.sbc-agent-card { border: 1px solid var(--border); border-radius: 8px; padding: 12px 14px; background: var(--bg-elevated); }
+.sbc-ov-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 16px; }
 .cm-header { display: flex; align-items: flex-start; gap: 10px; padding: 16px 20px 14px; border-bottom: 1px solid var(--border); }
 .cm-title { font-size: 14px; font-weight: 600; flex: 1; }
 .cm-sub { font-size: 11px; color: var(--text-muted); margin-top: 3px; font-family: 'JetBrains Mono', monospace; }
@@ -1582,7 +1598,7 @@ input, select, textarea { font-family: inherit; }
 
 <!-- Sandbox Corpus modal -->
 <div id="sb-corpus-overlay" hidden onclick="if(event.target===this)closeSandboxCorpus()">
-  <div class="corpus-modal" style="max-width:820px">
+  <div class="corpus-modal" style="max-width:min(1180px,94vw);width:94vw;max-height:88vh">
     <div class="cm-header">
       <div style="flex:1;min-width:0">
         <div class="cm-title" id="sbc-title">Corpus — Sandbox</div>
@@ -1594,14 +1610,23 @@ input, select, textarea { font-family: inherit; }
     <div class="cm-stats" id="sbc-stats"></div>
     <!-- Tabs internes -->
     <div style="display:flex;gap:0;border-bottom:1px solid var(--border);padding:0 20px;flex-shrink:0">
-      <button class="rv-filter-btn active" id="sbc-tab-corpus" onclick="switchSbcTab('corpus')" style="border-radius:0;border:none;border-bottom:2px solid var(--accent);padding:8px 16px">Corpus</button>
+      <button class="rv-filter-btn active" id="sbc-tab-overview" onclick="switchSbcTab('overview')" style="border-radius:0;border:none;border-bottom:2px solid var(--accent);padding:8px 16px">Vue d'ensemble</button>
+      <button class="rv-filter-btn" id="sbc-tab-corpus" onclick="switchSbcTab('corpus')" style="border-radius:0;border:none;border-bottom:2px solid transparent;padding:8px 16px">Corpus</button>
+      <button class="rv-filter-btn" id="sbc-tab-agents" onclick="switchSbcTab('agents')" style="border-radius:0;border:none;border-bottom:2px solid transparent;padding:8px 16px">Agents</button>
       <button class="rv-filter-btn" id="sbc-tab-frames" onclick="switchSbcTab('frames')" style="border-radius:0;border:none;border-bottom:2px solid transparent;padding:8px 16px">Pipeline &amp; KB</button>
       <button class="rv-filter-btn" id="sbc-tab-thesaurus" onclick="switchSbcTab('thesaurus')" style="border-radius:0;border:none;border-bottom:2px solid transparent;padding:8px 16px">Thesaurus</button>
-      <button class="rv-filter-btn" id="sbc-tab-entities" onclick="switchSbcTab('entities')" style="border-radius:0;border:none;border-bottom:2px solid transparent;padding:8px 16px">Entities</button>
+    </div>
+    <!-- Panel: Vue d'ensemble (synthèse structurelle README.org + stats pipeline) -->
+    <div id="sbc-panel-overview" style="flex:1;overflow-y:auto;padding:16px 20px">
+      <div id="sbc-overview-content"></div>
     </div>
     <!-- Panel: Corpus (fichiers sources + mapping agents, agent/chorus/index.org) -->
-    <div id="sbc-panel-corpus" style="flex:1;overflow-y:auto;padding:16px 20px">
+    <div id="sbc-panel-corpus" style="flex:1;overflow-y:auto;padding:16px 20px;display:none">
       <div id="sbc-corpus-list"></div>
+    </div>
+    <!-- Panel: Agents (vue légère — une carte par agent) -->
+    <div id="sbc-panel-agents" style="flex:1;overflow-y:auto;padding:16px 20px;display:none">
+      <div id="sbc-agents-list" class="sbc-agents-grid"></div>
     </div>
     <!-- Panel: Pipeline & KB (domaine, Frame catalogue, Rule catalogue par agent) -->
     <div id="sbc-panel-frames" style="flex:1;overflow-y:auto;padding:16px 20px;display:none">
@@ -1610,10 +1635,6 @@ input, select, textarea { font-family: inherit; }
     <!-- Panel: Thesaurus -->
     <div id="sbc-panel-thesaurus" style="flex:1;overflow-y:auto;padding:16px 20px;display:none">
       <div id="sbc-thesaurus-wrap"></div>
-    </div>
-    <!-- Panel: Contextes -->
-    <div id="sbc-panel-entities" style="flex:1;overflow-y:auto;padding:16px 20px;display:none">
-      <div id="sbc-entities-list"></div>
     </div>
     <div style="padding:10px 20px;border-top:1px solid var(--border);display:flex;justify-content:flex-end;flex-shrink:0">
       <button class="btn btn-ghost btn-sm" onclick="closeSandboxCorpus()">Fermer</button>
@@ -4293,9 +4314,11 @@ async function openSandboxCorpus() {
   document.getElementById('sbc-title').textContent = `Corpus — ${sb.name}`;
   document.getElementById('sbc-subtitle').textContent = `${sb.standard} · ${sb.desc}`;
   document.getElementById('sbc-stats').innerHTML = '';
+  document.getElementById('sbc-overview-content').innerHTML = 'Chargement…';
   document.getElementById('sbc-corpus-list').innerHTML = 'Chargement…';
+  document.getElementById('sbc-agents-list').innerHTML = 'Chargement…';
   document.getElementById('sbc-frames-list').innerHTML = 'Chargement…';
-  switchSbcTab('corpus');
+  switchSbcTab('overview');
   document.getElementById('sb-corpus-overlay').hidden = false;
 
   let data = null;
@@ -4307,11 +4330,17 @@ async function openSandboxCorpus() {
 
   const pipeline          = data?.pipeline || [];
   const integratedCorpus  = data?.integratedCorpus || [];
-  const corpusFiles       = data?.corpusFiles || [];
+  const corpusFilesAll    = data?.corpusFiles || [];
+  const corpusFiles       = corpusFilesAll.filter(f => !f.isPreSplit);
+  const corpusPreSplit    = corpusFilesAll.filter(f => f.isPreSplit);
+  const readme            = data?.readme || null;
+  const thesaurus         = data?.thesaurus || [];
   const totalFrames       = pipeline.reduce((s, a) => s + (a.frames?.length || 0), 0);
   const totalRules        = pipeline.reduce((s, a) => s + (a.ruleFileCount || 0), 0);
 
-  // Stats bar
+  // Stats bar — le compteur "Fichiers corpus" ne retient que les documents
+  // sources réels (hors fichiers pré-split Phase 2, qui sont des extraits
+  // dérivés de ces mêmes documents, pas des éléments de corpus indépendants).
   document.getElementById('sbc-stats').innerHTML = `
     <div class="cm-stat"><div class="cm-stat-val">${pipeline.length}</div><div class="cm-stat-key">Agents</div></div>
     <div class="cm-stat"><div class="cm-stat-val">${totalFrames}</div><div class="cm-stat-key">Frames</div></div>
@@ -4321,31 +4350,99 @@ async function openSandboxCorpus() {
     <div class="cm-stat"><div class="cm-stat-val">${imported}/${projects.length}</div><div class="cm-stat-key">Projets importés</div></div>
   `;
 
+  // ── Panel Vue d'ensemble : synthèse structurelle README.org (pas de LLM) ─
+  if (!readme && !pipeline.length) {
+    document.getElementById('sbc-overview-content').innerHTML =
+      '<div style="color:var(--text-muted);font-size:13px;padding:20px 0">Aucune KB trouvée pour ce sandbox (README.org et agent/chorus/index.org absents).</div>';
+  } else {
+    const noteHtml = readme?.statusNote
+      ? `<div style="font-size:12px;color:var(--text-secondary);line-height:1.6;white-space:pre-line">${readme.statusNote}</div>`
+      : '<div style="color:var(--text-muted);font-size:12px">Pas de section "* Status" dans README.org.</div>';
+    document.getElementById('sbc-overview-content').innerHTML = `
+      <div style="font-size:10px;color:var(--text-muted);background:var(--bg-elevated);border:1px solid var(--border);border-radius:6px;padding:6px 10px;margin-bottom:14px">
+        ℹ️ Synthèse structurelle générée directement depuis README.org et agent/chorus/index.org (parsing, pas de LLM).
+        Pour une synthèse sémantique plus riche, une skill dédiée serait nécessaire (non disponible ici).
+      </div>
+      <div class="sbc-ov-grid">
+        <div>
+          <div style="font-size:10px;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:.1em;margin-bottom:8px">Identité du sandbox</div>
+          <div style="font-size:13px;font-weight:600;color:var(--text-primary);margin-bottom:4px">${readme?.title || sb.name}</div>
+          <div style="font-size:11px;color:var(--text-muted)">Statut : <strong style="color:var(--text-secondary)">${readme?.status || '?'}</strong> · Date : ${readme?.date || '?'}</div>
+        </div>
+        <div>
+          <div style="font-size:10px;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:.1em;margin-bottom:8px">Pipeline</div>
+          ${pipeline.length
+            ? `<div style="font-size:12px;color:var(--text-secondary)">${pipeline.map(a=>`<div>#${a.pos} <strong>${a.slug}</strong> — ${a.status||''}</div>`).join('')}</div>`
+            : '<div style="color:var(--text-muted);font-size:12px">Aucun agent.</div>'}
+        </div>
+      </div>
+      <div style="margin-top:16px">
+        <div style="font-size:10px;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:.1em;margin-bottom:8px">Dernier statut (README.org § Status)</div>
+        ${noteHtml}
+      </div>
+    `;
+  }
+
   // ── Panel Corpus : fichiers sources + mapping vers les agents ──────────
   if (!data) {
     document.getElementById('sbc-corpus-list').innerHTML =
       '<div style="color:var(--text-muted);font-size:13px;padding:20px 0">Backend indisponible ou aucune KB trouvée (agent/chorus/index.org absent) pour ce sandbox.</div>';
-  } else if (!corpusFiles.length) {
+  } else if (!corpusFilesAll.length) {
     document.getElementById('sbc-corpus-list').innerHTML =
       '<div style="color:var(--text-muted);font-size:13px;padding:20px 0">Aucun fichier dans corpus/.</div>';
   } else {
     const fileToAgents = {};
     integratedCorpus.forEach(r => { fileToAgents[(r.file || '').replace(/^corpus\//, '')] = r.agents; });
+    const renderFileRow = f => {
+      const agents = fileToAgents[f.name];
+      const sizeKb = f.size != null ? `${Math.round(f.size / 1024)} Ko` : '?';
+      const meta = [f.date, f.version].filter(Boolean);
+      return `
+        <div class="corpus-node" style="margin-bottom:4px;align-items:flex-start">
+          <span class="cn-key" style="min-width:280px;max-width:280px;white-space:normal;word-break:break-all">${f.name}</span>
+          <span style="font-size:10px;color:var(--text-muted);min-width:55px;flex-shrink:0">${sizeKb}</span>
+          <span style="flex:1;font-size:11px;color:${agents ? 'var(--text-secondary)' : 'var(--text-muted)'}">
+            ${f.source ? `<div>${f.source}</div>` : ''}
+            ${agents ? `<div style="color:var(--text-muted);margin-top:1px">→ ${agents}</div>` : '<div style="color:var(--text-muted);margin-top:1px">(non référencé dans index.org)</div>'}
+            ${meta.length ? `<div style="color:var(--accent);margin-top:1px;font-size:10px">${meta.map(m=>`📅 ${m}`).join(' · ')}</div>` : ''}
+          </span>
+        </div>`;
+    };
     document.getElementById('sbc-corpus-list').innerHTML = `
       <div style="font-size:10px;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:.1em;margin-bottom:10px">
-        Fichiers corpus (${corpusFiles.length}) — mapping vers les agents (agent/chorus/index.org § Integrated corpus)
+        Documents sources (${corpusFiles.length}) — mapping vers les agents, version/date (README.org, CORPUS-DIRECTIVES.md)
       </div>
-      ${corpusFiles.map(f => {
-        const agents = fileToAgents[f.name];
-        const sizeKb = f.size != null ? `${Math.round(f.size / 1024)} Ko` : '?';
-        return `
-          <div class="corpus-node" style="margin-bottom:4px;align-items:flex-start">
-            <span class="cn-key" style="min-width:300px;max-width:300px;white-space:normal;word-break:break-all">${f.name}</span>
-            <span style="font-size:10px;color:var(--text-muted);min-width:55px;flex-shrink:0">${sizeKb}</span>
-            <span style="flex:1;font-size:11px;color:${agents ? 'var(--text-secondary)' : 'var(--text-muted)'}">${agents || '(non référencé dans index.org)'}</span>
-          </div>`;
-      }).join('')}
+      ${corpusFiles.length ? corpusFiles.map(renderFileRow).join('') : '<div style="color:var(--text-muted);font-size:12px">Aucun document source identifié.</div>'}
+      ${corpusPreSplit.length ? `
+        <details style="margin-top:16px">
+          <summary style="cursor:pointer;font-size:10px;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:.1em">
+            Fichiers dérivés — pré-split agent, Phase 2 (${corpusPreSplit.length}, non comptés comme éléments de corpus)
+          </summary>
+          <div style="margin-top:8px">${corpusPreSplit.map(renderFileRow).join('')}</div>
+        </details>` : ''}
     `;
+  }
+
+  // ── Panel Agents : vue légère, une carte par agent ──────────────────────
+  if (!data || !pipeline.length) {
+    document.getElementById('sbc-agents-list').innerHTML =
+      '<div style="color:var(--text-muted);font-size:13px;padding:20px 0">Aucun agent/pipeline trouvé pour ce sandbox (agent/chorus/index.org absent ou vide).</div>';
+  } else {
+    document.getElementById('sbc-agents-list').innerHTML = pipeline.map(ag => `
+      <div class="sbc-agent-card">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+          <span class="mono" style="font-size:11px;color:var(--accent);font-weight:700">#${ag.pos}</span>
+          <span style="font-size:13px;font-weight:600;color:var(--text-primary)">${ag.slug}</span>
+        </div>
+        <div class="mono" style="font-size:10px;color:var(--text-muted);margin-bottom:6px">${ag.module}</div>
+        <div style="font-size:11px;color:var(--text-secondary);margin-bottom:4px">${ag.status || ''}</div>
+        ${ag.corpusFile ? `<div style="font-size:10px;color:var(--text-muted);font-family:'JetBrains Mono',monospace;margin-bottom:6px">📄 ${ag.corpusFile}</div>` : ''}
+        <div style="display:flex;gap:10px;font-size:11px;color:var(--text-secondary)">
+          <span>🧩 ${(ag.frames||[]).length} frame${(ag.frames||[]).length!==1?'s':''}</span>
+          <span>📜 ${ag.ruleFileCount} règle${ag.ruleFileCount!==1?'s':''}</span>
+        </div>
+      </div>
+    `).join('');
   }
 
   // ── Panel Pipeline & KB : par agent — domaine, Frame catalogue, règles ──
@@ -4385,29 +4482,30 @@ async function openSandboxCorpus() {
     `).join('');
   }
 
-  // ── Panel Thesaurus — pas encore reconnecté aux vraies données ──────────
-  document.getElementById('sbc-thesaurus-wrap').innerHTML =
-    '<div style="color:var(--text-muted);font-size:13px;padding:20px 0">Thésaurus — pas encore branché sur les vraies données (agent/thesaurus/*.org).</div>';
-
-  // ── Panel Entities (déjà réel, inchangé) ────────────────────────────────
-  if (entities.length) {
-    document.getElementById('sbc-entities-list').innerHTML = entities.map(ctx => {
-      const entityProjects = projects.filter(p => p.entity === ctx.id);
-      return `
-        <div style="padding:12px 16px;background:var(--bg-elevated);border:1px solid var(--border);border-radius:8px;margin-bottom:10px">
-          <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">
-            <span style="font-size:13px;font-weight:600;color:var(--text-primary)">${ctx.label || ctx.id}</span>
-            <span class="mono" style="font-size:10px;color:var(--text-muted)">${ctx.id}</span>
-            <span style="flex:1"></span>
-            <span style="font-size:11px;color:var(--text-muted)">${entityProjects.length} projet${entityProjects.length!==1?'s':''}</span>
-          </div>
-          ${ctx.path ? `<div style="font-size:11px;color:var(--text-muted);font-family:'JetBrains Mono',monospace">${ctx.path}</div>` : ''}
-          ${entityProjects.length ? `<div style="margin-top:8px;display:flex;flex-wrap:wrap;gap:4px">${entityProjects.map(p => `<span style="font-size:11px;padding:2px 8px;background:var(--accent-dim);color:var(--accent);border-radius:4px;font-family:'JetBrains Mono',monospace">${p.id}</span>`).join('')}</div>` : ''}
-        </div>
-      `;
-    }).join('');
+  // ── Panel Thesaurus — connecté aux vraies données (agent/thesaurus/*.org) ─
+  if (!thesaurus.length) {
+    document.getElementById('sbc-thesaurus-wrap').innerHTML =
+      '<div style="color:var(--text-muted);font-size:13px;padding:20px 0">Aucun thésaurus trouvé pour ce sandbox (agent/thesaurus/*.org absent).</div>';
   } else {
-    document.getElementById('sbc-entities-list').innerHTML = '<div style="color:var(--text-muted);font-size:13px;padding:20px 0">Aucune entity définie pour ce sandbox.</div>';
+    document.getElementById('sbc-thesaurus-wrap').innerHTML = thesaurus.map(sh => `
+      <div style="border:1px solid var(--border);border-radius:8px;margin-bottom:14px;overflow:hidden">
+        <div style="background:var(--bg-elevated);padding:10px 14px;display:flex;align-items:center;gap:10px">
+          <span style="font-size:13px;font-weight:600;color:var(--text-primary)">Shard : ${sh.shard}</span>
+          <span style="flex:1"></span>
+          <span style="font-size:11px;color:var(--text-muted)">✅ ${sh.aliasesTypeElement.length + sh.aliasesSlotValues.length} aliases · ⚠️ ${sh.pending.length} pending · ⬜ ${sh.outOfScope.length} out-of-scope</span>
+        </div>
+        <div style="padding:12px 14px">
+          ${sh.pending.length ? `
+            <div style="font-size:11px;font-weight:700;color:var(--warn);text-transform:uppercase;letter-spacing:.08em;margin-bottom:6px">⚠️ Pending — à confirmer (${sh.pending.length})</div>
+            ${sh.pending.map(p => `<div style="font-size:12px;color:var(--text-secondary);padding:3px 0;border-top:1px solid var(--border-light)"><strong>${p.term}</strong> — ${p.proposed||''}</div>`).join('')}
+          ` : '<div style="font-size:12px;color:var(--text-muted)">Aucun terme en attente.</div>'}
+          ${sh.outOfScope.length ? `
+            <div style="font-size:11px;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:.08em;margin:12px 0 6px">⬜ Out-of-scope (${sh.outOfScope.length})</div>
+            ${sh.outOfScope.map(o => `<div style="font-size:12px;color:var(--text-muted);padding:3px 0;border-top:1px solid var(--border-light)"><strong>${o.term}</strong> — ${o.reason||''}</div>`).join('')}
+          ` : ''}
+        </div>
+      </div>
+    `).join('');
   }
 }
 
@@ -4417,7 +4515,7 @@ function closeSandboxCorpus() {
 
 function switchSbcTab(tab) {
   _sbcCurrentTab = tab;
-  ['corpus', 'frames', 'thesaurus', 'entities'].forEach(t => {
+  ['overview', 'corpus', 'agents', 'frames', 'thesaurus'].forEach(t => {
     const btn   = document.getElementById(`sbc-tab-${t}`);
     const panel = document.getElementById(`sbc-panel-${t}`);
     const active = t === tab;

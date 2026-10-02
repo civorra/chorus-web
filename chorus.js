@@ -154,15 +154,122 @@ function extractRuleCatalogue(content) {
 // de rules/<slug>/ (donnée filesystem, toujours à jour même si l'org n'a
 // pas encore été relu).
 
+// Détection "fichier pré-split" — un fichier corpus/NNN-*.md peut être soit un
+// document source réel (PDF/Word normatif extrait), soit un fichier généré par
+// chorus-corpus-scoping Phase 2 (un extrait mono-agent découpé depuis un
+// document source déjà compté par ailleurs). README.org § Corpus documente
+// explicitement l'origine de chaque fichier dans sa colonne "Source" — c'est
+// la seule source fiable pour distinguer les deux (l'index.org "Integrated
+// corpus" ne fait pas cette distinction). On considère qu'un fichier est
+// dérivé/pré-split si son texte de provenance correspond à ces motifs.
+const PRESPLIT_SOURCE_RE = /pr[ée]-?split|phase\s*2|agr[ée]g[ée]e?s?/i;
+
+// Extensions non-documentaires à ignorer dans le listing corpus (logs d'OCR,
+// bytecode Python de scripts d'extraction, etc. — jamais des "éléments du
+// corpus" au sens normatif).
+const NON_DOC_EXT_RE = /\.(log|pyc|pyo|tmp|bak|swp)$/i;
+
+// ── README.org — synthèse structurelle (titre, statut, table Corpus) ──────
+//
+// README.org (quand présent) contient une table "* Corpus" bien plus riche
+// que index.org § Integrated corpus : une colonne "Source" (provenance du
+// document, ou mention explicite "Pré-split agent ... (Phase 2)" pour les
+// fichiers dérivés) et une colonne "Date" (date du document source). On
+// l'utilise comme source d'autorité pour ces deux informations.
+function parseSandboxReadme(sbPath) {
+  const content = readFileSafe(path.join(sbPath, 'README.org'));
+  if (!content) return null;
+
+  const title  = (content.match(/#\+TITLE:\s*(.+)/) || [])[1] || null;
+  const date   = (content.match(/#\+DATE:\s*(.+)/) || [])[1] || null;
+  const status = (content.match(/#\+STATUS:\s*(.+)/) || [])[1] || null;
+
+  const corpusRows = extractOrgTable(content, /^\*\s+Corpus/i);
+  const corpusTable = corpusRows.slice(1)
+    .filter(r => r.length >= 3 && /^\d+$/.test(r[0]))
+    .map(r => ({
+      num:        r[0],
+      file:       (r[1] || '').replace(/^corpus\//, ''),
+      source:     r[2] || '',
+      date:       r[3] || null,
+      isPreSplit: PRESPLIT_SOURCE_RE.test(r[2] || ''),
+    }));
+
+  // Note récapitulative pour la "Vue d'ensemble" — section "* Status" si
+  // présente (historique d'enrichissement), sinon repli sur "* Session
+  // notes" (présente dans tous les README.org générés par chorus-feed Mode A).
+  const statusNote =
+    extractOrgSection(content, /^\*\s+Status/i, 600) ||
+    extractOrgSection(content, /^\*\s+Session notes/i, 600);
+
+  return { title, date, status, statusNote, corpusTable };
+}
+
+// ── CORPUS-DIRECTIVES.md — version pinning par fichier ─────────────────────
+//
+// Fichier Markdown (pas org) généré/maintenu par chorus-corpus-directives —
+// contient une table "Sources" avec une colonne "Version pinned" en texte
+// libre. Le nom de fichier corpus/*.md est cité entre backticks dans la
+// colonne "Source" — on l'extrait par regex pour construire un mapping
+// fichier → version, sans dépendre d'un format de table strict.
+function parseCorpusDirectivesVersions(sbPath) {
+  const content = readFileSafe(path.join(sbPath, 'CORPUS-DIRECTIVES.md'));
+  if (!content) return {};
+  const versions = {};
+  const lines = content.split('\n').filter(l => l.trim().startsWith('|'));
+  for (const line of lines) {
+    const cells = line.split('|').slice(1, -1).map(c => c.trim());
+    if (cells.length < 3) continue;
+    const fileMatch = cells[0].match(/`corpus\/([^`]+)`/);
+    if (!fileMatch) continue;
+    const version = cells[2];
+    if (version && !/^-+$/.test(version)) versions[fileMatch[1]] = version;
+  }
+  return versions;
+}
+
+// ── Thésaurus — tous les shards (agent/thesaurus/*.org) ────────────────────
+//
+// Shardé par Scope (global.org + un fichier par client éventuel, cf.
+// chorus-import-project.md § Thesaurus storage layout). Chaque shard
+// contient 4 tables fixes : Aliases type_element, Aliases slot values,
+// Pending, Out-of-scope.
+function scanSandboxThesaurus(sbPath) {
+  const thesDir = path.join(sbPath, 'agent', 'thesaurus');
+  let files = [];
+  try {
+    files = fs.readdirSync(thesDir, { withFileTypes: true })
+      .filter(e => e.isFile() && e.name.endsWith('.org'))
+      .map(e => e.name);
+  } catch { return []; }
+
+  return files.map(fname => {
+    const content = readFileSafe(path.join(thesDir, fname));
+    const shard = fname.replace(/\.org$/, '');
+    if (!content) return { shard, aliasesTypeElement: [], aliasesSlotValues: [], pending: [], outOfScope: [] };
+
+    const aliasesTypeElement = extractOrgTable(content, /^\*\s+Aliases\s*(—|-)\s*type_element/i)
+      .slice(1).map(r => ({ term: r[0], target: r[1], confidence: r[2] }));
+    const aliasesSlotValues = extractOrgTable(content, /^\*\s+Aliases\s*(—|-)\s*slot values/i)
+      .slice(1).map(r => ({ term: r[0], slot: r[1], value: r[2], confidence: r[3] }));
+    const pending = extractOrgTable(content, /^\*\s+Pending/i)
+      .slice(1).map(r => ({ term: r[0], proposed: r[1], flag: r[2] }));
+    const outOfScope = extractOrgTable(content, /^\*\s+Out-of-scope/i)
+      .slice(1).map(r => ({ term: r[0], reason: r[1] }));
+
+    return { shard, aliasesTypeElement, aliasesSlotValues, pending, outOfScope };
+  });
+}
+
 function scanSandboxCorpus(sbId) {
   const sbPath = path.join(SANDBOXES_DIR(), sbId);
 
-  // Fichiers corpus réels sur le filesystem
+  // Fichiers corpus réels sur le filesystem (hors artefacts non-documentaires)
   const corpusDir = path.join(sbPath, 'corpus');
   let corpusFiles = [];
   try {
     corpusFiles = fs.readdirSync(corpusDir, { withFileTypes: true })
-      .filter(e => e.isFile())
+      .filter(e => e.isFile() && !NON_DOC_EXT_RE.test(e.name) && !e.name.startsWith('.'))
       .map(e => {
         let size = null;
         try { size = fs.statSync(path.join(corpusDir, e.name)).size; } catch {}
@@ -170,9 +277,29 @@ function scanSandboxCorpus(sbId) {
       });
   } catch {}
 
+  const readme   = parseSandboxReadme(sbPath);
+  const versions = parseCorpusDirectivesVersions(sbPath);
+  const readmeByFile = {};
+  if (readme) readme.corpusTable.forEach(r => { readmeByFile[r.file] = r; });
+
+  // Enrichissement par fichier : source/date/isPreSplit (README.org) +
+  // version (CORPUS-DIRECTIVES.md).
+  corpusFiles = corpusFiles.map(f => {
+    const r = readmeByFile[f.name];
+    return {
+      ...f,
+      source:     r ? r.source : null,
+      date:       r ? r.date : null,
+      isPreSplit: r ? r.isPreSplit : false,
+      version:    versions[f.name] || null,
+    };
+  });
+
+  const thesaurus = scanSandboxThesaurus(sbPath);
+
   const indexContent = readFileSafe(path.join(sbPath, 'agent', 'chorus', 'index.org'));
   if (!indexContent) {
-    return { title: null, pipeline: [], integratedCorpus: [], corpusFiles };
+    return { title: null, pipeline: [], integratedCorpus: [], corpusFiles, readme, thesaurus };
   }
 
   const title = (indexContent.match(/#\+TITLE:\s*(.+)/) || [])[1] || sbId;
@@ -208,7 +335,7 @@ function scanSandboxCorpus(sbId) {
     }
   }
 
-  return { title, pipeline, integratedCorpus, corpusFiles };
+  return { title, pipeline, integratedCorpus, corpusFiles, readme, thesaurus };
 }
 
 // ── Parser compliance-report-*.md ────────────────────────────
