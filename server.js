@@ -224,9 +224,11 @@ app.post('/api/sandboxes/:sbId/entities/:entityId/projects/import',
 // Interface réelle de run.pl (généré par chorus-check à la racine du
 // sandbox — PAS dans CHORUS_HOME) :
 //   perl run.pl <fichier-project.json>      ← cwd = racine du sandbox ($Bin)
-// → écrit <sandbox>/reports/run-report-<timestamp>.json (JSON structuré,
-//   distinct de workspace/<entity>/reports/ qui contient les rapports
-//   chorus-import-project / chorus-check).
+// → écrit workspace/<entity>/reports/run-report-<timestamp>.json (JSON
+//   structuré, dans le même reports/ que les rapports chorus-import-project
+//   / chorus-check). On garde un fallback sur <sandbox>/reports/ pour les
+//   run-report générés par une version antérieure de run.pl (écriture à la
+//   racine du sandbox via $Bin, avant le fix dirname($fichier)).
 //
 // SSE events : log { line, level? } | done { reportFile, reportData } | error
 // ═════════════════════════════════════════════════════════════
@@ -272,28 +274,43 @@ app.post('/api/sandboxes/:sbId/entities/:entityId/projects/:projId/run', (req, r
   const args = ['run.pl', inputFile];
 
   spawnPerl(args, sbPath, res, () => {
-    // run.pl écrit son rapport JSON dans <sandbox>/reports/run-report-*.json
-    // SANS identifiant de projet dans le nom de fichier — le seul lien
-    // fiable est le champ interne `project_file` (chemin absolu passé en
-    // argument à run.pl, ici = inputFile). On ne peut donc PAS se contenter
-    // de prendre "le fichier le plus récent du dossier" : si un autre projet
-    // vient d'être lancé entre-temps, on retournerait le mauvais rapport.
-    const sbReportsDir = path.join(sbPath, 'reports');
+    // run.pl écrit son rapport JSON dans reports/ SANS identifiant de projet
+    // dans le nom de fichier — le seul lien fiable est le champ interne
+    // `project_file` (chemin absolu passé en argument à run.pl, ici =
+    // inputFile). On ne peut donc PAS se contenter de prendre "le fichier le
+    // plus récent du dossier" : si un autre projet vient d'être lancé
+    // entre-temps, on retournerait le mauvais rapport.
+    //
+    // Deux emplacements possibles : workspace/<entity>/reports/ (convention
+    // actuelle) et <sandbox>/reports/ (fallback legacy — anciennes versions
+    // de run.pl écrivant à la racine via $Bin).
+    const candidateDirs = [
+      path.join(entityPath, 'reports'),
+      path.join(sbPath, 'reports'),
+    ];
+
     let reportFile = null;
+    let reportDir  = null;
     let reportData = null;
-    try {
-      const files = fs.readdirSync(sbReportsDir)
-        .filter(f => f.startsWith('run-report-') && f.endsWith('.json'))
-        .sort(); // ordre croissant par timestamp (nom de fichier)
+
+    outer:
+    for (const dir of candidateDirs) {
+      let files = [];
+      try {
+        files = fs.readdirSync(dir)
+          .filter(f => f.startsWith('run-report-') && f.endsWith('.json'))
+          .sort(); // ordre croissant par timestamp (nom de fichier)
+      } catch { continue; }
 
       // On part de la fin (plus récent en premier) et on garde le premier
       // dont project_file correspond exactement au projet lancé ici.
       for (let i = files.length - 1; i >= 0; i--) {
         const f = files[i];
         try {
-          const json = JSON.parse(fs.readFileSync(path.join(sbReportsDir, f), 'utf8'));
+          const json = JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8'));
           if (json.project_file !== inputFile) continue;
           reportFile = f;
+          reportDir  = dir;
           reportData = {
             verdict:      json.pipeline_solved ? 'SOLVED' : 'FAILED',
             totalFrames:  json.n_total ?? 0,
@@ -303,13 +320,14 @@ app.post('/api/sandboxes/:sbId/entities/:entityId/projects/:projId/run', (req, r
             norm:         null,
             date:         (json.generated_at || '').slice(0, 10) || null,
           };
-          break;
+          break outer;
         } catch { /* fichier corrompu/illisible — on continue */ }
       }
-    } catch {}
+    }
 
     if (reportFile) {
-      sseSend(res, 'log', { line: `✓ Rapport généré : reports/${reportFile}` });
+      const relDir = path.relative(sbPath, reportDir) || '.';
+      sseSend(res, 'log', { line: `✓ Rapport généré : ${relDir}/${reportFile}` });
       sseSend(res, 'log', {
         line: `  Verdict : ${reportData.verdict} — ${reportData.conformes}/${reportData.totalFrames} CONFORMES`
       });
@@ -500,6 +518,30 @@ app.post('/api/sandboxes/:sbId/entities/:entityId/projects/:projId/chat', async 
 
   } catch (err) {
     res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+// ── Lecture du run-report structuré (JSON natif produit par run.pl) ──────
+//
+// Donne accès aux données réelles par élément (verdict, motif, _rule_trace)
+// pour affichage dans la vue de rapport frontend — remplace les données
+// simulées (generateMockRows) précédemment utilisées côté client.
+
+app.get('/api/sandboxes/:sbId/entities/:entityId/projects/:projId/run-report', (req, res) => {
+  const { sbId, projId } = req.params;
+  let sbPath;
+  try { sbPath = path.join(chorus.SANDBOXES_DIR(), sbId); }
+  catch (e) { return res.status(500).json({ ok: false, error: e.message }); }
+
+  try {
+    const index = chorus.buildRunReportIndex(sbPath);
+    const entry = index.get(`${projId}.json`);
+    if (!entry) {
+      return res.status(404).json({ ok: false, error: `Aucun run-report trouvé pour ${projId} — lancez run.pl d'abord` });
+    }
+    res.json({ ok: true, file: entry.file, data: entry.data });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
   }
 });
 

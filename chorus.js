@@ -119,36 +119,56 @@ function parseReport(content) {
   return result;
 }
 
-// ── Index des run-report-*.json (racine du sandbox) ───────────
+// ── Index des run-report-*.json ────────────────────────────────
 //
 // run.pl (quand il persiste un rapport — cf. sandboxes CyberSec) écrit
-// <sandbox>/reports/run-report-<timestamp>.json. Le NOM de fichier ne
+// reports/run-report-<timestamp>.json dans le dossier du projet traité, soit
+// workspace/<entity>/reports/ (convention actuelle). Le NOM de fichier ne
 // contient aucun identifiant de projet : le seul lien fiable est le champ
 // interne `project_file`, qui contient le chemin absolu passé en argument
 // à run.pl (= workspace/<entity>/<slug>.json). On indexe donc tous ces
 // fichiers une fois par scan de sandbox, par basename(project_file).
 //
+// On scanne à la fois :
+//   - <sandbox>/reports/                      (ancienne convention — avant
+//     le patch run.pl qui écrivait à la racine du sandbox via $Bin)
+//   - workspace/<entity>/reports/ pour chaque entity (convention actuelle)
+// afin de rester compatible avec les rapports déjà générés par d'anciennes
+// versions de run.pl sans rien perdre.
+//
 // Fichiers triés par nom (= par timestamp croissant) avant indexation afin
 // que la dernière écriture dans la Map soit toujours la plus récente pour
-// un même projet.
+// un même projet, même en cas de doublon entre les deux emplacements.
 
-function buildRunReportIndex(sbPath) {
-  const index = new Map(); // basename(project_file) → { file, data }
-  const dir = path.join(sbPath, 'reports');
+function indexRunReportsDir(dir, index) {
   let files = [];
   try {
     files = fs.readdirSync(dir)
       .filter(f => f.startsWith('run-report-') && f.endsWith('.json'))
       .sort();
-  } catch { return index; }
+  } catch { return; }
 
   for (const f of files) {
     try {
       const json = JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8'));
       if (!json.project_file) continue;
-      index.set(path.basename(json.project_file), { file: f, data: json });
+      index.set(path.basename(json.project_file), { file: f, dir, data: json });
     } catch { /* fichier corrompu/illisible — ignoré */ }
   }
+}
+
+function buildRunReportIndex(sbPath) {
+  const index = new Map(); // basename(project_file) → { file, data }
+
+  // Legacy : racine du sandbox (anciens run-report-*.json)
+  indexRunReportsDir(path.join(sbPath, 'reports'), index);
+
+  // Convention actuelle : workspace/<entity>/reports/ pour chaque entity
+  const workspacePath = path.join(sbPath, 'workspace');
+  for (const entityId of listDirs(workspacePath)) {
+    indexRunReportsDir(path.join(workspacePath, entityId, 'reports'), index);
+  }
+
   return index;
 }
 
@@ -181,8 +201,9 @@ function scanFlatProject(entityPath, slug, jsonFile, runReportIndex) {
     (f.startsWith('synthese-') || f.startsWith('explain-')) && f.endsWith('.md')
   );
 
-  // Priorité 1 : run-report-*.json (sandbox root) — source structurée,
-  // authoritative, liée explicitement via project_file.
+  // Priorité 1 : run-report-*.json — source structurée, authoritative,
+  // liée explicitement via project_file (racine sandbox en legacy, ou
+  // workspace/<entity>/reports/ dans la convention actuelle).
   const runEntry = runReportIndex && runReportIndex.get(`${slug}.json`);
 
   let reportFile = null;
@@ -190,7 +211,11 @@ function scanFlatProject(entityPath, slug, jsonFile, runReportIndex) {
 
   if (runEntry) {
     const j = runEntry.data;
-    reportFile = `reports/${runEntry.file}`; // chemin relatif au sandbox, distinct de workspace/<entity>/reports/
+    // Chemin d'affichage relatif à entityPath si le run-report vit dans
+    // workspace/<entity>/reports/, sinon relatif au sandbox (legacy racine).
+    reportFile = runEntry.dir === reportsDir
+      ? `reports/${runEntry.file}`
+      : path.relative(entityPath, path.join(runEntry.dir, runEntry.file));
     reportData = {
       verdict:      j.pipeline_solved ? 'SOLVED' : 'FAILED',
       totalFrames:  j.n_total ?? 0,
@@ -425,4 +450,5 @@ module.exports = {
   parseReport,
   readReport,
   writeCheckReport,
+  buildRunReportIndex,
 };

@@ -1,6 +1,7 @@
 <!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#faf9f5;color:#141413}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style></head><body>
 <title>Chorus Web</title>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap">
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 
 <style>
 /* ─── TOKENS ─────────────────────────────────────────────── */
@@ -1347,6 +1348,66 @@ input, select, textarea { font-family: inherit; }
   padding: 10px 20px; border-top: 1px solid var(--border); flex-shrink: 0;
 }
 
+/* ─── MARKDOWN REPORT VIEWER (rapports .md bruts — explain/synthese/etc.) ── */
+#md-view-overlay {
+  position: fixed; inset: 0; z-index: 960;
+  background: rgba(0,0,0,.75);
+  display: flex; align-items: flex-start; justify-content: center;
+  padding: 20px 16px; backdrop-filter: blur(4px);
+}
+#md-view-overlay[hidden] { display: none !important; }
+.mdv-modal {
+  background: var(--bg-surface); border: 1px solid var(--border);
+  border-radius: 12px; width: min(820px, 100%);
+  max-height: calc(100vh - 40px);
+  display: flex; flex-direction: column; overflow: hidden;
+}
+.mdv-header {
+  display: flex; align-items: center; gap: 10px;
+  padding: 14px 20px; border-bottom: 1px solid var(--border); flex-shrink: 0;
+}
+.mdv-title { font-size: 13px; font-weight: 600; color: var(--text-primary); flex: 1; min-width: 0;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mdv-sub { font-size: 11px; color: var(--text-muted); font-family: 'JetBrains Mono', monospace; }
+.mdv-body {
+  flex: 1; overflow-y: auto; padding: 20px 28px;
+}
+/* Rendu du HTML généré par marked.js — styles sobres, cohérents avec le thème */
+.mdv-content { color: var(--text-primary); font-size: 13px; line-height: 1.65; }
+.mdv-content h1, .mdv-content h2, .mdv-content h3 {
+  color: var(--text-primary); margin: 18px 0 8px; font-weight: 600;
+}
+.mdv-content h1 { font-size: 18px; border-bottom: 1px solid var(--border); padding-bottom: 6px; }
+.mdv-content h2 { font-size: 15px; }
+.mdv-content h3 { font-size: 13px; color: var(--text-secondary); }
+.mdv-content p { margin: 8px 0; }
+.mdv-content code {
+  font-family: 'JetBrains Mono', monospace; font-size: 11.5px;
+  background: var(--bg-elevated); padding: 1px 5px; border-radius: 4px; color: var(--accent);
+}
+.mdv-content pre {
+  background: var(--bg-elevated); border: 1px solid var(--border);
+  border-radius: 8px; padding: 10px 14px; overflow-x: auto;
+}
+.mdv-content pre code { background: none; padding: 0; color: var(--text-secondary); }
+.mdv-content table { border-collapse: collapse; width: 100%; margin: 10px 0; font-size: 12px; }
+.mdv-content th, .mdv-content td {
+  border: 1px solid var(--border); padding: 6px 10px; text-align: left;
+}
+.mdv-content th { background: var(--bg-elevated); font-weight: 600; color: var(--text-secondary); }
+.mdv-content ul, .mdv-content ol { padding-left: 22px; margin: 8px 0; }
+.mdv-content li { margin: 3px 0; }
+.mdv-content blockquote {
+  border-left: 3px solid var(--accent); margin: 10px 0; padding: 4px 14px;
+  color: var(--text-secondary); background: var(--bg-elevated); border-radius: 0 6px 6px 0;
+}
+.mdv-content hr { border: none; border-top: 1px solid var(--border); margin: 16px 0; }
+.mdv-content a { color: var(--accent); }
+.mdv-footer {
+  padding: 10px 20px; border-top: 1px solid var(--border);
+  display: flex; gap: 8px; justify-content: flex-end; flex-shrink: 0;
+}
+
 /* Services modal */
 #services-modal-overlay {
   position: fixed; inset: 0; z-index: 100;
@@ -1709,7 +1770,7 @@ input, select, textarea { font-family: inherit; }
           <span class="rv-meta-label">Date</span><span class="rv-meta-value" id="rv-date"></span>
           <span class="rv-meta-label">Run</span><span class="rv-meta-value" id="rv-run">run.pl</span>
           <span class="rv-meta-label">Durée</span><span class="rv-meta-value" id="rv-duration"></span>
-          <span class="rv-meta-label">Confiance moy.</span><span class="rv-meta-value" id="rv-avg-conf"></span>
+          <span class="rv-meta-label">Taux conformité</span><span class="rv-meta-value" id="rv-avg-conf"></span>
         </div>
       </div>
       <button onclick="closeReportView()" style="background:none;border:none;color:var(--text-secondary);cursor:pointer;font-size:18px;line-height:1;flex-shrink:0;padding:0 2px">✕</button>
@@ -1727,11 +1788,11 @@ input, select, textarea { font-family: inherit; }
       <table class="rv-table">
         <thead>
           <tr>
-            <th style="width:80px">Réf</th>
-            <th>Libellé</th>
+            <th style="width:120px">Réf</th>
+            <th>Type d'élément</th>
             <th style="width:120px">Statut</th>
-            <th style="width:110px">Confiance</th>
-            <th>Preuve</th>
+            <th>Motif</th>
+            <th style="width:220px">Chaîne de règles</th>
           </tr>
         </thead>
         <tbody id="rv-tbody"></tbody>
@@ -1934,6 +1995,25 @@ input, select, textarea { font-family: inherit; }
     <div class="modal-footer">
       <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
       <button class="btn btn-primary" onclick="startImport()">Start import</button>
+    </div>
+  </div>
+</div>
+
+<!-- Viewer markdown — rapports .md bruts (explain-/synthese-/compliance-report-) -->
+<div id="md-view-overlay" hidden onclick="if(event.target===this)closeMdView()">
+  <div class="mdv-modal">
+    <div class="mdv-header">
+      <div style="min-width:0;flex:1">
+        <div class="mdv-title" id="mdv-title">rapport.md</div>
+        <div class="mdv-sub" id="mdv-sub"></div>
+      </div>
+      <button onclick="closeMdView()" style="background:none;border:none;color:var(--text-secondary);cursor:pointer;font-size:18px;line-height:1;flex-shrink:0;padding:0 2px">✕</button>
+    </div>
+    <div class="mdv-body">
+      <div class="mdv-content" id="mdv-content">Chargement…</div>
+    </div>
+    <div class="mdv-footer">
+      <button class="btn btn-ghost btn-sm" onclick="closeMdView()">Fermer</button>
     </div>
   </div>
 </div>
@@ -2455,27 +2535,56 @@ async function initFromServer() {
         path:  `workspace/${e.id}`,
       }));
 
-      PROJECTS[sb.id] = entityList.flatMap(e => (e.projects || []).map(p => ({
-        id: p.id,
-        name: p.name,
-        type: 'pdf',
-        entity: e.id,
-        frames: p.frames || 0,
-        evidence: 0,
-        state: p.state,
-        compliance: p.compliance,
-        lastRun: p.reportData?.date || null,
-        verdict: p.verdict,
-        imports: [],
-        reports: p.reportFile ? [{
+      PROJECTS[sb.id] = entityList.flatMap(e => (e.projects || []).map(p => {
+        // Rapport du pipeline run.pl (verdict + comptage) — au plus un, le
+        // plus récent connu pour ce projet.
+        // p.reportFile est déjà relatif à workspace/<entity>/ — soit
+        // "reports/xxx.json" (convention actuelle), soit "../../reports/xxx.json"
+        // (legacy racine sandbox), soit un simple nom de fichier markdown
+        // ("compliance-report-xxx.md", implicitement dans reports/).
+        const runReportRelPath = p.reportFile
+          ? (/^(reports\/|\.\.\/)/.test(p.reportFile) ? p.reportFile : `reports/${p.reportFile}`)
+          : null;
+        const runReportEntry = p.reportFile ? [{
           icon:  '📋', kind: 'run', label: p.reportFile,
           desc:  `${p.verdict || '?'} · ${p.reportData?.conformes || 0}/${p.frames || 0} CONFORMES`,
-          path:  `sandboxes/${sb.id}/workspace/${e.id}/reports/${p.id}/${p.reportFile}`,
+          path:  `sandboxes/${sb.id}/workspace/${e.id}/${runReportRelPath}`,
           date:  p.reportData?.date || new Date().toISOString().slice(0,10),
           run:   'run.pl',
-        }] : [],
-        corpus: [],
-      })));
+        }] : [];
+
+        // Rapports chorus-check (synthese-/explain-*.md) — ignorés jusqu'ici,
+        // ce qui laissait le panneau "Rapports" vide pour tout projet n'ayant
+        // pas (encore) de run-report associé alors que ces fichiers existent
+        // bel et bien sur le disque (cf. chorus.js § scanFlatProject).
+        const checkReportEntries = (p.checkReports || []).map(filename => ({
+          icon: filename.startsWith('explain-') ? '🔍' : '📄',
+          kind: filename.startsWith('explain-') ? 'explain' : 'summary',
+          label: filename,
+          desc: filename.startsWith('explain-')
+            ? 'Explications règle par règle (chorus-check --explain)'
+            : 'Synthèse 1 page (chorus-check --summary)',
+          path: `sandboxes/${sb.id}/workspace/${e.id}/reports/${filename}`,
+          date: null,
+          run: filename.startsWith('explain-') ? 'chorus-check --explain' : 'chorus-check --summary',
+        }));
+
+        return {
+          id: p.id,
+          name: p.name,
+          type: 'pdf',
+          entity: e.id,
+          frames: p.frames || 0,
+          evidence: 0,
+          state: p.state,
+          compliance: p.compliance,
+          lastRun: p.reportData?.date || null,
+          verdict: p.verdict,
+          imports: [],
+          reports: [...runReportEntry, ...checkReportEntries],
+          corpus: [],
+        };
+      }));
     });
 
     renderGlobalDashboard();
@@ -3326,95 +3435,105 @@ async function runCompleteReport(reportIndex, _directReport) {
 
 /* ─── REPORT VIEW MODAL ─────────────────────────────────── */
 
-const RV_REF_POOL = [
-  'R01','R02','R03','R04','R05','R06','R07','R08','R09','R10',
-  'R11','R12','R13','R14','R15','R16','R17','R18','R19','R20',
-  'R21','R22','R23','R24','R25','R26','R27','R28','R29','R30'
-];
-
-const RV_LABELS = {
-  R01:'Politique de sécurité de l\'information',R02:'Revue de la politique de sécurité',
-  R03:'Responsabilités en matière de sécurité',R04:'Séparation des tâches',
-  R05:'Relations avec les autorités',R06:'Relations avec les groupes de spécialistes',
-  R07:'Sécurité dans la gestion de projet',R08:'Télétravail',
-  R09:'Recrutement — vérifications préalables',R10:'Sensibilisation et formation',
-  R11:'Processus disciplinaire',R12:'Responsabilités après la fin du contrat',
-  R13:'Inventaire des actifs',R14:'Propriété des actifs',
-  R15:'Utilisation acceptable des actifs',R16:'Restitution des actifs',
-  R17:'Classification de l\'information',R18:'Marquage de l\'information',
-  R19:'Traitement de l\'information',R20:'Gestion des supports amovibles',
-  R21:'Mise au rebut des supports',R22:'Transferts de support physique',
-  R23:'Contrôle d\'accès — politique',R24:'Accès aux réseaux et services réseau',
-  R25:'Gestion des accès utilisateurs',R26:'Responsabilités des utilisateurs',
-  R27:'Contrôle d\'accès aux systèmes et aux applications',
-  R28:'Accès au code source des programmes',R29:'Cryptographie — politique',R30:'Gestion des clés'
-};
-
-const RV_SOURCES = [
-  'politique-si.pdf','contrat-travail.docx','annexe-securite.pdf',
-  'charte-informatique.pdf','procedure-accueil.md','plan-formation.xlsx',
-  'inventaire-actifs.xlsx','schema-reseau.drawio','procedure-crypto.pdf'
-];
-
 let _rvCurrentFilter = 'ALL';
 let _rvCurrentReport = null;
 
-function generateMockRows(proj) {
-  const n = Math.min(proj ? proj.frames : 24, 30);
-  const refs = RV_REF_POOL.slice(0, n);
-  return refs.map((ref, i) => {
-    let status, conf;
-    if (ref === 'R07') { status = 'NON_CONFORME'; conf = 28; }
-    else if (ref === 'R12') { status = 'A_CONFIRMER'; conf = 62; }
-    else { status = 'CONFORME'; conf = 72 + Math.floor(Math.random() * 28); }
-    const source = RV_SOURCES[i % RV_SOURCES.length];
-    return { ref, label: RV_LABELS[ref] || `Exigence ${ref}`, status, conf, source };
+// Motif/raison d'un élément — même chaîne de repli que run.pl (un seul champ
+// "motif" générique, ou l'une de ses variantes spécifiques par type_element).
+function elementMotif(e) {
+  return e.motif ?? e.motif_impact ?? e.motif_generation ?? e.motif_affectation
+    ?? e.motif_enrolement ?? e.motif_introduction ?? e.motif_utilisation
+    ?? e.motif_fin_de_vie ?? e.motif_renouvellement ?? e.motif_recouvrement
+    ?? e.archi_motif ?? e.motif_fourniture_code_source ?? '—';
+}
+
+// Transforme les elements[] du run-report-*.json réel en lignes affichables.
+// Remplace l'ancien generateMockRows() (données 100% fictives, y compris
+// l'indice de "confiance" par ligne — qui n'a pas d'équivalent dans les
+// données réelles du pipeline Chorus).
+function rowsFromRunReport(data) {
+  return (data.elements || []).map(e => {
+    const status = e.a_confirmer
+      ? 'A_CONFIRMER'
+      : (e.verdict === 'CONFORME' || e.verdict === 'NON_CONFORME')
+        ? e.verdict
+        : 'A_CONFIRMER'; // unprocessed / type inconnu — regroupé avec "à confirmer"
+    const chain = Array.isArray(e._rule_trace) && e._rule_trace.length
+      ? e._rule_trace.map(t => t.rule_id).join(' → ')
+      : '—';
+    return {
+      ref:          e.id || '?',
+      label:        e.type_element || '?',
+      status,
+      rawVerdict:   e.verdict,
+      motif:        elementMotif(e),
+      source:       chain,
+    };
   });
 }
 
-function openReportView(reportInfo) {
-  if (!currentProject || !currentSandbox) return;
-  const proj = currentProject;
-  const sb   = currentSandbox;
+// `ctx` optionnel { sbId, sbName, entityId, projId, projName } permet d'appeler
+// ce viewer en dehors du contexte de la modale pipeline (ex. depuis
+// l'historique des rapports d'un projet qui n'est pas forcément
+// currentProject) — à défaut on retombe sur currentProject/currentSandbox.
+async function openReportView(reportInfo, ctx) {
+  const sbId      = ctx?.sbId      ?? currentSandbox?.id;
+  const sbName    = ctx?.sbName    ?? currentSandbox?.name;
+  const entityId  = ctx?.entityId  ?? currentProject?.entity;
+  const projId    = ctx?.projId    ?? currentProject?.id;
+  const projName  = ctx?.projName  ?? currentProject?.name;
+  if (!sbId || !entityId || !projId) return;
   _rvCurrentReport = reportInfo;
 
-  // Header meta
-  document.getElementById('rv-filename').textContent = reportInfo.label || `compliance-report-${proj.id}.md`;
-  document.getElementById('rv-sandbox').textContent  = sb.name;
-  document.getElementById('rv-projet').textContent   = proj.name;
-  document.getElementById('rv-frames').textContent   = `${proj.frames} frames`;
-  document.getElementById('rv-date').textContent     = new Date().toISOString().slice(0,10);
-  const durSec = 4 + Math.floor(Math.random() * 8);
-  document.getElementById('rv-duration').textContent = `${durSec}s`;
+  document.getElementById('rv-filename').textContent = reportInfo.label || `run-report-${projId}.json`;
+  document.getElementById('rv-sandbox').textContent  = sbName || sbId;
+  document.getElementById('rv-projet').textContent   = projName || projId;
+  document.getElementById('rv-run').textContent      = reportInfo.run || 'run.pl';
+  document.getElementById('rv-duration').textContent = '—'; // non tracé par run.pl — jamais inventé
 
-  // Verdict badge
-  const badge = document.getElementById('rv-verdict-badge');
-  badge.textContent = 'SOLVED';
-  badge.className = 'rv-badge CONFORME';
-
-  // Build rows
-  const rows = generateMockRows(proj);
-  const totalConf = rows.filter(r => r.status === 'CONFORME').length;
-  const avgConf = Math.round(rows.reduce((s, r) => s + r.conf, 0) / rows.length);
-  document.getElementById('rv-avg-conf').textContent = `${avgConf}%`;
-
+  document.getElementById('report-view-overlay').hidden = false;
   const tbody = document.getElementById('rv-tbody');
-  tbody.innerHTML = rows.map(r => {
-    const fillColor = r.status === 'CONFORME' ? 'var(--success)' :
-                      r.status === 'NON_CONFORME' ? 'var(--error)' : 'var(--warn)';
-    return `<tr data-status="${r.status}">
+  tbody.innerHTML = `<tr><td colspan="5" style="text-align:center;padding:24px;color:var(--text-muted)">Chargement du rapport réel…</td></tr>`;
+
+  // Données réelles uniquement : élements du run-report-*.json (verdict,
+  // motif, chaîne de règles) — plus aucune valeur simulée (l'indice de
+  // "confiance" par ligne de l'ancienne vue n'existait pas dans les
+  // vraies données et a été retiré, remplacé par le motif réel).
+  let data = null;
+  try {
+    const r = await fetch(`${API}/api/sandboxes/${sbId}/entities/${entityId}/projects/${projId}/run-report`);
+    if (r.ok) ({ data } = await r.json());
+  } catch { /* réseau indisponible — géré ci-dessous */ }
+
+  if (!data) {
+    tbody.innerHTML = `<tr><td colspan="5" style="text-align:center;padding:24px;color:var(--text-muted)">Aucun run-report trouvé pour ce projet — lancez <code class="mono">run.pl</code> d'abord.</td></tr>`;
+    document.getElementById('rv-verdict-badge').textContent = '—';
+    document.getElementById('rv-verdict-badge').className = 'rv-badge';
+    document.getElementById('rv-frames').textContent = '—';
+    document.getElementById('rv-date').textContent = '—';
+    document.getElementById('rv-avg-conf').textContent = '—';
+    updateRvFooter([]);
+    return;
+  }
+
+  const isSolved = !!data.pipeline_solved;
+  document.getElementById('rv-verdict-badge').textContent = isSolved ? 'SOLVED' : 'FAILED';
+  document.getElementById('rv-verdict-badge').className = `rv-badge ${isSolved ? 'CONFORME' : 'NON_CONFORME'}`;
+  document.getElementById('rv-frames').textContent = `${data.n_total ?? '—'} éléments`;
+  document.getElementById('rv-date').textContent = (data.generated_at || '').replace('T', ' ').slice(0, 19) || '—';
+  const tauxConf = data.n_total ? Math.round((data.n_conforme / data.n_total) * 100) : 0;
+  document.getElementById('rv-avg-conf').textContent = `${tauxConf}%`;
+
+  const rows = rowsFromRunReport(data);
+  tbody.innerHTML = rows.map(r => `
+    <tr data-status="${r.status}">
       <td><code class="mono" style="font-size:11px;color:var(--accent)">${r.ref}</code></td>
-      <td style="color:var(--text-primary)">${r.label}</td>
+      <td style="color:var(--text-primary)">${r.label}${r.status==='A_CONFIRMER' && r.rawVerdict && r.rawVerdict!=='CONFORME' && r.rawVerdict!=='NON_CONFORME' ? ` <span style="color:var(--text-muted);font-size:10px">(${r.rawVerdict})</span>` : ''}</td>
       <td><span class="rv-badge ${r.status}">${r.status.replace('_',' ')}</span></td>
-      <td>
-        <div style="display:flex;align-items:center;gap:6px">
-          <div class="rv-conf-bar"><div class="rv-conf-fill" style="width:${r.conf}%;background:${fillColor}"></div></div>
-          <span style="font-size:10px;color:var(--text-muted);min-width:30px">${r.conf}%</span>
-        </div>
-      </td>
+      <td style="font-size:11px;color:var(--text-secondary);max-width:280px">${r.motif}</td>
       <td><span style="font-size:10px;color:var(--text-muted);font-family:'JetBrains Mono',monospace">${r.source}</span></td>
-    </tr>`;
-  }).join('');
+    </tr>`
+  ).join('') || `<tr><td colspan="5" style="text-align:center;padding:24px;color:var(--text-muted)">Aucun élément dans ce rapport.</td></tr>`;
 
   updateRvFooter(rows);
   filterReport('ALL');
@@ -3422,8 +3541,6 @@ function openReportView(reportInfo) {
   // Show "chorus-complete-report" button only for --explain reports
   const completeBtn = document.getElementById('rv-complete-btn');
   if (completeBtn) completeBtn.style.display = (reportInfo && reportInfo.kind === 'explain') ? '' : 'none';
-
-  document.getElementById('report-view-overlay').hidden = false;
 }
 
 function closeReportView() {
@@ -4286,6 +4403,14 @@ function openHistoryModal(projId) {
           ${runs.map(r=>`<span class="hm-run-badge">${r}</span>`).join('')}
         </div>`;
       for (const r of reps) {
+        const isMd   = r.label && r.label.endsWith('.md');
+        const isJson = r.kind === 'run' && r.label && r.label.endsWith('.json');
+        let viewBtn = '';
+        if (isMd) {
+          viewBtn = `<button class="btn btn-ghost btn-sm" style="padding:2px 7px;font-size:10px;flex-shrink:0" title="Voir ${r.label}" onclick="openMdView('${sbId}', '${proj.entity}', '${projId}', '${r.label}')">👁️</button>`;
+        } else if (isJson) {
+          viewBtn = `<button class="btn btn-ghost btn-sm" style="padding:2px 7px;font-size:10px;flex-shrink:0" title="Voir ${r.label} (rapport structuré run.pl)" onclick="openReportView({label:'${r.label}', kind:'run', run:'run.pl'}, {sbId:'${sbId}', sbName:'${(currentSandbox&&currentSandbox.name)||sbId}', entityId:'${proj.entity}', projId:'${projId}', projName:'${proj.name}'})">👁️</button>`;
+        }
         html += `<div class="hm-report-row">
           <div class="hm-report-icon">${r.icon||'📋'}</div>
           <div class="hm-report-info">
@@ -4293,6 +4418,7 @@ function openHistoryModal(projId) {
             <div class="hm-report-desc">${r.desc||''}</div>
           </div>
           <div class="hm-report-path" title="${r.path||''}">${r.path||''}</div>
+          ${viewBtn}
           <button class="btn btn-ghost btn-sm" style="padding:2px 7px;font-size:10px;flex-shrink:0" title="Terminal ECA — rapport ${r.label}" onclick="openLevelTerminal('report', {sbId:'${sbId}', entityId: proj.entity, projId:'${projId}', projName:'${proj.name}', reportFile:'${r.label}'})">🖥️</button>
         </div>`;
       }
@@ -4306,6 +4432,31 @@ function openHistoryModal(projId) {
 
 function closeHistoryModal() {
   document.getElementById('history-modal-overlay').hidden = true;
+}
+
+// ─── MARKDOWN REPORT VIEWER ─────────────────────────────────────
+// Affiche le contenu réel d'un rapport .md (explain-/synthese-/
+// compliance-report-) rendu en HTML via marked.js.
+async function openMdView(sbId, entityId, projId, filename) {
+  document.getElementById('mdv-title').textContent = filename;
+  document.getElementById('mdv-sub').textContent = `${sbId} / ${entityId} / ${projId}`;
+  document.getElementById('mdv-content').innerHTML = 'Chargement…';
+  document.getElementById('md-view-overlay').hidden = false;
+
+  try {
+    const r = await fetch(`${API}/api/sandboxes/${sbId}/entities/${entityId}/projects/${projId}/reports/${filename}`);
+    if (!r.ok) throw new Error(await r.text());
+    const text = await r.text();
+    document.getElementById('mdv-content').innerHTML =
+      (typeof marked !== 'undefined') ? marked.parse(text) : `<pre>${text}</pre>`;
+  } catch (e) {
+    document.getElementById('mdv-content').innerHTML =
+      `<div style="color:var(--error);font-size:12px">Impossible de charger ${filename} : ${e.message}</div>`;
+  }
+}
+
+function closeMdView() {
+  document.getElementById('md-view-overlay').hidden = true;
 }
 
 // ─── SANDBOX CORPUS MODAL ─────────────────────────────────────
