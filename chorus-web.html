@@ -1729,28 +1729,9 @@ input, select, textarea { font-family: inherit; }
 
       <!-- ECA session trigger (shown after --summary or --explain) -->
       <div id="eca-session-trigger" style="display:none;margin-top:12px">
-        <button onclick="openEcaSession()" style="width:100%;display:flex;align-items:center;justify-content:center;gap:8px;padding:10px;background:var(--accent-dim);border:1px solid var(--accent);border-radius:8px;color:var(--accent);font-size:13px;font-weight:600;cursor:pointer;transition:background .15s" onmouseover="this.style.background='var(--bg-hover)'" onmouseout="this.style.background='var(--accent-dim)'">
+        <button onclick="openEcaSessionForProject()" style="width:100%;display:flex;align-items:center;justify-content:center;gap:8px;padding:10px;background:var(--accent-dim);border:1px solid var(--accent);border-radius:8px;color:var(--accent);font-size:13px;font-weight:600;cursor:pointer;transition:background .15s" onmouseover="this.style.background='var(--bg-hover)'" onmouseout="this.style.background='var(--accent-dim)'">
           <span>⚡</span> Ouvrir session ECA — poursuivre l'analyse avec le LLM
         </button>
-      </div>
-
-      <!-- ECA interactive session terminal -->
-      <div id="eca-session-wrap" class="eca-session-wrap" style="display:none">
-        <div class="eca-session-titlebar">
-          <div class="eca-session-dots">
-            <span class="dot-r"></span><span class="dot-y"></span><span class="dot-g"></span>
-          </div>
-          <div class="eca-session-title" id="eca-session-title">ECA — session interactive</div>
-          <button onclick="closeEcaSession()" style="background:none;border:none;color:#8B949E;cursor:pointer;font-size:14px;line-height:1;padding:0 2px">✕</button>
-        </div>
-        <div class="eca-session-output" id="eca-session-output"></div>
-        <div class="eca-session-input-row">
-          <span class="eca-session-prompt-label" id="eca-session-prompt">sb:proj ?></span>
-          <input class="eca-session-input" id="eca-session-input" type="text"
-            placeholder="question sur le rapport, commande Chorus..."
-            autocomplete="off" autocorrect="off" spellcheck="false"
-            onkeydown="ecaSessionKeydown(event)">
-        </div>
       </div>
     </div>
   </div>
@@ -3694,186 +3675,17 @@ async function runChorusCheckAction(action) {
   });
 }
 
-// ─── ECA INTERACTIVE SESSION ──────────────────────────────────
-let _ecaHistory = [];
-let _ecaHistIdx  = -1;
-let _ecaCtx      = null;   // { sbId, projId, projName, action, reportLabel }
-
-function openEcaSession() {
+// ─── ECA SESSION TRIGGER (pipeline modal, post --summary/--explain) ───
+// Délègue au terminal générique multi-niveaux (openLevelTerminal) pour que
+// l'expérience soit identique à celle des boutons 🖥️ sandbox/entity/project/report.
+function openEcaSessionForProject() {
   if (!currentProject || !currentSandbox) return;
-  const proj   = currentProject;
-  const sbId   = currentSandbox.id;
-  const action = document.getElementById('va-btn-summary') &&
-                 document.getElementById('va-btn-summary').querySelector('.va-btn-icon') ? 'summary' : 'summary';
-
-  _ecaCtx = {
-    sbId,
-    projId:      proj.id,
-    projName:    proj.name,
-    reportLabel: `summary-${proj.id}-001.md`,
-  };
-
-  _ecaHistory = [];
-  _ecaHistIdx  = -1;
-
-  const wrap = document.getElementById('eca-session-wrap');
-  const out  = document.getElementById('eca-session-output');
-  const trigger = document.getElementById('eca-session-trigger');
-
-  document.getElementById('eca-session-title').textContent =
-    `ECA — ${sbId}:${proj.id} — session interactive`;
-  document.getElementById('eca-session-prompt').textContent =
-    `${sbId}:${proj.id} ?>`;
-
-  out.innerHTML = '';
-  trigger.style.display = 'none';
-  wrap.style.display = 'block';
-
-  // Scroll modal to show terminal
-  wrap.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-
-  // Welcome lines
-  const welcome = [
-    { cls: 'dim',  text: `━━━ ECA session — ${sbId} · ${proj.name} ━━━` },
-    { cls: 'info', text: `[ECA] Contexte chargé : compliance-report-${proj.id}.md · ${proj.frames} frames · ${proj.evidence} preuves` },
-    { cls: 'info', text: `[ECA] Rapport summary disponible — posez vos questions ou tapez une commande` },
-    { cls: 'dim',  text: `Exemples : "Pourquoi R07 est NON_CONFORME ?" · "chorus-check --explain" · "liste les NON_CONFORMES"` },
-  ];
-  let t = 0;
-  welcome.forEach(({ cls, text }) => {
-    setTimeout(() => ecaSessionAppend(text, cls), t);
-    t += 180;
+  openLevelTerminal('project', {
+    sbId:     currentSandbox.id,
+    entityId: currentProject.entity,
+    projId:   currentProject.id,
+    projName: currentProject.name,
   });
-
-  setTimeout(() => {
-    const input = document.getElementById('eca-session-input');
-    if (input) input.focus();
-  }, t + 100);
-}
-
-function closeEcaSession() {
-  document.getElementById('eca-session-wrap').style.display = 'none';
-  const trigger = document.getElementById('eca-session-trigger');
-  if (trigger) trigger.style.display = 'block';
-}
-
-function ecaSessionAppend(text, cls = 'resp') {
-  const out  = document.getElementById('eca-session-output');
-  const line = document.createElement('div');
-  line.className = `eca-session-line ${cls}`;
-  line.textContent = text;
-  out.appendChild(line);
-  out.scrollTop = out.scrollHeight;
-}
-
-function ecaSessionKeydown(e) {
-  const input = document.getElementById('eca-session-input');
-  if (e.key === 'Enter') {
-    const cmd = input.value.trim();
-    input.value = '';
-    if (!cmd) return;
-    _ecaHistory.unshift(cmd);
-    _ecaHistIdx = -1;
-    ecaSessionExec(cmd);
-  } else if (e.key === 'ArrowUp') {
-    e.preventDefault();
-    if (_ecaHistIdx < _ecaHistory.length - 1) {
-      _ecaHistIdx++;
-      input.value = _ecaHistory[_ecaHistIdx];
-    }
-  } else if (e.key === 'ArrowDown') {
-    e.preventDefault();
-    if (_ecaHistIdx > 0) {
-      _ecaHistIdx--;
-      input.value = _ecaHistory[_ecaHistIdx];
-    } else {
-      _ecaHistIdx = -1;
-      input.value = '';
-    }
-  }
-}
-
-function ecaSessionExec(cmd) {
-  if (!_ecaCtx) return;
-  const { sbId, projId, projName } = _ecaCtx;
-  const prompt = `${sbId}:${projId} ?>`;
-
-  // Echo command
-  const out = document.getElementById('eca-session-output');
-  const cmdLine = document.createElement('div');
-  cmdLine.className = 'eca-session-line cmd';
-  cmdLine.innerHTML = `<span class="eca-ps">${prompt}</span> ${cmd}`;
-  out.appendChild(cmdLine);
-  out.scrollTop = out.scrollHeight;
-
-  // Simulate LLM response
-  const lower = cmd.toLowerCase();
-  let responses = [];
-
-  if (/chorus-check\s+--explain/.test(lower) || lower === '--explain') {
-    responses = [
-      { cls:'info', text:`[ECA] Lancement skill chorus-check --explain sur compliance-report-${projId}.md...` },
-      { cls:'ok',   text:`[--explain] R07 — NON_CONFORME : critère d'affectation (§ 7.3.2)` },
-      { cls:'resp', text:`  La valeur [assignment] n'est pas précisée dans la documentation fournie.` },
-      { cls:'resp', text:`  Action recommandée : documenter explicitement la politique d'affectation des rôles.` },
-      { cls:'ok',   text:`[--explain] → explain-${projId}-001.md généré` },
-    ];
-  } else if (/chorus-check\s+--summary/.test(lower) || lower === '--summary') {
-    responses = [
-      { cls:'info', text:`[ECA] Lancement skill chorus-check --summary sur compliance-report-${projId}.md...` },
-      { cls:'ok',   text:`[--summary] Synthèse générée — ${_ecaCtx ? '1 page' : ''}` },
-      { cls:'resp', text:`  Projet : ${projName}` },
-      { cls:'resp', text:`  Verdict global : SOLVED avec réserve` },
-      { cls:'resp', text:`  1 NON_CONFORME (R07) · action corrective requise avant certification` },
-      { cls:'ok',   text:`[--summary] → summary-${projId}-001.md` },
-    ];
-  } else if (/non.?conform|liste|list/i.test(lower)) {
-    responses = [
-      { cls:'info', text:`[ECA] Analyse du rapport — éléments NON_CONFORME :` },
-      { cls:'warn', text:`  • R07 — Critère d'affectation [assignment] non précisé (§ 7.3.2)` },
-      { cls:'resp', text:`  Total : 1 NON_CONFORME sur ${_ecaCtx ? currentProject && currentProject.frames || 24 : 24} exigences` },
-    ];
-  } else if (/pourquoi|why|r07/i.test(lower)) {
-    responses = [
-      { cls:'info', text:`[ECA] Explication R07 — source : compliance-report-${projId}.md` },
-      { cls:'resp', text:`  R07 vérifie que la politique d'affectation des rôles est explicitement documentée.` },
-      { cls:'resp', text:`  Le corpus ne contient pas de section "Assignment Policy" ou équivalent.` },
-      { cls:'warn', text:`  Référence normative : § 7.3.2 de la norme cible (ADV_ARC.1 / ALC_CMC.4).` },
-      { cls:'resp', text:`  → Ajouter une section dédiée dans la documentation d'architecture.` },
-    ];
-  } else if (/help|aide|commandes?/i.test(lower) || lower === '?') {
-    responses = [
-      { cls:'info', text:`Commandes disponibles dans cette session :` },
-      { cls:'resp', text:`  chorus-check --summary    Synthèse 1 page du rapport` },
-      { cls:'resp', text:`  chorus-check --explain    Explication règle par règle` },
-      { cls:'resp', text:`  liste les NON_CONFORMES   Affiche les éléments non conformes` },
-      { cls:'resp', text:`  Pourquoi R07 ?            Explication détaillée d'une règle` },
-      { cls:'resp', text:`  clear                     Vider le terminal` },
-    ];
-  } else if (lower === 'clear') {
-    document.getElementById('eca-session-output').innerHTML = '';
-    return;
-  } else {
-    // Generic LLM-style response
-    responses = [
-      { cls:'info', text:`[ECA → LLM architect] Question reçue : "${cmd}"` },
-      { cls:'info', text:`[LLM] Analyse du contexte — ${projName} · compliance-report-${projId}.md...` },
-      { cls:'resp', text:`  Sur la base du rapport de conformité disponible :` },
-      { cls:'resp', text:`  Le projet présente 1 NON_CONFORME (R07 — politique d'affectation).` },
-      { cls:'resp', text:`  Toutes les autres exigences sont CONFORMES.` },
-      { cls:'resp', text:`  → Tapez "liste les NON_CONFORMES" ou "Pourquoi R07 ?" pour approfondir.` },
-    ];
-  }
-
-  let t = 120;
-  responses.forEach(({ cls, text }) => {
-    setTimeout(() => ecaSessionAppend(text, cls), t);
-    t += 160;
-  });
-  setTimeout(() => {
-    const inp = document.getElementById('eca-session-input');
-    if (inp) inp.focus();
-  }, t);
 }
 
 // ─── TERMINAL ECA GÉNÉRIQUE — niveaux sandbox / entity / project / report ──
