@@ -4300,14 +4300,33 @@ function closeMdView() {
 // ─── AGENT KB ORG VIEWER ────────────────────────────────────────
 // Affiche le contenu intégral réel de agent/chorus/<slug>.org (bouton
 // "👁️ Détails" de l'onglet Agents) — même modale que le viewer markdown,
-// avec un léger préprocesseur org→markdown (titres "*"→"#", séparateurs de
-// table "|---+---|"→"|---|---|") pour un rendu correct via marked.js. Le
-// fichier reste cependant servi tel quel par le backend — aucune donnée
-// n'est reformulée, seule la syntaxe de présentation est adaptée.
+// avec un léger préprocesseur org→markdown pour un rendu correct via
+// marked.js. Le fichier reste cependant servi tel quel par le backend —
+// aucune donnée n'est reformulée, seule la syntaxe de présentation est
+// adaptée. Deux pièges à traiter, tous deux liés à l'indentation des
+// tables org (les tables de agent/chorus/*.org sont indentées sous leur
+// heading, ex. "  |-----+-----|") :
+//   1. marked.js (GFM) exige un tableau flush-left — une table indentée
+//      n'est tout simplement pas reconnue comme table (rendue en texte brut
+//      avec les barres verticales visibles, illisible).
+//   2. org marque les intersections de colonnes de la ligne séparatrice
+//      avec "+" ("|-----+------+-----|" — PAS de "|" interne, seulement aux
+//      deux extrémités). Markdown exige au contraire un "|" à CHAQUE
+//      intersection ("|-----|------|-----|"). Il faut donc convertir les
+//      "+" org en "|" markdown — pas en "-" (qui fusionnerait toutes les
+//      colonnes en une seule cellule géante, tout aussi illisible).
 function orgToMarkdownLite(text) {
-  return text
+  const lines = text.split('\n').map(line => {
+    const trimmed = line.trim();
+    if (!/^\|.*\|$/.test(trimmed)) return line;
+    // Ligne de tableau (donnée ou séparateur) — toujours désindentée pour
+    // marked. Si c'est une ligne séparatrice (uniquement -/+/:/espaces entre
+    // les barres), convertir les "+" org (intersections) en "|" markdown.
+    if (/^\|[\-+:\s]+\|$/.test(trimmed)) return trimmed.replace(/\+/g, '|');
+    return trimmed;
+  });
+  return lines.join('\n')
     .replace(/^(\*+)(\s+)/gm, (m, stars) => '#'.repeat(stars.length) + ' ')
-    .replace(/^\|([\-+]+)\|$/gm, line => '|' + line.slice(1, -1).replace(/\+/g, '-').split('').map(c => c === '|' ? '|' : '-').join('') + '|')
     .replace(/^#\+\w+:.*$/gm, '');
 }
 
