@@ -291,6 +291,37 @@ input, select, textarea { font-family: inherit; }
   display: flex; gap: 6px; margin-top: 10px;
 }
 
+/* ─── PROJECT LIST (vue compacte, 1 ligne/projet — vue entity scopée) ──── */
+.proj-list { display: flex; flex-direction: column; gap: 6px; margin-bottom: 24px; }
+.proj-row {
+  display: flex; align-items: center; gap: 14px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--border);
+  border-radius: 7px; padding: 8px 12px;
+  transition: all 0.15s;
+}
+.proj-row:hover { border-color: var(--accent); background: var(--bg-elevated); }
+.proj-row.imported     { border-left-color: var(--success); }
+.proj-row.importing    { border-left-color: var(--warn); }
+.proj-row.not-imported { border-left-color: var(--border); }
+.proj-row .pr-name {
+  flex: 0 1 240px; min-width: 0;
+  font-size: 13px; font-weight: 600; color: var(--text-primary);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.proj-row .pr-id {
+  flex: 0 1 180px; min-width: 0;
+  font-family: 'JetBrains Mono', monospace; font-size: 10px; color: var(--text-muted);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.proj-row .pr-meta {
+  flex: 1; min-width: 0; display: flex; gap: 14px; align-items: center;
+  font-size: 11px; color: var(--text-muted); white-space: nowrap; overflow: hidden;
+}
+.proj-row .pr-actions { display: flex; gap: 4px; flex-shrink: 0; }
+.proj-row .import-progress { flex: 1; min-width: 80px; }
+
 /* ─── CONTEXT GROUPS ─────────────────────────────────────────── */
 .entity-group { margin-bottom: 12px; }
 .entity-header {
@@ -1453,22 +1484,31 @@ input, select, textarea { font-family: inherit; }
 
         <!-- Tab: Projects -->
         <div class="tab-panel active" id="tab-projects">
+          <!-- Scope entity : visible seulement quand une entity est sélectionnée -->
+          <div id="entity-scope-bar" style="display:none;align-items:center;gap:10px;padding:8px 10px;border-radius:6px;background:var(--bg-elevated);border:1px solid var(--border-light);margin-bottom:14px"></div>
           <div id="importing-section" style="display:none">
             <div class="section-header">
               <span class="section-title">⏳ Importing</span>
             </div>
-            <div class="proj-grid" id="importing-list"></div>
+            <!-- Pas de classe grid ici : le wrapper (.proj-grid/.proj-list) est
+                 injecté par le JS pour éviter une grille-dans-une-grille qui
+                 écraserait la largeur disponible (cf. renderProjectsTab). -->
+            <div id="importing-list"></div>
             <div class="divider"></div>
           </div>
           <div class="section-header">
             <span class="section-title">✅ Imported</span>
-            <button class="btn btn-primary btn-sm" onclick="openImportModal()">+ Import project</button>
+            <span id="import-project-btn-wrap" style="display:none">
+              <button class="btn btn-primary btn-sm" onclick="openImportModal()">+ Import project</button>
+            </span>
           </div>
-          <div class="proj-grid" id="imported-list"></div>
-          <div class="section-header" style="margin-top:20px">
-            <span class="section-title">📋 Available (not imported)</span>
+          <div id="imported-list"></div>
+          <div id="available-section">
+            <div class="section-header" style="margin-top:20px">
+              <span class="section-title">📋 Available (not imported)</span>
+            </div>
+            <div id="available-list"></div>
           </div>
-          <div class="proj-grid" id="available-list"></div>
         </div>
 
       </div>
@@ -1925,6 +1965,7 @@ input, select, textarea { font-family: inherit; }
 // ─── STATE ────────────────────────────────────────────────────
 let db = null;
 let currentSandbox = null;
+let currentEntityId = null;
 let currentProject = null;
 let pipelineRunning = false;
 
@@ -2439,7 +2480,9 @@ async function initFromServer() {
 
     renderGlobalDashboard();
     renderSidebar();
-    if (SANDBOXES.length > 0) selectSandbox(SANDBOXES[0].id);
+    // Page d'accueil = dashboard global (cf. POC chorus-v43) : on ne
+    // présélectionne plus automatiquement le premier sandbox — l'utilisateur
+    // choisit lui-même via le dashboard ou la sidebar.
 
   } catch (err) {
     console.warn('Serveur MVP0 non disponible — mode simulation', err.message);
@@ -2510,6 +2553,7 @@ function renderSidebar() {
 function selectSandbox(id) {
   currentSandbox = SANDBOXES.find(s => s.id === id);
   currentProject = null;
+  currentEntityId = null; // aucune entity sélectionnée par défaut
   // Reset fold state for the new sandbox (start collapsed)
   window._ctxExpandState = {};
 
@@ -2539,6 +2583,17 @@ function selectSandbox(id) {
   document.getElementById('pipeline-content').style.display = 'none';
 }
 
+// ─── ENTITY SELECTION (scope la vue projets à une seule entity) ───────────
+function selectEntity(entityId) {
+  currentEntityId = entityId;
+  renderProjectsTab();
+}
+
+function clearEntitySelection() {
+  currentEntityId = null;
+  renderProjectsTab();
+}
+
 // ─── PROJECTS TAB ─────────────────────────────────────────────
 function renderProjectsTab() {
   if (!currentSandbox) return;
@@ -2546,11 +2601,39 @@ function renderProjectsTab() {
   const projs = PROJECTS[sbId] || [];
   const entities = ENTITIES[sbId] || [];
 
-  // Importing section (cross-context, shown at top)
-  const importing = projs.filter(p => p.state === 'importing');
+  // Bouton "+ Import project" : n'a de sens que dans le scope d'une entity.
+  const importBtnWrap = document.getElementById('import-project-btn-wrap');
+  if (importBtnWrap) importBtnWrap.style.display = currentEntityId ? 'inline-block' : 'none';
+
+  // Bandeau de scope — visible uniquement quand une entity est sélectionnée.
+  // Les autres entities n'apparaissent alors plus du tout dans le panel.
+  const scopeBar = document.getElementById('entity-scope-bar');
+  if (scopeBar) {
+    if (currentEntityId) {
+      const ent = entities.find(e => e.id === currentEntityId);
+      const label = ent ? ent.label : currentEntityId;
+      const entPath = ent ? ent.path : `workspace/${currentEntityId}`;
+      scopeBar.style.display = 'flex';
+      scopeBar.innerHTML = `
+        <span class="entity-folder">${label}</span>
+        <span class="entity-path">${entPath}/</span>
+        <button class="btn btn-ghost btn-sm" title="Terminal ECA — entity ${label}" onclick="openLevelTerminal('entity', {sbId:'${sbId}', entityId:'${currentEntityId}', entityLabel:'${label}'})">🖥️</button>
+        <button class="btn btn-ghost btn-sm" style="margin-left:auto" onclick="clearEntitySelection()">← Toutes les entities</button>
+      `;
+    } else {
+      scopeBar.style.display = 'none';
+      scopeBar.innerHTML = '';
+    }
+  }
+
+  // Importing section — filtrée par entity si une entity est sélectionnée
+  const importingAll = projs.filter(p => p.state === 'importing');
+  const importing = currentEntityId ? importingAll.filter(p => p.entity === currentEntityId) : importingAll;
   const impSection = document.getElementById('importing-section');
   impSection.style.display = importing.length ? 'block' : 'none';
-  document.getElementById('importing-list').innerHTML = importing.map(p => projCard(p)).join('');
+  document.getElementById('importing-list').innerHTML = importing.length
+    ? `<div class="proj-grid">${importing.map(p => projCard(p)).join('')}</div>`
+    : '';
 
   // ── Sandbox vide : aucun projet du tout ──────────────────────
   if (projs.length === 0) {
@@ -2562,21 +2645,15 @@ function renderProjectsTab() {
         <div class="es-title">Sandbox vide</div>
         <div class="es-sub">Aucun projet dans ce sandbox pour l'instant.</div>
         <div class="es-sub" style="margin-top:6px;font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--text-muted)">${entityPathEx}</div>
-        <button class="btn btn-primary" onclick="openImportModal()" style="margin-top:16px;font-size:12px">
-          ＋ Importer un premier projet
-        </button>
       </div>`;
     document.getElementById('available-list').innerHTML = '';
     return;
   }
 
-  // Group remaining projects by context
-  const imported  = projs.filter(p => p.state === 'imported');
-  const available = projs.filter(p => p.state === 'available');
-
-  // Build context groups
-  const entityOrder = entities.map(c => c.id);
-  const allEntityIds = [...new Set([...entityOrder, ...projs.map(p => p.entity || '_none')])];
+  const importedAll  = projs.filter(p => p.state === 'imported');
+  const availableAll = projs.filter(p => p.state === 'available');
+  const imported  = currentEntityId ? importedAll.filter(p => p.entity === currentEntityId)  : importedAll;
+  const available = currentEntityId ? availableAll.filter(p => p.entity === currentEntityId) : availableAll;
 
   const _ctxExpandState = window._ctxExpandState || (window._ctxExpandState = {});
 
@@ -2591,9 +2668,9 @@ function renderProjectsTab() {
     const colClass = collapsed ? ' collapsed' : '';
     return `
       <div class="entity-group${colClass}" id="entityg-${key.replace(/[^a-z0-9]/gi,'_')}">
-        <div class="entity-header" onclick="toggleEntityGroup('${key}')">
-          <span class="entity-chevron">▼</span>
-          <span class="entity-folder">${label}</span>
+        <div class="entity-header">
+          <span class="entity-chevron" onclick="toggleEntityGroup('${key}')">▼</span>
+          <span class="entity-folder" style="cursor:pointer" title="Sélectionner cette entity" onclick="selectEntity('${entityId}')">${label}</span>
           <span class="entity-path">${ctxPath}</span>
           <span style="margin-left:auto;font-size:11px;color:var(--text-muted)">${count} projet${count > 1 ? 's' : ''}</span>
           <button class="btn btn-ghost btn-sm" style="padding:2px 7px;font-size:10px" title="Terminal ECA — entity ${label}" onclick="event.stopPropagation(); openLevelTerminal('entity', {sbId:'${sbId}', entityId:'${entityId}', entityLabel:'${label}'})">🖥️</button>
@@ -2605,10 +2682,42 @@ function renderProjectsTab() {
     `;
   }
 
-  // Imported section — grouped by context
+  // Vue scopée à une seule entity : plus de groupement — les autres entities
+  // n'apparaissent plus du tout dans le panel. Rendu en liste compacte
+  // (1 ligne/projet) plutôt qu'en grille de cartes hautes : on évite ainsi
+  // le scroll vertical inutile quand la largeur disponible est importante
+  // mais que les cartes grille restaient hautes (plusieurs lignes d'actions).
+  if (currentEntityId) {
+    document.getElementById('imported-list').innerHTML = imported.length
+      ? `<div class="proj-list">${imported.map(p => projRow(p)).join('')}</div>`
+      : `<div class="empty-state"><div class="es-icon">📂</div><div class="es-title">Aucun projet importé</div><div class="es-sub">Cliquez "Import project" pour commencer</div></div>`;
+
+    const availableSection = document.getElementById('available-section');
+    if (available.length) {
+      availableSection.style.display = 'block';
+      document.getElementById('available-list').innerHTML =
+        `<div class="proj-list">${available.map(p => projRow(p)).join('')}</div>`;
+    } else {
+      // Rien à afficher : on masque toute la section (titre inclus) pour
+      // ne pas gaspiller d'espace vertical avec une info redondante.
+      availableSection.style.display = 'none';
+      document.getElementById('available-list').innerHTML = '';
+    }
+    return;
+  }
+
+  // Vue multi-entities : la section "Available" reste toujours visible
+  // (utile pour voir d'un coup d'œil ce qu'il reste à importer, tous
+  // entities confondus).
+  document.getElementById('available-section').style.display = 'block';
+
+  // Vue multi-entities (aucune sélection) — groupes collapsibles par entity
+  const entityOrder = entities.map(c => c.id);
+  const allEntityIds = [...new Set([...entityOrder, ...projs.map(p => p.entity || '_none')])];
+
   let importedHtml = '';
   if (imported.length === 0) {
-    importedHtml = `<div class="empty-state"><div class="es-icon">📂</div><div class="es-title">Aucun projet importé</div><div class="es-sub">Cliquez "Import project" pour commencer</div></div>`;
+    importedHtml = `<div class="empty-state"><div class="es-icon">📂</div><div class="es-title">Aucun projet importé</div><div class="es-sub">Sélectionnez une entity pour importer un projet</div></div>`;
   } else {
     for (const entityId of allEntityIds) {
       const grp = imported.filter(p => (p.entity || '_none') === entityId);
@@ -2617,7 +2726,6 @@ function renderProjectsTab() {
   }
   document.getElementById('imported-list').innerHTML = importedHtml;
 
-  // Available section — grouped by context
   let availableHtml = '';
   if (available.length === 0) {
     availableHtml = `<div style="color:var(--text-muted);font-size:13px;padding:8px 0">Tous les projets sont importés.</div>`;
@@ -2688,6 +2796,63 @@ function projCard(p) {
         <button class="btn btn-ghost" style="font-size:11px" onclick="openHistoryModal('${p.id}')">📋 Rapports (${(p.reports||[]).length})</button>
         <button class="btn btn-ghost" style="font-size:11px" title="Terminal ECA — projet ${p.id}" onclick="openLevelTerminal('project', {sbId: currentSandbox.id, entityId: p.entity, projId: p.id, projName: p.name})">🖥️</button>
       </div>
+    </div>
+  `;
+}
+
+// ─── PROJECT ROW ────────────────────────────────────────────────
+// Rendu compact 1 ligne/projet — utilisé dans la vue "entity scopée" pour
+// éviter le scroll inutile d'une grille de cartes hautes quand il y a
+// beaucoup de largeur disponible mais peu de hauteur (cf. demande : éviter
+// le scroll vertical alors que le panneau a de la place).
+function projRow(p) {
+  const typeIcons = { pdf: '📄', docx: '📝', zip: '🗜️', url: '🌐' };
+  const icon = typeIcons[p.type] || '📁';
+
+  if (p.state === 'importing') {
+    return `
+      <div class="proj-row importing">
+        <span class="pr-name">${icon} ${p.name}</span>
+        <span class="pr-id">${p.id}</span>
+        <span class="pr-meta">
+          <span class="import-progress"><div class="bar" style="width:${p.progress}%"></div></span>
+          <span style="color:var(--warn)">${p.progress}%</span>
+        </span>
+        <span class="badge importing">⏳ Importing</span>
+      </div>
+    `;
+  }
+  if (p.state === 'available') {
+    return `
+      <div class="proj-row not-imported">
+        <span class="pr-name">${icon} ${p.name}</span>
+        <span class="pr-id">${p.id}</span>
+        <span class="pr-meta"><span class="badge pending">Not imported</span></span>
+        <span class="pr-actions">
+          <button class="btn btn-ghost btn-sm" onclick="quickImport('${p.id}')">↑ Import</button>
+        </span>
+      </div>
+    `;
+  }
+  // imported
+  const comp = p.compliance;
+  const compColor = comp >= 90 ? 'var(--success)' : comp >= 75 ? 'var(--warn)' : 'var(--error)';
+  return `
+    <div class="proj-row imported">
+      <span class="pr-name" title="${p.name}">${icon} ${p.name}</span>
+      <span class="pr-id" title="${p.id}">${p.id}</span>
+      <span class="pr-meta">
+        <span><span style="color:var(--accent)" class="mono">${p.frames}</span> frames</span>
+        <span><span style="color:var(--info)" class="mono">${p.evidence}</span> evidence</span>
+        <span style="color:${compColor};font-weight:600" class="mono">${comp}%</span>
+        <span>Last run: ${p.lastRun}</span>
+      </span>
+      <span class="pr-actions">
+        <button class="btn btn-success btn-sm" onclick="selectProjectPipeline('${p.id}')">▶ Pipeline</button>
+        <button class="btn btn-ghost btn-sm" onclick="openImportModal('${p.id}')" title="Ré-importer">↺</button>
+        <button class="btn btn-ghost btn-sm" onclick="openHistoryModal('${p.id}')" title="Rapports (${(p.reports||[]).length})">📋 ${(p.reports||[]).length}</button>
+        <button class="btn btn-ghost btn-sm" title="Terminal ECA — projet ${p.id}" onclick="openLevelTerminal('project', {sbId: currentSandbox.id, entityId: p.entity, projId: p.id, projName: p.name})">🖥️</button>
+      </span>
     </div>
   `;
 }
@@ -3021,7 +3186,6 @@ Run : ${new Date().toISOString().slice(0,19).replace('T',' ')} UTC
     <div class="verdict-actions">
       <div class="va-label" style="display:flex;align-items:center;gap:10px">
         <span>Actions post-verdict via <code class="mono" style="font-size:10px">chorus-check</code> (ECA skill)</span>
-        <button class="btn btn-ghost btn-sm" style="margin-left:auto;font-size:11px" onclick="openReportViewFromVerdict()">📊 Voir le rapport</button>
       </div>
       <div class="va-btns">
         <button class="va-btn" id="va-btn-summary" onclick="runChorusCheckAction('summary')">
@@ -3260,18 +3424,6 @@ function openReportView(reportInfo) {
   if (completeBtn) completeBtn.style.display = (reportInfo && reportInfo.kind === 'explain') ? '' : 'none';
 
   document.getElementById('report-view-overlay').hidden = false;
-}
-
-function openReportViewFromVerdict() {
-  if (!currentProject || !currentSandbox) return;
-  const proj = currentProject;
-  const reportInfo = {
-    icon: '📋',
-    label: `compliance-report-${proj.id}.md`,
-    desc: `SOLVED · ${proj.frames - 1}/${proj.frames} CONFORMES`,
-    path: `sandboxes/${currentSandbox.id}/workspace/compliance-report-${proj.id}.md`
-  };
-  openReportView(reportInfo);
 }
 
 function closeReportView() {
@@ -4369,11 +4521,16 @@ function openImportModal(reimportProjId) {
     document.getElementById('import-path').value = '';
   }
 
-  // Populate context dropdown for current sandbox
+  // Populate context dropdown for current sandbox — pré-sélectionne l'entity
+  // actuellement scopée (le bouton Import n'est de toute façon visible que
+  // dans ce cas), ou celle du projet en cas de ré-import.
   const entitySel = document.getElementById('import-context');
   const entities = currentSandbox ? (ENTITIES[currentSandbox.id] || []) : [];
+  const preselectId = reimportProjId
+    ? ((PROJECTS[currentSandbox?.id]||[]).find(p=>p.id===reimportProjId)?.entity)
+    : currentEntityId;
   entitySel.innerHTML = entities.map(c =>
-    `<option value="${c.id}">${c.label} — ${c.path}</option>`
+    `<option value="${c.id}"${c.id === preselectId ? ' selected' : ''}>${c.label} — ${c.path}</option>`
   ).join('');
   if (!entities.length) {
     // Aucun niveau 'default' : pas d'entity ⇒ pas d'option sélectionnable,

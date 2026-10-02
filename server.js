@@ -273,25 +273,38 @@ app.post('/api/sandboxes/:sbId/entities/:entityId/projects/:projId/run', (req, r
 
   spawnPerl(args, sbPath, res, () => {
     // run.pl écrit son rapport JSON dans <sandbox>/reports/run-report-*.json
+    // SANS identifiant de projet dans le nom de fichier — le seul lien
+    // fiable est le champ interne `project_file` (chemin absolu passé en
+    // argument à run.pl, ici = inputFile). On ne peut donc PAS se contenter
+    // de prendre "le fichier le plus récent du dossier" : si un autre projet
+    // vient d'être lancé entre-temps, on retournerait le mauvais rapport.
     const sbReportsDir = path.join(sbPath, 'reports');
     let reportFile = null;
     let reportData = null;
     try {
       const files = fs.readdirSync(sbReportsDir)
         .filter(f => f.startsWith('run-report-') && f.endsWith('.json'))
-        .sort();
-      reportFile = files.pop() || null;
-      if (reportFile) {
-        const json = JSON.parse(fs.readFileSync(path.join(sbReportsDir, reportFile), 'utf8'));
-        reportData = {
-          verdict:      json.pipeline_solved ? 'SOLVED' : 'FAILED',
-          totalFrames:  json.n_total ?? 0,
-          conformes:    json.n_conforme ?? 0,
-          nonConformes: json.n_non_conforme ?? 0,
-          aConfirmer:   json.n_incertain ?? 0,
-          norm:         null,
-          date:         (json.generated_at || '').slice(0, 10) || null,
-        };
+        .sort(); // ordre croissant par timestamp (nom de fichier)
+
+      // On part de la fin (plus récent en premier) et on garde le premier
+      // dont project_file correspond exactement au projet lancé ici.
+      for (let i = files.length - 1; i >= 0; i--) {
+        const f = files[i];
+        try {
+          const json = JSON.parse(fs.readFileSync(path.join(sbReportsDir, f), 'utf8'));
+          if (json.project_file !== inputFile) continue;
+          reportFile = f;
+          reportData = {
+            verdict:      json.pipeline_solved ? 'SOLVED' : 'FAILED',
+            totalFrames:  json.n_total ?? 0,
+            conformes:    json.n_conforme ?? 0,
+            nonConformes: json.n_non_conforme ?? 0,
+            aConfirmer:   json.n_incertain ?? 0,
+            norm:         null,
+            date:         (json.generated_at || '').slice(0, 10) || null,
+          };
+          break;
+        } catch { /* fichier corrompu/illisible — on continue */ }
       }
     } catch {}
 
@@ -301,7 +314,10 @@ app.post('/api/sandboxes/:sbId/entities/:entityId/projects/:projId/run', (req, r
         line: `  Verdict : ${reportData.verdict} — ${reportData.conformes}/${reportData.totalFrames} CONFORMES`
       });
     } else {
-      sseSend(res, 'log', { line: '⚠ Aucun rapport run-report-*.json trouvé après run.pl', level: 'warn' });
+      sseSend(res, 'log', {
+        line: `⚠ Aucun run-report-*.json trouvé pour project_file=${inputFile} après run.pl`,
+        level: 'warn'
+      });
     }
 
     sseDone(res, { reportFile, reportData });
@@ -512,6 +528,13 @@ const HTML_FILE = path.join(__dirname, 'chorus-web.html');
 
 app.get('/', (req, res) => {
   if (fs.existsSync(HTML_FILE)) {
+    // Désactive le cache navigateur sur la page principale : évite de servir
+    // une version obsolète après chaque rebuild en dev (ETag/Last-Modified
+    // suffisaient en théorie, mais certains navigateurs/proxys s'y fient
+    // trop agressivement en réutilisation silencieuse).
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
     res.sendFile(HTML_FILE);
   } else {
     res.send(`

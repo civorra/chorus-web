@@ -119,6 +119,39 @@ function parseReport(content) {
   return result;
 }
 
+// ── Index des run-report-*.json (racine du sandbox) ───────────
+//
+// run.pl (quand il persiste un rapport — cf. sandboxes CyberSec) écrit
+// <sandbox>/reports/run-report-<timestamp>.json. Le NOM de fichier ne
+// contient aucun identifiant de projet : le seul lien fiable est le champ
+// interne `project_file`, qui contient le chemin absolu passé en argument
+// à run.pl (= workspace/<entity>/<slug>.json). On indexe donc tous ces
+// fichiers une fois par scan de sandbox, par basename(project_file).
+//
+// Fichiers triés par nom (= par timestamp croissant) avant indexation afin
+// que la dernière écriture dans la Map soit toujours la plus récente pour
+// un même projet.
+
+function buildRunReportIndex(sbPath) {
+  const index = new Map(); // basename(project_file) → { file, data }
+  const dir = path.join(sbPath, 'reports');
+  let files = [];
+  try {
+    files = fs.readdirSync(dir)
+      .filter(f => f.startsWith('run-report-') && f.endsWith('.json'))
+      .sort();
+  } catch { return index; }
+
+  for (const f of files) {
+    try {
+      const json = JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8'));
+      if (!json.project_file) continue;
+      index.set(path.basename(json.project_file), { file: f, data: json });
+    } catch { /* fichier corrompu/illisible — ignoré */ }
+  }
+  return index;
+}
+
 // ── Scanner un projet — convention RÉELLE des sandboxes Chorus ───
 //
 //   workspace/<entity>/sources/*             → fichiers source déposés (flat, pas de sous-dossier par projet)
@@ -127,11 +160,14 @@ function parseReport(content) {
 //                                               = nom de fichier sans .json
 //   workspace/<entity>/reports/*             → rapports (flat), nommés <kind>-<slug>-<seq>.<ext>
 //                                               (compliance-report-, pipeline-out-, synthese-, explain-, import-report-)
+//   <sandbox>/reports/run-report-*.json      → rapport de run.pl (sandboxes CyberSec), lié par project_file
 //
-// Un projet est identifié par son <slug> ; ses rapports sont retrouvés par
-// correspondance de sous-chaîne sur ce slug dans workspace/<entity>/reports/.
+// Un projet est identifié par son <slug> ; ses rapports texte sont retrouvés
+// par correspondance de sous-chaîne sur ce slug dans workspace/<entity>/reports/,
+// son éventuel run-report JSON par correspondance exacte du nom de fichier
+// <slug>.json dans l'index run-report (cf. buildRunReportIndex ci-dessus).
 
-function scanFlatProject(entityPath, slug, jsonFile) {
+function scanFlatProject(entityPath, slug, jsonFile, runReportIndex) {
   const reportsDir = path.join(entityPath, 'reports');
   let reportFiles = [];
   try { reportFiles = fs.readdirSync(reportsDir).filter(f => f.includes(slug)); } catch {}
@@ -141,14 +177,39 @@ function scanFlatProject(entityPath, slug, jsonFile) {
     .sort()
     .pop() || null;
 
-  const reportFile = pickLatest(['compliance-report-', 'pipeline-out-'], '.md');
   const checkReports = reportFiles.filter(f =>
     (f.startsWith('synthese-') || f.startsWith('explain-')) && f.endsWith('.md')
   );
 
+  // Priorité 1 : run-report-*.json (sandbox root) — source structurée,
+  // authoritative, liée explicitement via project_file.
+  const runEntry = runReportIndex && runReportIndex.get(`${slug}.json`);
+
+  let reportFile = null;
   let reportData = null;
-  if (reportFile) {
-    reportData = parseReport(readFileSafe(path.join(reportsDir, reportFile)));
+
+  if (runEntry) {
+    const j = runEntry.data;
+    reportFile = `reports/${runEntry.file}`; // chemin relatif au sandbox, distinct de workspace/<entity>/reports/
+    reportData = {
+      verdict:      j.pipeline_solved ? 'SOLVED' : 'FAILED',
+      totalFrames:  j.n_total ?? 0,
+      conformes:    j.n_conforme ?? 0,
+      nonConformes: j.n_non_conforme ?? 0,
+      aConfirmer:   j.n_incertain ?? 0,
+      avgConf:      null,
+      norm:         null,
+      date:         (j.generated_at || '').slice(0, 10) || null,
+      rows:         [],
+    };
+  } else {
+    // Priorité 2 (fallback) : compliance-report-/pipeline-out- markdown
+    // dans workspace/<entity>/reports/ (autres templates de run.pl).
+    const mdFile = pickLatest(['compliance-report-', 'pipeline-out-'], '.md');
+    if (mdFile) {
+      reportFile = mdFile;
+      reportData = parseReport(readFileSafe(path.join(reportsDir, mdFile)));
+    }
   }
 
   const name = slug.replace(/[-_]/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
@@ -239,7 +300,7 @@ const scanProject = scanNestedProject;
 // Pas de niveau 'default' : chaque sandbox n'expose que les entities
 // réellement présentes sous workspace/.
 
-function scanEntity(sbPath, entityId) {
+function scanEntity(sbPath, entityId, runReportIndex) {
   const entityPath  = path.join(sbPath, 'workspace', entityId);
   const sourcesPath = path.join(entityPath, 'sources');
 
@@ -261,7 +322,7 @@ function scanEntity(sbPath, entityId) {
   const flatSlugs = new Set(projectJsonFiles.map(f => f.replace(/\.json$/i, '')));
 
   const flatProjects = [...flatSlugs].map(slug =>
-    scanFlatProject(entityPath, slug, path.join(entityPath, `${slug}.json`))
+    scanFlatProject(entityPath, slug, path.join(entityPath, `${slug}.json`), runReportIndex)
   );
 
   // 2) Convention alternative : sous-dossiers sources/<projId>/ dédiés
@@ -307,10 +368,14 @@ function scanSandbox(sbId) {
     }
   }
 
+  // Index des run-report-*.json du sandbox (une seule lecture pour toutes
+  // les entities — cf. buildRunReportIndex § lien project_file).
+  const runReportIndex = buildRunReportIndex(sbPath);
+
   // Entities : 1er niveau de workspace/ — aucun niveau 'default'
   const workspacePath = path.join(sbPath, 'workspace');
   const entityIds     = listDirs(workspacePath);
-  const entities      = entityIds.map(eId => scanEntity(sbPath, eId));
+  const entities      = entityIds.map(eId => scanEntity(sbPath, eId, runReportIndex));
 
   return { id: sbId, name, norm, standard, desc, path: sbPath, entities };
 }
