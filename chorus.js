@@ -39,6 +39,178 @@ function fileExists(p) {
   try { fs.accessSync(p); return true; } catch { return false; }
 }
 
+// ── Parsing org-mode minimal (tables, headings) ───────────────
+//
+// Pas un parseur org complet — juste ce qu'il faut pour extraire les tables
+// pipe et les sections `* Heading` / `** Heading` des fichiers KB générés
+// par chorus-feed/chorus-check (agent/chorus/index.org et <slug>.org),
+// dont le format est strictement conventionnel (cf. chorus-feed.md,
+// chorus-engine-yaml.md § Rule Documentation Standard).
+
+function extractOrgTable(content, headingRegex) {
+  const lines = content.split('\n');
+  const idx = lines.findIndex(l => headingRegex.test(l.trim()));
+  if (idx === -1) return [];
+  const rows = [];
+  for (let i = idx + 1; i < lines.length; i++) {
+    const trimmed = lines[i].trim();
+    if (!trimmed.startsWith('|')) {
+      if (rows.length) break;      // table terminée
+      if (/^\*+\s+\S/.test(trimmed)) break; // nouvelle section sans table
+      continue;
+    }
+    if (/^\|[-+]+\|?$/.test(trimmed)) continue; // ligne séparatrice |---+---|
+    const cells = trimmed.split('|').slice(1, -1).map(c => c.trim());
+    rows.push(cells);
+  }
+  return rows;
+}
+
+function extractOrgSection(content, headingRegex, maxLen) {
+  const lines = content.split('\n');
+  const idx = lines.findIndex(l => headingRegex.test(l.trim()));
+  if (idx === -1) return '';
+  const level = (lines[idx].match(/^\*+/) || ['*'])[0].length;
+  const out = [];
+  for (let i = idx + 1; i < lines.length; i++) {
+    const m = lines[i].match(/^(\*+)\s+\S/);
+    if (m && m[1].length <= level) break; // section de même niveau ou supérieur
+    out.push(lines[i]);
+  }
+  let text = out.join('\n').replace(/^\s*\n+/, '').trim();
+  if (maxLen && text.length > maxLen) {
+    text = text.slice(0, maxLen).replace(/\s+\S*$/, '') + '…';
+  }
+  return text;
+}
+
+function extractFrameCatalogue(content) {
+  const lines = content.split('\n');
+  const startIdx = lines.findIndex(l => /^\*\*\s+Frame catalogue/i.test(l.trim()));
+  if (startIdx === -1) return [];
+  const frames = [];
+  let current = null;
+  for (let i = startIdx + 1; i < lines.length; i++) {
+    const line = lines[i];
+    if (/^\*\*\s+\S/.test(line.trim())) break; // fin de section (niveau 2)
+    const h3 = line.match(/^\*\*\*\s+(.+)/);
+    if (h3) {
+      const name = h3[1].trim();
+      if (/^type_element\s*=/i.test(name)) continue; // sous-cas, pas une nouvelle Frame
+      current = { name, inputs: [], computed: [], optional: [] };
+      frames.push(current);
+      continue;
+    }
+    if (!current) continue;
+    const mIn = line.match(/Slots d'entrée\s*:\s*(.+)/i);
+    if (mIn) current.inputs = mIn[1].replace(/[\[\]]/g, '').split(',').map(s => s.trim()).filter(Boolean);
+    const mCalc = line.match(/Slots calculés\s*:\s*(.+)/i);
+    if (mCalc) current.computed = mCalc[1].replace(/[\[\]]/g, '').split(',').map(s => s.trim()).filter(Boolean);
+    const mOpt = line.match(/Slots optionnels\s*:\s*(.+)/i);
+    if (mOpt) current.optional = mOpt[1].replace(/[\[\]]/g, '').split(',').map(s => s.trim()).filter(Boolean);
+  }
+  return frames;
+}
+
+function extractRuleCatalogue(content) {
+  const lines = content.split('\n');
+  const rules = [];
+  let current = null;
+  let inIntent = false;
+  // Tout champ org connu pouvant suivre "Intent :" dans une entrée de Rule
+  // Catalogue — sert à arrêter la concaténation des lignes de continuation
+  // avant d'aspirer Signature/Description/Notes/etc. (sections suivantes).
+  const fieldRe = /^\s*(CHERCHER|FIND|CONDITION|EXCEPTION|ACTION|EFFET|Notes|Signature|Description|Called by|Exported)\s*:/i;
+  for (const line of lines) {
+    const h = line.match(/^\*\*\s+Rule:\s*(.+)/i);
+    if (h) {
+      if (current) rules.push(current);
+      current = { id: h[1].trim(), intent: '' };
+      inIntent = false;
+      continue;
+    }
+    if (!current) continue;
+    const mIntent = line.match(/^\s*Intent\s*:\s*(.+)/i);
+    if (mIntent) { current.intent = mIntent[1].trim(); inIntent = true; continue; }
+    if (!inIntent) continue;
+    if (line.trim() === '' || fieldRe.test(line) || /^\*+\s/.test(line.trim())) {
+      inIntent = false;
+    } else if (/^\s{3,}\S/.test(line)) {
+      current.intent += ' ' + line.trim();
+    } else {
+      inIntent = false;
+    }
+  }
+  if (current) rules.push(current);
+  return rules;
+}
+
+// ── Scanner le corpus + sa modélisation KB pour un sandbox ────
+//
+// Source d'information : agent/chorus/index.org (pipeline + table "Integrated
+// corpus" reliant chaque fichier corpus aux agents qui l'exploitent) et
+// chaque agent/chorus/<slug>.org (domaine, Frame catalogue, Rule catalogue).
+// Complété par un listing réel de corpus/ et un comptage des fichiers YAML
+// de rules/<slug>/ (donnée filesystem, toujours à jour même si l'org n'a
+// pas encore été relu).
+
+function scanSandboxCorpus(sbId) {
+  const sbPath = path.join(SANDBOXES_DIR(), sbId);
+
+  // Fichiers corpus réels sur le filesystem
+  const corpusDir = path.join(sbPath, 'corpus');
+  let corpusFiles = [];
+  try {
+    corpusFiles = fs.readdirSync(corpusDir, { withFileTypes: true })
+      .filter(e => e.isFile())
+      .map(e => {
+        let size = null;
+        try { size = fs.statSync(path.join(corpusDir, e.name)).size; } catch {}
+        return { name: e.name, size };
+      });
+  } catch {}
+
+  const indexContent = readFileSafe(path.join(sbPath, 'agent', 'chorus', 'index.org'));
+  if (!indexContent) {
+    return { title: null, pipeline: [], integratedCorpus: [], corpusFiles };
+  }
+
+  const title = (indexContent.match(/#\+TITLE:\s*(.+)/) || [])[1] || sbId;
+
+  const pipelineRows = extractOrgTable(indexContent, /^\*\s+Pipeline global/i);
+  const pipeline = pipelineRows.slice(1)
+    .filter(r => r.length >= 5 && /^\d+$/.test(r[0]))
+    .map(r => ({ pos: r[0], module: r[1], slug: r[2], kb: r[3], status: r[4] }));
+
+  const corpusRows = extractOrgTable(indexContent, /^\*\s+Integrated corpus/i);
+  const integratedCorpus = corpusRows.slice(1)
+    .filter(r => r.length >= 3)
+    .map(r => ({ num: r[0], file: r[1], agents: r[2] }));
+
+  for (const ag of pipeline) {
+    const agentContent = readFileSafe(path.join(sbPath, 'agent', 'chorus', `${ag.slug}.org`));
+    ag.corpusFile  = null;
+    ag.pipelinePos = null;
+    ag.domain      = '';
+    ag.frames      = [];
+    ag.rules       = [];
+    ag.ruleFileCount = 0;
+    try {
+      ag.ruleFileCount = fs.readdirSync(path.join(sbPath, 'rules', ag.slug))
+        .filter(f => f.endsWith('.yml')).length;
+    } catch {}
+    if (agentContent) {
+      ag.corpusFile  = (agentContent.match(/#\+CORPUS_FILE:\s*(.+)/) || [])[1] || null;
+      ag.pipelinePos = (agentContent.match(/#\+PIPELINE_POS:\s*(.+)/) || [])[1] || null;
+      ag.domain      = extractOrgSection(agentContent, /^\*\s+Domain/i, 900);
+      ag.frames      = extractFrameCatalogue(agentContent);
+      ag.rules       = extractRuleCatalogue(agentContent);
+    }
+  }
+
+  return { title, pipeline, integratedCorpus, corpusFiles };
+}
+
 // ── Parser compliance-report-*.md ────────────────────────────
 //
 // Format produit par run.pl (exemple) :
@@ -451,4 +623,5 @@ module.exports = {
   readReport,
   writeCheckReport,
   buildRunReportIndex,
+  scanSandboxCorpus,
 };

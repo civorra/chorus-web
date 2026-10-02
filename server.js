@@ -146,6 +146,17 @@ app.get('/api/sandboxes/:sbId', (req, res) => {
   }
 });
 
+// Corpus + modélisation KB d'un sandbox (bouton "📚 Corpus" — pipeline,
+// Frame catalogue, Rule catalogue par agent, fichiers corpus réels).
+app.get('/api/sandboxes/:sbId/corpus', (req, res) => {
+  try {
+    const corpus = chorus.scanSandboxCorpus(req.params.sbId);
+    res.json({ ok: true, corpus });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
 // ═════════════════════════════════════════════════════════════
 // ROUTE 2 — POST /api/sandboxes/:sbId/entities/:entityId/projects/import
 //
