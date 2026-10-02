@@ -157,6 +157,18 @@ app.get('/api/sandboxes/:sbId/corpus', (req, res) => {
   }
 });
 
+// Contenu brut de agent/chorus/<slug>.org pour un agent — bouton "👁️ Détails"
+// de l'onglet Agents (panneau Corpus).
+app.get('/api/sandboxes/:sbId/agents/:slug/org', (req, res) => {
+  try {
+    const content = chorus.readAgentOrgFile(req.params.sbId, req.params.slug);
+    if (!content) return res.status(404).json({ ok: false, error: 'Fichier KB agent introuvable' });
+    res.type('text/plain').send(content);
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
 // ═════════════════════════════════════════════════════════════
 // ROUTE 2 — POST /api/sandboxes/:sbId/entities/:entityId/projects/import
 //

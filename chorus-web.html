@@ -4297,6 +4297,40 @@ function closeMdView() {
   document.getElementById('md-view-overlay').hidden = true;
 }
 
+// ─── AGENT KB ORG VIEWER ────────────────────────────────────────
+// Affiche le contenu intégral réel de agent/chorus/<slug>.org (bouton
+// "👁️ Détails" de l'onglet Agents) — même modale que le viewer markdown,
+// avec un léger préprocesseur org→markdown (titres "*"→"#", séparateurs de
+// table "|---+---|"→"|---|---|") pour un rendu correct via marked.js. Le
+// fichier reste cependant servi tel quel par le backend — aucune donnée
+// n'est reformulée, seule la syntaxe de présentation est adaptée.
+function orgToMarkdownLite(text) {
+  return text
+    .replace(/^(\*+)(\s+)/gm, (m, stars) => '#'.repeat(stars.length) + ' ')
+    .replace(/^\|([\-+]+)\|$/gm, line => '|' + line.slice(1, -1).replace(/\+/g, '-').split('').map(c => c === '|' ? '|' : '-').join('') + '|')
+    .replace(/^#\+\w+:.*$/gm, '');
+}
+
+async function openAgentOrgView(slug) {
+  if (!currentSandbox) return;
+  const sbId = currentSandbox.id;
+  document.getElementById('mdv-title').textContent = `${slug}.org`;
+  document.getElementById('mdv-sub').textContent = `${sbId} / agent/chorus/${slug}.org`;
+  document.getElementById('mdv-content').innerHTML = 'Chargement…';
+  document.getElementById('md-view-overlay').hidden = false;
+
+  try {
+    const r = await fetch(`${API}/api/sandboxes/${sbId}/agents/${slug}/org`);
+    if (!r.ok) throw new Error((await r.json().catch(()=>({error:r.statusText}))).error || r.statusText);
+    const text = await r.text();
+    document.getElementById('mdv-content').innerHTML =
+      (typeof marked !== 'undefined') ? marked.parse(orgToMarkdownLite(text)) : `<pre>${text}</pre>`;
+  } catch (e) {
+    document.getElementById('mdv-content').innerHTML =
+      `<div style="color:var(--error);font-size:12px">Impossible de charger ${slug}.org : ${e.message}</div>`;
+  }
+}
+
 // ─── SANDBOX CORPUS MODAL ─────────────────────────────────────
 // Reconnecté aux vraies données KB (agent/chorus/index.org + <slug>.org) via
 // GET /api/sandboxes/:sbId/corpus — plus aucune donnée simulée (SANDBOX_CORPUS
@@ -4437,9 +4471,11 @@ async function openSandboxCorpus() {
         <div class="mono" style="font-size:10px;color:var(--text-muted);margin-bottom:6px">${ag.module}</div>
         <div style="font-size:11px;color:var(--text-secondary);margin-bottom:4px">${ag.status || ''}</div>
         ${ag.corpusFile ? `<div style="font-size:10px;color:var(--text-muted);font-family:'JetBrains Mono',monospace;margin-bottom:6px">📄 ${ag.corpusFile}</div>` : ''}
-        <div style="display:flex;gap:10px;font-size:11px;color:var(--text-secondary)">
+        <div style="display:flex;align-items:center;gap:10px;font-size:11px;color:var(--text-secondary)">
           <span>🧩 ${(ag.frames||[]).length} frame${(ag.frames||[]).length!==1?'s':''}</span>
           <span>📜 ${ag.ruleFileCount} règle${ag.ruleFileCount!==1?'s':''}</span>
+          <span style="flex:1"></span>
+          <button class="btn btn-ghost btn-sm" style="padding:2px 9px;font-size:10px" title="Voir ${ag.slug}.org (KB agent)" onclick="openAgentOrgView('${ag.slug}')">👁️ Détails</button>
         </div>
       </div>
     `).join('');

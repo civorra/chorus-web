@@ -169,6 +169,16 @@ const PRESPLIT_SOURCE_RE = /pr[ée]-?split|phase\s*2|agr[ée]g[ée]e?s?/i;
 // corpus" au sens normatif).
 const NON_DOC_EXT_RE = /\.(log|pyc|pyo|tmp|bak|swp)$/i;
 
+// Lecture brute de agent/chorus/<slug>.org pour un agent donné — utilisé par
+// la vue "Détails" de l'onglet Agents (contenu intégral de la KB, pas
+// seulement les sections déjà extraites par extractFrameCatalogue/
+// extractRuleCatalogue).
+function readAgentOrgFile(sbId, slug) {
+  if (!/^[\w-]+$/.test(slug)) return null; // sécurité : nom de slug simple uniquement
+  const sbPath = path.join(SANDBOXES_DIR(), sbId);
+  return readFileSafe(path.join(sbPath, 'agent', 'chorus', `${slug}.org`));
+}
+
 // ── README.org — synthèse structurelle (titre, statut, table Corpus) ──────
 //
 // README.org (quand présent) contient une table "* Corpus" bien plus riche
@@ -751,4 +761,5 @@ module.exports = {
   writeCheckReport,
   buildRunReportIndex,
   scanSandboxCorpus,
+  readAgentOrgFile,
 };
