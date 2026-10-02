@@ -1407,11 +1407,29 @@ input, select, textarea { font-family: inherit; }
 
     <!-- Content -->
     <main id="content">
-      <!-- PAGE: Sandboxes (pas de dashboard chiffré — navigation + terminal ECA par niveau) -->
+      <!-- PAGE: Global dashboard -->
       <div class="page active" id="page-global">
         <div class="page-header">
-          <h1>Sandboxes</h1>
-          <div class="subtitle">Chorus · Neuro-symbolic compliance engine — sélectionnez un sandbox ou ouvrez son terminal ECA</div>
+          <h1>Sandboxes overview</h1>
+          <div class="subtitle">Chorus · Neuro-symbolic compliance engine</div>
+        </div>
+        <div class="stats-grid" id="global-stats">
+          <div class="stat-card">
+            <div class="stat-label">Sandboxes</div>
+            <div class="stat-value accent" id="gs-sandboxes">—</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">Projects</div>
+            <div class="stat-value" id="gs-projects">—</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">Imported</div>
+            <div class="stat-value success" id="gs-imported">—</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">Pipeline runs</div>
+            <div class="stat-value warn" id="gs-runs">—</div>
+          </div>
         </div>
         <div class="sb-overview-grid" id="sandbox-cards"></div>
       </div>
@@ -2430,8 +2448,15 @@ async function initFromServer() {
 
 // ─── GLOBAL DASHBOARD ─────────────────────────────────────────
 function renderGlobalDashboard() {
-  // Pas de dashboard chiffré global : on se contente de préparer la liste
-  // de cartes sandbox (navigation) + raccourci terminal ECA par sandbox.
+  const totalProj    = Object.values(PROJECTS).reduce((s, p) => s + p.length, 0);
+  const totalImported = Object.values(PROJECTS).reduce((s, p) => s + p.filter(x => x.state === 'imported').length, 0);
+  const totalRuns    = SANDBOXES.reduce((s, x) => s + x.runs, 0);
+
+  document.getElementById('gs-sandboxes').textContent = SANDBOXES.length;
+  document.getElementById('gs-projects').textContent = totalProj;
+  document.getElementById('gs-imported').textContent = totalImported;
+  document.getElementById('gs-runs').textContent = totalRuns;
+
   const container = document.getElementById('sandbox-cards');
   container.innerHTML = SANDBOXES.map(sb => {
     const importPct = sb.projects_total > 0

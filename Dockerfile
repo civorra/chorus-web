@@ -7,6 +7,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     perl-modules \
     make \
     libyaml-perl \
+    libjson-perl \
     && rm -rf /var/lib/apt/lists/*
 
 # ── Installation native des modules Chorus::* (CPAN local, depuis les sources) ──
@@ -23,10 +24,10 @@ RUN cd /usr/src/chorus-engine \
 
 WORKDIR /app
 
-COPY chorus-mvp0-v43/package.json .
+COPY chorus-web/package.json .
 RUN npm install --omit=dev
 
-COPY chorus-mvp0-v43/server.js chorus-mvp0-v43/chorus.js chorus-mvp0-v43/prompts.js chorus-mvp0-v43/chorus-web.html ./
+COPY chorus-web/server.js chorus-web/chorus.js chorus-web/prompts.js chorus-web/chorus-web.html ./
 
 # CHORUS_HOME est monté en volume depuis l'hôte, uniquement pour les données
 # (sandboxes, scripts run.pl générés par sandbox, etc.) — plus pour les

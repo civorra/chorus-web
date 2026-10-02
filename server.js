@@ -1,9 +1,11 @@
 /**
  * server.js — Chorus Web MVP0
  *
- * Convention sandbox :
- *   workspace/<entity>/sources/<projId>/   → projets à importer (+ frames.pl post-import)
- *   workspace/<entity>/reports/<projId>/   → rapports de conformité
+ * Convention sandbox (réelle — cf. chorus.js § scanFlatProject) :
+ *   workspace/<entity>/sources/*            → fichiers source déposés (flat)
+ *   workspace/<entity>/<projId>.json        → projet aligné (chorus-import-project), un fichier = un projet
+ *   workspace/<entity>/reports/*            → rapports (flat), reliés au projet par sous-chaîne <projId>
+ * Convention alternative conservée en fallback : workspace/<entity>/sources/<projId>/frames.pl
  * Aucun niveau 'default' : <entity> doit toujours être explicite.
  *
  * Endpoints :
@@ -217,7 +219,15 @@ app.post('/api/sandboxes/:sbId/entities/:entityId/projects/import',
 // ═════════════════════════════════════════════════════════════
 // ROUTE 3 — POST /api/sandboxes/:sbId/entities/:entityId/projects/:projId/run
 //
-// Lance run.pl sur le projet → compliance-report-*.md (écrit dans reports/)
+// Lance run.pl sur le projet.
+//
+// Interface réelle de run.pl (généré par chorus-check à la racine du
+// sandbox — PAS dans CHORUS_HOME) :
+//   perl run.pl <fichier-project.json>      ← cwd = racine du sandbox ($Bin)
+// → écrit <sandbox>/reports/run-report-<timestamp>.json (JSON structuré,
+//   distinct de workspace/<entity>/reports/ qui contient les rapports
+//   chorus-import-project / chorus-check).
+//
 // SSE events : log { line, level? } | done { reportFile, reportData } | error
 // ═════════════════════════════════════════════════════════════
 
@@ -234,49 +244,64 @@ app.post('/api/sandboxes/:sbId/entities/:entityId/projects/:projId/run', (req, r
   }
 
   const entityPath = path.join(sbPath, 'workspace', entityId);
-  const srcDir      = path.join(entityPath, 'sources', projId);
-  const repDir      = path.join(entityPath, 'reports', projId);
-  const framesFile  = path.join(srcDir, 'frames.pl');
+  const runPl       = path.join(sbPath, 'run.pl');
 
-  if (!fs.existsSync(framesFile)) {
-    return sseError(res, `frames.pl introuvable pour le projet ${projId} — lancez d'abord l'import`);
+  // Convention réelle : workspace/<entity>/<projId>.json (projet aligné par
+  // chorus-import-project — voir chorus.js § scanFlatProject).
+  // Fallback legacy : workspace/<entity>/sources/<projId>/frames.pl.
+  const flatProjectFile  = path.join(entityPath, `${projId}.json`);
+  const legacyFramesFile = path.join(entityPath, 'sources', projId, 'frames.pl');
+
+  let inputFile = null;
+  if (fs.existsSync(flatProjectFile)) {
+    inputFile = flatProjectFile;
+  } else if (fs.existsSync(legacyFramesFile)) {
+    inputFile = legacyFramesFile;
+  } else {
+    return sseError(res, `Projet introuvable : ni ${projId}.json ni sources/${projId}/frames.pl — lancez d'abord l'import`);
   }
 
-  fs.mkdirSync(repDir, { recursive: true });
+  if (!fs.existsSync(runPl)) {
+    return sseError(res, `run.pl introuvable à la racine du sandbox (${runPl}) — générez-le d'abord via le skill chorus-check`);
+  }
 
-  sseSend(res, 'log', { line: `→ perl run.pl --entity ${entityId} --project ${projId}` });
+  sseSend(res, 'log', { line: `→ perl run.pl ${inputFile}` });
 
-  // run.pl est lancé depuis CHORUS_HOME
-  // Adapter les args selon l'interface réelle de run.pl
-  const args = [
-    'run.pl',
-    '--sandbox', sbId,
-    '--entity',  entityId,
-    '--project', projId,
-    '--source',  srcDir,
-    '--output',  repDir,
-  ];
+  // run.pl doit être lancé avec cwd = racine du sandbox ($Bin interne au
+  // script : lib/, rules/, reports/ y sont tous relatifs).
+  const args = ['run.pl', inputFile];
 
-  spawnPerl(args, chorus.CHORUS_HOME(), res, () => {
-    // Chercher le rapport généré dans reports/
+  spawnPerl(args, sbPath, res, () => {
+    // run.pl écrit son rapport JSON dans <sandbox>/reports/run-report-*.json
+    const sbReportsDir = path.join(sbPath, 'reports');
     let reportFile = null;
+    let reportData = null;
     try {
-      const files = fs.readdirSync(repDir)
-        .filter(f => f.startsWith('compliance-report-') && f.endsWith('.md'))
+      const files = fs.readdirSync(sbReportsDir)
+        .filter(f => f.startsWith('run-report-') && f.endsWith('.json'))
         .sort();
       reportFile = files.pop() || null;
+      if (reportFile) {
+        const json = JSON.parse(fs.readFileSync(path.join(sbReportsDir, reportFile), 'utf8'));
+        reportData = {
+          verdict:      json.pipeline_solved ? 'SOLVED' : 'FAILED',
+          totalFrames:  json.n_total ?? 0,
+          conformes:    json.n_conforme ?? 0,
+          nonConformes: json.n_non_conforme ?? 0,
+          aConfirmer:   json.n_incertain ?? 0,
+          norm:         null,
+          date:         (json.generated_at || '').slice(0, 10) || null,
+        };
+      }
     } catch {}
 
-    let reportData = null;
     if (reportFile) {
-      const content = fs.readFileSync(path.join(repDir, reportFile), 'utf8');
-      reportData = chorus.parseReport(content);
-      sseSend(res, 'log', { line: `✓ Rapport généré : ${reportFile}` });
+      sseSend(res, 'log', { line: `✓ Rapport généré : reports/${reportFile}` });
       sseSend(res, 'log', {
-        line: `  Verdict : ${reportData.verdict || '?'} — ${reportData.conformes}/${reportData.totalFrames} CONFORMES`
+        line: `  Verdict : ${reportData.verdict} — ${reportData.conformes}/${reportData.totalFrames} CONFORMES`
       });
     } else {
-      sseSend(res, 'log', { line: '⚠ Aucun rapport trouvé après run.pl', level: 'warn' });
+      sseSend(res, 'log', { line: '⚠ Aucun rapport run-report-*.json trouvé après run.pl', level: 'warn' });
     }
 
     sseDone(res, { reportFile, reportData });
@@ -308,7 +333,10 @@ app.get('/api/sandboxes/:sbId/entities/:entityId/projects/:projId/check', async 
   try { sbPath = path.join(chorus.SANDBOXES_DIR(), sbId); }
   catch (e) { return sseError(res, e.message); }
 
-  const repDir = path.join(sbPath, 'workspace', entityId, 'reports', projId);
+  // Convention réelle : reports/ est "flat" — on filtre par sous-chaîne
+  // projId pour ne garder que les rapports de ce projet (cf. chorus.js
+  // § scanFlatProject).
+  const repDir = path.join(sbPath, 'workspace', entityId, 'reports');
   let reportContent = null;
   let reportFile    = null;
 
@@ -316,10 +344,10 @@ app.get('/api/sandboxes/:sbId/entities/:entityId/projects/:projId/check', async 
   const inputFile = req.query.input || null;
 
   try {
+    const allFiles = fs.readdirSync(repDir).filter(f => f.includes(projId)).sort();
     if (action === 'complete-report') {
       // Préférence : fichier explicitement passé, sinon dernier explain-*.md
-      const files = fs.readdirSync(repDir).sort();
-      const explainFiles = files.filter(f => f.startsWith('explain-') && f.endsWith('.md'));
+      const explainFiles = allFiles.filter(f => f.startsWith('explain-') && f.endsWith('.md'));
       reportFile = inputFile && explainFiles.includes(inputFile)
         ? inputFile
         : explainFiles.pop();
@@ -328,15 +356,15 @@ app.get('/api/sandboxes/:sbId/entities/:entityId/projects/:projId/check', async 
       }
       if (!reportContent) {
         // Fallback sur rapport de conformité brut
-        const runFiles = files.filter(f => f.startsWith('compliance-report-') && f.endsWith('.md'));
+        const runFiles = allFiles.filter(f =>
+          (f.startsWith('compliance-report-') || f.startsWith('pipeline-out-')) && f.endsWith('.md'));
         reportFile = runFiles.pop();
         if (reportFile) reportContent = fs.readFileSync(path.join(repDir, reportFile), 'utf8');
       }
     } else {
-      const files = fs.readdirSync(repDir)
-        .filter(f => f.startsWith('compliance-report-') && f.endsWith('.md'))
-        .sort();
-      reportFile = files.pop();
+      const runFiles = allFiles.filter(f =>
+        (f.startsWith('compliance-report-') || f.startsWith('pipeline-out-')) && f.endsWith('.md'));
+      reportFile = runFiles.pop();
       if (reportFile) {
         reportContent = fs.readFileSync(path.join(repDir, reportFile), 'utf8');
       }
@@ -409,12 +437,13 @@ app.post('/api/sandboxes/:sbId/entities/:entityId/projects/:projId/chat', async 
 
   if (!message) return res.status(400).json({ ok: false, error: 'message manquant' });
 
-  // Charger le contexte : rapport brut + éventuels rapports chorus-check (reports/)
+  // Charger le contexte : rapport brut + éventuels rapports chorus-check
+  // (reports/ est "flat" — on filtre par sous-chaîne projId)
   let context = '';
   try {
     const sbPath = path.join(chorus.SANDBOXES_DIR(), sbId);
-    const repDir = path.join(sbPath, 'workspace', entityId, 'reports', projId);
-    const files  = fs.readdirSync(repDir).filter(f => f.endsWith('.md')).sort();
+    const repDir = path.join(sbPath, 'workspace', entityId, 'reports');
+    const files  = fs.readdirSync(repDir).filter(f => f.includes(projId) && f.endsWith('.md')).sort();
 
     for (const f of files) {
       const content = fs.readFileSync(path.join(repDir, f), 'utf8');
