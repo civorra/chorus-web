@@ -1476,7 +1476,7 @@ input, select, textarea { font-family: inherit; }
 <div id="app">
   <!-- Topbar -->
   <header id="topbar">
-    <div class="logo">CHORUS<span>/web</span></div>
+    <div class="logo" onclick="goHome()" title="Retour à l'accueil" style="cursor:pointer">CHORUS<span>/web</span></div>
     <div class="breadcrumb" id="breadcrumb">
       <span class="current" id="bc-sandbox">Dashboard</span>
     </div>
@@ -2663,6 +2663,21 @@ function renderSidebar() {
       </div>
     </div>
   `).join('');
+}
+
+// ─── GO HOME (logo click) ──────────────────────────────────────
+// Retour au dashboard global (une carte par sandbox dans le panneau
+// central) — sans recharger la page, en réutilisant la grille déjà
+// peuplée par initFromServer() (#sandbox-cards n'est jamais vidée ailleurs).
+function goHome() {
+  currentSandbox  = null;
+  currentProject  = null;
+  currentEntityId = null;
+  document.querySelectorAll('.sandbox-item').forEach(el => el.classList.remove('active'));
+  const bc = document.getElementById('bc-sandbox');
+  if (bc) bc.textContent = 'Dashboard';
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  document.getElementById('page-global').classList.add('active');
 }
 
 // ─── SELECT SANDBOX ───────────────────────────────────────────
