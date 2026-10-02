@@ -2889,7 +2889,7 @@ function projCard(p) {
         <button class="btn btn-success btn-sm" onclick="selectProjectPipeline('${p.id}')">▶ Pipeline</button>
         <button class="btn btn-ghost" style="font-size:11px" onclick="openImportModal('${p.id}')">↺ Ré-importer</button>
         <button class="btn btn-ghost" style="font-size:11px" onclick="openHistoryModal('${p.id}')">📋 Rapports (${(p.reports||[]).length})</button>
-        <button class="btn btn-ghost" style="font-size:11px" title="Terminal ECA — projet ${p.id}" onclick="openLevelTerminal('project', {sbId: currentSandbox.id, entityId: p.entity, projId: p.id, projName: p.name})">🖥️</button>
+        <button class="btn btn-ghost" style="font-size:11px" title="Terminal ECA — projet ${p.id}" onclick="openLevelTerminal('project', {sbId: currentSandbox.id, entityId: '${p.entity}', projId: '${p.id}', projName: '${(p.name||'').replace(/'/g,"\\'")}'})">🖥️</button>
       </div>
     </div>
   `;
@@ -2946,7 +2946,7 @@ function projRow(p) {
         <button class="btn btn-success btn-sm" onclick="selectProjectPipeline('${p.id}')">▶ Pipeline</button>
         <button class="btn btn-ghost btn-sm" onclick="openImportModal('${p.id}')" title="Ré-importer">↺</button>
         <button class="btn btn-ghost btn-sm" onclick="openHistoryModal('${p.id}')" title="Rapports (${(p.reports||[]).length})">📋 ${(p.reports||[]).length}</button>
-        <button class="btn btn-ghost btn-sm" title="Terminal ECA — projet ${p.id}" onclick="openLevelTerminal('project', {sbId: currentSandbox.id, entityId: p.entity, projId: p.id, projName: p.name})">🖥️</button>
+        <button class="btn btn-ghost btn-sm" title="Terminal ECA — projet ${p.id}" onclick="openLevelTerminal('project', {sbId: currentSandbox.id, entityId: '${p.entity}', projId: '${p.id}', projName: '${(p.name||'').replace(/'/g,"\\'")}'})">🖥️</button>
       </span>
     </div>
   `;
@@ -4236,7 +4236,7 @@ function openHistoryModal(projId) {
           </div>
           <div class="hm-report-path" title="${r.path||''}">${r.path||''}</div>
           ${viewBtn}
-          <button class="btn btn-ghost btn-sm" style="padding:2px 7px;font-size:10px;flex-shrink:0" title="Terminal ECA — rapport ${r.label}" onclick="openLevelTerminal('report', {sbId:'${sbId}', entityId: proj.entity, projId:'${projId}', projName:'${proj.name}', reportFile:'${r.label}'})">🖥️</button>
+          <button class="btn btn-ghost btn-sm" style="padding:2px 7px;font-size:10px;flex-shrink:0" title="Terminal ECA — rapport ${r.label}" onclick="openLevelTerminal('report', {sbId:'${sbId}', entityId:'${proj.entity}', projId:'${projId}', projName:'${(proj.name||'').replace(/'/g,"\\'")}', reportFile:'${r.label}'})">🖥️</button>
         </div>`;
       }
       html += '</div>';
