@@ -44,6 +44,7 @@ const Anthropic = require('@anthropic-ai/sdk');
 
 const chorus  = require('./chorus');
 const prompts = require('./prompts');
+const eca     = require('./eca-client');
 
 const app    = express();
 const PORT   = parseInt(process.env.PORT || '3000');
@@ -121,6 +122,23 @@ function spawnPerl(args, cwd, res, onDone) {
 
   return proc;
 }
+
+// ═════════════════════════════════════════════════════════════
+// ROUTE 0 — GET /api/eca/health
+//
+// Ping réel d'eca-server (remplace la pastille de statut simulée côté
+// frontend — cf. chorus-web.html § bootServices).
+// ═════════════════════════════════════════════════════════════
+
+app.get('/api/eca/health', async (req, res) => {
+  const start = Date.now();
+  try {
+    await eca.ecaRequest('/api/v1/chats', 'GET');
+    res.json({ ok: true, latencyMs: Date.now() - start });
+  } catch (err) {
+    res.json({ ok: false, error: err.message, latencyMs: Date.now() - start });
+  }
+});
 
 // ═════════════════════════════════════════════════════════════
 // ROUTE 1 — GET /api/scan
@@ -444,25 +462,27 @@ app.get('/api/sandboxes/:sbId/entities/:entityId/projects/:projId/check', async 
     : action === 'explain' ? 'explain'
     : 'complete-report';
 
-  sseSend(res, 'log', { line: `→ chorus-${action === 'complete-report' ? 'complete-report' : `check --${action}`} (source: ${reportFile || '?'}, LLM: ${MODEL})` });
+  sseSend(res, 'log', { line: `→ chorus-${action === 'complete-report' ? 'complete-report' : `check --${action}`} via eca-server (source: ${reportFile || '?'})` });
 
-  // Stream LLM
-  let fullText = '';
+  // Appel au vrai serveur ECA headless (voir eca-client.js) au lieu d'un
+  // appel direct au SDK Anthropic — route via un chat ECA dédié à cette
+  // requête. Limite connue (MVP) : pas de streaming token-par-token côté
+  // navigateur, on poll jusqu'à la fin du traitement puis on envoie le
+  // texte complet en un seul "chunk".
+  const chatId = `check-${sbId}-${entityId}-${projId}-${action}-${Date.now()}`;
+  const message = `${systemPrompt}\n\n---\n\n${reportContent}`;
+
   try {
-    const stream = await client.messages.stream({
-      model:      MODEL,
-      max_tokens: 3000,
-      system:     systemPrompt,
-      messages:   [{ role: 'user', content: reportContent }],
+    const chat = await eca.promptAndWait(chatId, message, {
+      onTick: () => sseSend(res, 'log', { line: `… en attente de la réponse ECA (chat ${chatId})` }),
     });
 
-    for await (const event of stream) {
-      if (event.type === 'content_block_delta' && event.delta?.type === 'text_delta') {
-        const text = event.delta.text;
-        fullText += text;
-        sseSend(res, 'chunk', { text });
-      }
+    if (chat.status === 'error') {
+      return sseError(res, `eca-server a renvoyé une erreur pour le chat ${chatId}`);
     }
+
+    const fullText = eca.lastAssistantText(chat);
+    sseSend(res, 'chunk', { text: fullText });
 
     // Sauvegarder le rapport chorus-check (dans reports/)
     const filename = chorus.writeCheckReport(sbId, entityId, projId, outputLabel, fullText);
@@ -470,7 +490,7 @@ app.get('/api/sandboxes/:sbId/entities/:entityId/projects/:projId/check', async 
     sseDone(res, { filename, action });
 
   } catch (err) {
-    sseError(res, `Erreur LLM : ${err.message}`);
+    sseError(res, `Erreur eca-server : ${err.message}`);
   }
 });
 
@@ -490,7 +510,11 @@ app.get('/api/sandboxes/:sbId/entities/:entityId/projects/:projId/check', async 
 
 app.post('/api/sandboxes/:sbId/entities/:entityId/projects/:projId/chat', async (req, res) => {
   const { sbId, entityId, projId } = req.params;
-  const { message, history = [] } = req.body;
+  const { message } = req.body;
+  // Note : `history` n'est plus géré manuellement ici — chaque projet a son
+  // propre chat ECA persistant (chatId stable), qui garde l'historique
+  // côté eca-server. Le paramètre `history` du body (ancien contrat) est
+  // ignoré ; conservé dans la doc d'API pour compat descendante du client.
 
   if (!message) return res.status(400).json({ ok: false, error: 'message manquant' });
 
@@ -511,36 +535,87 @@ app.post('/api/sandboxes/:sbId/entities/:entityId/projects/:projId/chat', async 
     return res.status(500).json({ ok: false, error: e.message });
   }
 
-  // Construire l'historique de messages
-  const messages = [];
-
-  // Injecter le contexte comme premier message assistant (méthode "context injection")
-  if (context) {
-    messages.push({ role: 'user',      content: `Voici les rapports Chorus pour ce projet :\n${context}` });
-    messages.push({ role: 'assistant', content: 'Compris. Je suis prêt à répondre à vos questions sur ces rapports.' });
-  }
-
-  // Ajouter l'historique de la session
-  for (const turn of history) {
-    if (turn.role && turn.content) messages.push(turn);
-  }
-
-  // Ajouter le message courant
-  messages.push({ role: 'user', content: message });
+  // chatId stable par projet — persiste l'historique de conversation côté
+  // eca-server entre les appels successifs de ce même projet.
+  const chatId = `chat-${sbId}-${entityId}-${projId}`;
+  const fullMessage = context
+    ? `${prompts.PROMPT_CHAT}\n\nVoici les rapports Chorus pour ce projet :\n${context}\n\n---\n\nQuestion : ${message}`
+    : `${prompts.PROMPT_CHAT}\n\nQuestion : ${message}`;
 
   try {
-    const resp = await client.messages.create({
-      model:      MODEL,
-      max_tokens: 1500,
-      system:     prompts.PROMPT_CHAT,
-      messages,
-    });
-
-    const reply = resp.content[0]?.text || '';
-    res.json({ ok: true, reply });
-
+    const chat = await eca.promptAndWait(chatId, fullMessage, { timeoutMs: 60000 });
+    if (chat.status === 'error') {
+      return res.status(502).json({ ok: false, error: `eca-server a renvoyé une erreur pour le chat ${chatId}` });
+    }
+    res.json({ ok: true, reply: eca.lastAssistantText(chat) });
   } catch (err) {
-    res.status(500).json({ ok: false, error: err.message });
+    res.status(502).json({ ok: false, error: `Erreur eca-server : ${err.message}` });
+  }
+});
+
+// ═════════════════════════════════════════════════════════════
+// ROUTE 5bis — POST /api/sandboxes/:sbId/terminal
+//
+// Backend du "🖥️ Terminal ECA" générique (niveaux sandbox / entity /
+// project / report, cf. chorus-web.html § openLevelTerminal). Remplace les
+// réponses simulées côté client par un vrai appel à eca-server.
+//
+// Body JSON : { level, entityId?, projId?, reportFile?, sessionId, message }
+//   - level       : 'sandbox' | 'entity' | 'project' | 'report'
+//   - sessionId   : identifiant de session généré côté client à l'ouverture
+//                   du terminal (persiste le même chat ECA entre les tours
+//                   d'une même session, pour garder l'historique).
+//
+// Réponse JSON (non-streaming, cohérent avec ROUTE 5 /chat) :
+//   { ok: true, reply: string } | { ok: false, error: string }
+// ═════════════════════════════════════════════════════════════
+
+app.post('/api/sandboxes/:sbId/terminal', async (req, res) => {
+  const { sbId } = req.params;
+  const { level, entityId, projId, reportFile, sessionId, message } = req.body;
+
+  if (!message)   return res.status(400).json({ ok: false, error: 'message manquant' });
+  if (!sessionId) return res.status(400).json({ ok: false, error: 'sessionId manquant' });
+  if (!['sandbox', 'entity', 'project', 'report'].includes(level)) {
+    return res.status(400).json({ ok: false, error: `level invalide : ${level}` });
+  }
+
+  // Construire le bloc de contexte selon le niveau — redondant après le
+  // premier tour (le chat ECA garde l'historique), mais acceptable en
+  // l'état (coût tokens modéré) et robuste à une éventuelle perte de
+  // session côté eca-server (redémarrage du conteneur, etc.).
+  let contextBlock = '';
+  try {
+    const sb = chorus.scanSandbox(sbId);
+    if (level === 'sandbox') {
+      contextBlock = `Sandbox ${sbId} — norme ${sb.norm}. Entities : ${sb.entities.map(e => e.id).join(', ') || '(aucune)'}.`;
+    } else if (level === 'entity') {
+      const entity = sb.entities.find(e => e.id === entityId);
+      const projs  = (entity && entity.projects) || [];
+      contextBlock = `Entity ${entityId} (sandbox ${sbId}) — projets : ${projs.map(p => p.id).join(', ') || '(aucun)'}.`;
+    } else if (level === 'project') {
+      const entity = sb.entities.find(e => e.id === entityId);
+      const proj   = entity && (entity.projects || []).find(p => p.id === projId);
+      contextBlock = `Projet ${projId} (${sbId}/${entityId}) — ${proj ? `${proj.frames || 0} frames, verdict ${proj.verdict || '?'}` : '(détails indisponibles)'}.`;
+    } else if (level === 'report') {
+      const content = chorus.readReport(sbId, entityId, projId, reportFile) || '';
+      contextBlock = `Rapport ${reportFile} (${sbId}/${entityId}/${projId}) :\n${content.slice(0, 8000)}`;
+    }
+  } catch (e) {
+    contextBlock = `(contexte indisponible : ${e.message})`;
+  }
+
+  const chatId = `term-${sessionId}`;
+  const fullMessage = `[Contexte ECA — niveau ${level}]\n${contextBlock}\n\nQuestion : ${message}`;
+
+  try {
+    const chat = await eca.promptAndWait(chatId, fullMessage, { timeoutMs: 60000 });
+    if (chat.status === 'error') {
+      return res.status(502).json({ ok: false, error: `eca-server a renvoyé une erreur pour le chat ${chatId}` });
+    }
+    res.json({ ok: true, reply: eca.lastAssistantText(chat) });
+  } catch (err) {
+    res.status(502).json({ ok: false, error: `Erreur eca-server : ${err.message}` });
   }
 });
 

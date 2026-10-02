@@ -1,6 +1,31 @@
 version: '3.9'
 
+# Secret natif Compose : lu directement depuis le fichier hôte au moment du
+# "up", jamais copié dans ce repo, jamais passé en clair comme variable
+# d'environnement de conteneur (invisible via `docker inspect`). Monté en
+# lecture seule dans chaque service sous /run/secrets/anthropic_api_key —
+# voir Dockerfile / eca-bootstrap.sh pour l'export vers ANTHROPIC_API_KEY.
+secrets:
+  anthropic_api_key:
+    file: /home/civ/.config/anthropic/api_key
+
 services:
+  eca-server:
+    build:
+      context: .
+      dockerfile: Dockerfile.eca
+    environment:
+      - ECA_REMOTE_PASSWORD=${ECA_REMOTE_PASSWORD:-changeme-local-dev}
+    secrets:
+      - anthropic_api_key
+    volumes:
+      # Même montage que chorus-web : ECA doit voir Engine/AGENTS.md,
+      # agent/skills/*.md et sandboxes/ pour charger les skills réels.
+      - ${CHORUS_HOME}:/chorus
+    # Pas de port publié vers l'hôte — seul chorus-web (réseau compose
+    # interne) a besoin de joindre ce service, via http://eca-server:7777.
+    restart: unless-stopped
+
   chorus-web:
     build:
       # Contexte = racine du dépôt Chorus, pour que le Dockerfile puisse
@@ -13,8 +38,9 @@ services:
       dockerfile: chorus-web/Dockerfile
     ports:
       - "3000:3000"
+    secrets:
+      - anthropic_api_key
     environment:
-      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
       - ANTHROPIC_MODEL=${ANTHROPIC_MODEL:-claude-sonnet-5}
       # Chemin vu DEPUIS LE CONTENEUR (correspond au point de montage du volume ci-dessous),
       # jamais le chemin hôte — sinon chorus.js/run.pl cherchent un répertoire inexistant.
@@ -27,9 +53,16 @@ services:
       # Plus de PERL5LIB : les modules Chorus::* sont installés nativement
       # dans l'image via Makefile.PL/make install (voir Dockerfile).
       - PORT=3000
+      # Service eca-server (réseau compose interne). HTTPS obligatoire —
+      # le serveur remote ECA n'écoute qu'en TLS (certificat auto-signé
+      # *.local.eca.dev, cf. eca-client.js § rejectUnauthorized: false).
+      - ECA_SERVER_URL=https://eca-server:7777
+      - ECA_REMOTE_PASSWORD=${ECA_REMOTE_PASSWORD:-changeme-local-dev}
     volumes:
       # Monter tout le dépôt Chorus existant en lecture/écriture
       # (run.pl écrit les rapports dans Engine/sandboxes/*/workspace/)
       - ${CHORUS_HOME}:/chorus
       # chorus-web.html est désormais copié dans l'image (voir Dockerfile) — plus de montage ici.
+    depends_on:
+      - eca-server
     restart: unless-stopped

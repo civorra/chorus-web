@@ -1,0 +1,8 @@
+{
+  "remote": {
+    "enabled": true,
+    "password": "${env:ECA_REMOTE_PASSWORD}",
+    "bindHost": "0.0.0.0",
+    "port": 7777
+  }
+}

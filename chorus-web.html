@@ -3735,6 +3735,7 @@ function openEcaSessionForProject() {
 let _lvlTermCtx = null;
 let _lvlTermHistory = [];
 let _lvlTermHistIdx = -1;
+let _lvlTermSessionId = null;
 
 function levelPromptLabel(ctx) {
   const { level, sbId, entityId, projId, reportFile } = ctx;
@@ -3749,6 +3750,9 @@ function openLevelTerminal(level, ctx) {
   _lvlTermCtx = { level, ...ctx };
   _lvlTermHistory = [];
   _lvlTermHistIdx = -1;
+  // Un seul chat ECA par ouverture de terminal — garde l'historique entre
+  // les tours (cf. server.js § ROUTE 5bis /terminal, chatId = `term-${sessionId}`).
+  _lvlTermSessionId = 'lvlterm-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8);
 
   const overlay = document.getElementById('level-terminal-overlay');
   const out     = document.getElementById('lvl-term-output');
@@ -3816,6 +3820,7 @@ function lvlTermAppend(text, cls = 'resp') {
   line.textContent = text;
   out.appendChild(line);
   out.scrollTop = out.scrollHeight;
+  return line;
 }
 
 function levelTerminalKeydown(e) {
@@ -3845,7 +3850,7 @@ function levelTerminalKeydown(e) {
   }
 }
 
-function levelTerminalExec(cmd) {
+async function levelTerminalExec(cmd) {
   if (!_lvlTermCtx) return;
   const ctx    = _lvlTermCtx;
   const prompt = levelPromptLabel(ctx);
@@ -3859,45 +3864,40 @@ function levelTerminalExec(cmd) {
 
   if (cmd.toLowerCase() === 'clear') { out.innerHTML = ''; return; }
 
-  let responses = [];
-  if (ctx.level === 'sandbox') {
-    const entities = ENTITIES[ctx.sbId] || [];
-    responses = [
-      { cls:'info', text:`[ECA → LLM architect] Question reçue sur le sandbox ${ctx.sbId} : "${cmd}"` },
-      { cls:'resp', text:`  Entities : ${entities.map(e=>e.id).join(', ') || '(aucune)'}` },
-      { cls:'resp', text:`  → Tapez "liste les entities" ou ouvrez un terminal au niveau entity pour approfondir.` },
-    ];
-  } else if (ctx.level === 'entity') {
-    const projs = (PROJECTS[ctx.sbId] || []).filter(p => p.entity === ctx.entityId);
-    responses = [
-      { cls:'info', text:`[ECA → LLM architect] Question reçue sur l'entity ${ctx.entityId} : "${cmd}"` },
-      { cls:'resp', text:`  Projets : ${projs.map(p=>p.id).join(', ') || '(aucun)'}` },
-      { cls:'resp', text:`  → Ouvrez un terminal niveau project pour un projet précis.` },
-    ];
-  } else if (ctx.level === 'project') {
-    const proj = (PROJECTS[ctx.sbId] || []).find(p => p.id === ctx.projId);
-    responses = [
-      { cls:'info', text:`[ECA → LLM architect] Question reçue sur ${ctx.projId} : "${cmd}"` },
-      { cls:'resp', text:`  ${proj ? proj.frames : 0} frames · verdict ${proj ? (proj.verdict||'?') : '?'}` },
-      { cls:'resp', text:`  → Tapez "chorus-check --explain" ou "liste les NON_CONFORMES".` },
-    ];
-  } else { // report
-    responses = [
-      { cls:'info', text:`[ECA → LLM architect] Question reçue sur ${ctx.reportFile} : "${cmd}"` },
-      { cls:'resp', text:`  Analyse du rapport workspace/${ctx.entityId}/reports/${ctx.projId}/${ctx.reportFile}...` },
-      { cls:'resp', text:`  → Tapez "chorus-complete-report" pour recouper avec la source.` },
-    ];
-  }
+  // Appel réel à eca-server (voir server.js § ROUTE 5bis /terminal) —
+  // remplace les réponses simulées précédemment utilisées ici.
+  const thinking = lvlTermAppend('… ECA réfléchit …', 'dim');
+  const input = document.getElementById('lvl-term-input');
+  if (input) input.disabled = true;
 
-  let t = 120;
-  responses.forEach(({ cls, text }) => {
-    setTimeout(() => lvlTermAppend(text, cls), t);
-    t += 160;
-  });
-  setTimeout(() => {
-    const inp = document.getElementById('lvl-term-input');
-    if (inp) inp.focus();
-  }, t);
+  try {
+    const r = await fetch(`${API}/api/sandboxes/${ctx.sbId}/terminal`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        level:      ctx.level,
+        entityId:   ctx.entityId,
+        projId:     ctx.projId,
+        reportFile: ctx.reportFile,
+        sessionId:  _lvlTermSessionId,
+        message:    cmd,
+      }),
+    });
+    const data = await r.json();
+    thinking.remove();
+
+    if (!data.ok) {
+      lvlTermAppend(`✖ ${data.error || 'erreur inconnue'}`, 'err');
+    } else {
+      (data.reply || '(réponse vide)').split('\n').forEach(line => lvlTermAppend(line, 'resp'));
+    }
+  } catch (e) {
+    thinking.remove();
+    lvlTermAppend(`✖ Erreur réseau : ${e.message}`, 'err');
+  } finally {
+    if (input) { input.disabled = false; input.focus(); }
+    out.scrollTop = out.scrollHeight;
+  }
 }
 
 // ─── IMPORT SESSION ───────────────────────────────────────────
@@ -4899,25 +4899,35 @@ document.getElementById('modal-overlay').addEventListener('click', function(e) {
   if (e.target === this) closeModal();
 });
 
-// ─── ECA SERVICE BOOT SIMULATION ─────────────────────────────
-function bootServices() {
-  // Simulate supervisor starting: Dancer first, then ECA Server with a delay
-  const dancer = document.getElementById('svc-dancer');
-  const eca    = document.getElementById('svc-eca');
+// ─── ECA SERVICE STATUS — ping réel (remplace l'ancienne simulation) ──
+async function bootServices() {
+  // chorus-web (ce serveur Node) a nécessairement déjà répondu puisque
+  // cette page a été servie par lui — pastille "dancer" vraie dès le départ.
+  const dancer   = document.getElementById('svc-dancer');
   const mdDancer = document.getElementById('svc-modal-dancer');
-  const mdEca    = document.getElementById('svc-modal-eca');
+  dancer.className = 'svc-pill online';
+  if (mdDancer) mdDancer.className = 'svc-pill online';
 
-  // Dancer comes online quickly (~600ms)
-  setTimeout(() => {
-    dancer.className = 'svc-pill online';
-    if (mdDancer) mdDancer.className = 'svc-pill online';
-  }, 620);
+  await refreshEcaStatus();
+  // Re-vérifie périodiquement (détecte un eca-server qui tombe/revient).
+  setInterval(refreshEcaStatus, 30000);
+}
 
-  // ECA Server (JVM boot) takes a bit longer (~1.8s)
-  setTimeout(() => {
-    eca.className = 'svc-pill online';
-    if (mdEca) mdEca.className = 'svc-pill online';
-  }, 1850);
+async function refreshEcaStatus() {
+  const eca   = document.getElementById('svc-eca');
+  const mdEca = document.getElementById('svc-modal-eca');
+  try {
+    const r = await fetch(`${API}/api/eca/health`);
+    const data = await r.json();
+    const cls = data.ok ? 'svc-pill online' : 'svc-pill offline';
+    eca.className = cls;
+    eca.title = data.ok ? `eca-server OK (${data.latencyMs}ms)` : `eca-server injoignable : ${data.error}`;
+    if (mdEca) mdEca.className = cls;
+  } catch (e) {
+    eca.className = 'svc-pill offline';
+    eca.title = `Health-check /api/eca/health en échec : ${e.message}`;
+    if (mdEca) mdEca.className = 'svc-pill offline';
+  }
 }
 
 // ─── SERVICES MODAL ───────────────────────────────────────────

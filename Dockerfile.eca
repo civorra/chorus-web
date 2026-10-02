@@ -1,0 +1,35 @@
+# Service ECA headless (mode remote) — expose un serveur HTTP+SSE embarqué
+# pour que chorus-web (autre conteneur) puisse piloter de vraies sessions ECA
+# (chargement des skills via $ENGINE/AGENTS.md + agent/skills/*.md, et
+# interactivité ask_user) au lieu de prompts statiques codés en dur.
+#
+# Binaire natif GraalVM statiquement lié — pas de JVM, pas de dépendance
+# glibc dynamique (cf. docs officielles eca.dev/install/ § "containers").
+
+FROM debian:bookworm-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl ca-certificates unzip \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN curl -fsSL -o /tmp/eca.zip \
+      https://github.com/editor-code-assistant/eca/releases/latest/download/eca-native-static-linux-amd64.zip \
+    && unzip /tmp/eca.zip -d /usr/local/bin/ \
+    && chmod +x /usr/local/bin/eca \
+    && rm /tmp/eca.zip
+
+COPY eca-config.json /etc/eca/config.json
+COPY eca-bootstrap.sh /usr/local/bin/eca-bootstrap.sh
+RUN chmod +x /usr/local/bin/eca-bootstrap.sh
+
+# Racine de travail = tout le dépôt Chorus monté en volume (voir
+# docker-compose.yml : ${CHORUS_HOME}:/chorus), pour que ECA voie
+# Engine/AGENTS.md, agent/skills/*.md et sandboxes/.
+WORKDIR /chorus
+
+EXPOSE 7777
+
+# "eca server" écoute sur stdin (protocole JSON-RPC, inspiré de LSP) et
+# n'active son serveur HTTP/SSE remote qu'APRÈS la poignée de main
+# initialize/initialized — voir eca-bootstrap.sh pour le détail.
+ENTRYPOINT ["/usr/local/bin/eca-bootstrap.sh"]

@@ -27,7 +27,7 @@ WORKDIR /app
 COPY chorus-web/package.json .
 RUN npm install --omit=dev
 
-COPY chorus-web/server.js chorus-web/chorus.js chorus-web/prompts.js chorus-web/chorus-web.html ./
+COPY chorus-web/server.js chorus-web/chorus.js chorus-web/prompts.js chorus-web/eca-client.js chorus-web/chorus-web.html ./
 
 # CHORUS_HOME est monté en volume depuis l'hôte, uniquement pour les données
 # (sandboxes, scripts run.pl générés par sandbox, etc.) — plus pour les
@@ -37,4 +37,7 @@ ENV PORT=3000
 
 EXPOSE 3000
 
-CMD ["node", "server.js"]
+# Clé Anthropic fournie via secret Docker Compose (/run/secrets/anthropic_api_key,
+# jamais en variable d'env de conteneur) — repli sur ANTHROPIC_API_KEY si le
+# secret est absent (dev local sans secrets configurés).
+CMD ["sh", "-c", "export ANTHROPIC_API_KEY=\"$(cat /run/secrets/anthropic_api_key 2>/dev/null || printf '%s' \"$ANTHROPIC_API_KEY\")\"; exec node server.js"]
