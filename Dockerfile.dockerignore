@@ -1,0 +1,46 @@
+# Fichier d'exclusion spécifique au build chorus-web (docker-compose.yml :
+# build.context: .. + dockerfile: chorus-web/Dockerfile — chorus-web est
+# désormais un vrai dossier, ancien symlink vers chorus-mvp0-v43 supprimé).
+#
+# BuildKit cherche ce fichier (<dockerfile>.dockerignore, ici
+# "chorus-web/Dockerfile.dockerignore") À CÔTÉ du Dockerfile référencé, au
+# lieu du .dockerignore racine du contexte — ce qui permet de le versionner
+# DANS le repo chorus-web lui-même, même si le build context reste ".."
+# (racine $CHORUS, qui n'est pas un repo git). Nécessite docker compose v2 +
+# buildx (voir discussion de session : docker-compose 1.29.2 / legacy
+# builder ne le respecte PAS, cf. test en session).
+#
+# Seuls Engine/{Makefile.PL,MANIFEST,lib/} et chorus-web/{package.json,
+# server.js,chorus.js,prompts.js,chorus-web.html} sont réellement COPYés
+# par le Dockerfile. Tout le reste est inutile au build (et monté en volume
+# à l'exécution) : on l'exclut pour garder le contexte envoyé au démon
+# Docker rapide et léger.
+
+.git/
+.github/
+.vscode/
+*.log
+
+# Données/doc volumineuses non nécessaires à la compilation des modules Perl
+Engine/sandboxes/
+Engine/t/
+Engine/BUMP-VERSION.md
+Engine/Changes
+Engine/CONTRIBUTING.md
+Engine/LISEZMOI.md
+Engine/LICENSE
+Engine/MANIFEST.bak
+Engine/MANIFEST.SKIP
+Engine/.claude/
+Engine/.dockerignore
+Engine/.gitignore
+
+# Autres projets / POC du dépôt — non utilisés par ce build
+chorus-v43/
+eca/
+sandboxes/
+
+# Artefacts Node locaux (installés en conteneur, pas depuis l'hôte)
+chorus-web/node_modules/
+chorus-web/.git/
+chorus-web/.env

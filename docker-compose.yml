@@ -6,6 +6,9 @@ services:
       # Contexte = racine du dépôt Chorus, pour que le Dockerfile puisse
       # COPY Engine/ (Makefile.PL + lib/) et installer les modules Chorus::*
       # nativement via perl Makefile.PL && make && make install.
+      # chorus-web est désormais un vrai dossier (plus un symlink vers
+      # chorus-mvp0-v43/) — BuildKit ne suit pas les symlinks de répertoire
+      # lors de la construction du contexte, ce qui cassait COPY chorus-web/*.
       context: ..
       dockerfile: chorus-web/Dockerfile
     ports:
