@@ -1,21 +1,20 @@
 /**
- * eca-client.js — Client minimal pour le serveur ECA headless (mode remote)
+ * eca-client.js — Client pour le serveur ECA headless (mode remote)
  *
- * Protocole découvert/validé en session (cf. récapitulatif de session
- * 2026-10-02) :
+ * Protocole :
  *   - Auth : header "Authorization: Bearer <ECA_REMOTE_PASSWORD>"
- *   - POST /api/v1/chats/:id/prompt { message }  → crée le chat si absent,
- *     envoie le prompt, répond immédiatement { status: "prompting" }
- *     (traitement asynchrone côté ECA)
- *   - GET  /api/v1/chats/:id                     → état complet du chat
- *     (messages, status: "prompting"|"idle"|..., pendingToolCalls)
+ *   - POST /api/v1/chats/:id/prompt { message }  → crée/reprend le chat,
+ *     renvoie immédiatement { status: "prompting" }
+ *   - GET  /api/v1/events                        → SSE global (tous les chats)
+ *     Événements : chat:opened · chat:content-received · chat:status-changed
+ *     → subscribeEcaEvents() filtre par chatId et streame les réponses.
+ *   - GET  /api/v1/chats/:id                     → état complet (Jetty 12 bug :
+ *     socket hang up quand le chat contient du contenu — fallback via list)
  *   - Certificat TLS auto-signé (*.local.eca.dev) → rejectUnauthorized: false
- *     nécessaire (communication interne au réseau Docker Compose, jamais
- *     exposée à l'extérieur — acceptable dans ce contexte).
  *
- * Limite connue (MVP) : pas encore de consommation SSE — on poll
- * GET /api/v1/chats/:id jusqu'à status !== "prompting". Pas de vrai
- * streaming token-par-token côté navigateur pour l'instant (todo futur).
+ * Deux modes de réception de réponse :
+ *   SSE  (subscribeEcaEvents) — streaming temps réel, ask_user, pas de timeout
+ *   Poll (promptAndWait)      — legacy, utilisé par /check et /chat
  */
 
 'use strict';
@@ -124,4 +123,95 @@ async function promptAndWait(chatId, message, { pollIntervalMs = 300, timeoutMs 
   throw new Error(`eca-server: timeout en attente de réponse pour le chat ${chatId}`);
 }
 
-module.exports = { ecaRequest, promptAndWait, lastAssistantText };
+/**
+ * Connects to ECA's global SSE event stream (GET /api/v1/events), filters
+ * events for a specific chatId, and dispatches them to handlers.
+ *
+ * Returns { req, done } where:
+ *   req  — the underlying https.Request; call req.destroy() to cancel
+ *   done — Promise that resolves when chat reaches 'idle' (or on error)
+ *
+ * handlers:
+ *   onChunk(text)              — assistant text fragment (stream token)
+ *   onAsk({ question, toolId })— ECA issued an ask_user tool call
+ *   onToolLog(summary)         — tool call summary for progress display
+ *   onDone()                   — chat reached 'idle' status
+ *   onError(err)               — network or parse error
+ */
+function subscribeEcaEvents(chatId, { onChunk, onAsk, onToolLog, onDone, onError } = {}) {
+  const base = new URL(ECA_SERVER_URL);
+  let resolvePromise, rejectPromise;
+  const done = new Promise((res, rej) => { resolvePromise = res; rejectPromise = rej; });
+
+  const req = https.request(
+    {
+      hostname: base.hostname, port: base.port || 7777,
+      path: '/api/v1/events', method: 'GET',
+      headers: { Authorization: `Bearer ${ECA_REMOTE_PASSWORD}` },
+      rejectUnauthorized: false, agent: false,
+      // No timeout — keep-alive until ECA finishes or caller destroys
+    },
+    (res) => {
+      let buf = '';
+      res.on('data', (d) => {
+        buf += d;
+        const blocks = buf.split('\n\n');
+        buf = blocks.pop(); // keep incomplete last block
+        for (const block of blocks) {
+          if (!block.trim()) continue;
+          const evtMatch = block.match(/^event:\s*(.+)/m);
+          const datMatch = block.match(/^data:\s*(.+)/m);
+          if (!evtMatch || !datMatch) continue;
+          const eventType = evtMatch[1].trim();
+          let data;
+          try { data = JSON.parse(datMatch[1]); } catch { continue; }
+
+          // Filter by chatId — /api/v1/events is global (all chats)
+          if (data.chatId !== chatId) continue;
+
+          if (eventType === 'chat:content-received') {
+            const { role, content } = data;
+            if (!content) continue;
+            if (role === 'assistant') {
+              // Streaming text fragment
+              if (content.type === 'text' && content.text) {
+                if (onChunk) onChunk(content.text);
+              }
+              // Tool call pending manual approval — relay to the UI
+              // (event type 'toolCallRun' with manualApproval:true)
+              if (content.type === 'toolCallRun' && content.manualApproval) {
+                const cmd = content.arguments?.command
+                  || content.summary
+                  || `${content.name}(${JSON.stringify(content.arguments || {}).slice(0, 60)})`;
+                if (onAsk) onAsk({ question: `Approuver : ${cmd}`, toolId: content.id, isApproval: true });
+              }
+              // Tool call completed (after approval or auto-trust)
+              if (content.type === 'toolCalled') {
+                if (content.name === 'ask_user') {
+                  const question = content.arguments?.question
+                    || content.outputs?.[0]?.text || '(question ECA)';
+                  if (onAsk) onAsk({ question, toolId: content.id, isApproval: false });
+                } else if (onToolLog) {
+                  onToolLog(content.summary || `[tool] ${content.name}`);
+                }
+              }
+            }
+          }
+
+          if (eventType === 'chat:status-changed' && data.status === 'idle') {
+            if (onDone) onDone();
+            resolvePromise();
+          }
+        }
+      });
+      res.on('end', () => resolvePromise());
+      res.on('error', (e) => { if (onError) onError(e); rejectPromise(e); });
+    }
+  );
+  req.on('error', (e) => { if (onError) onError(e); rejectPromise(e); });
+  req.end();
+
+  return { req, done };
+}
+
+module.exports = { ecaRequest, promptAndWait, lastAssistantText, subscribeEcaEvents };

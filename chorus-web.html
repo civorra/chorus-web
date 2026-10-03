@@ -1040,10 +1040,10 @@ input, select, textarea { font-family: inherit; }
 .eca-session-line.info   { color: #58A6FF; }
 .eca-session-line.dim    { color: #484F58; }
 .eca-session-input-row {
-  display: flex; align-items: center; gap: 0;
+  display: flex; flex-direction: column; gap: 4px;
   background: #0D1117;
   border-top: 1px solid #21262D;
-  padding: 6px 14px;
+  padding: 6px 14px 8px;
   flex-shrink: 0;
 }
 
@@ -1057,8 +1057,24 @@ input, select, textarea { font-family: inherit; }
 }
 #level-terminal-overlay[hidden] { display: none !important; }
 .lvl-term-panel {
-  width: 100%; max-width: 720px;
+  width: 80vw;
+  height: 80vh;
   display: flex; flex-direction: column;
+  overflow: hidden;
+}
+/* When the session-wrap is directly inside the level terminal panel,
+   flatten its top-left corner so it connects flush with the badge. */
+.lvl-term-panel .eca-session-wrap {
+  border-radius: 0 8px 8px 8px;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+/* Cancel the default max-height cap so the output fills the panel height. */
+.lvl-term-panel .eca-session-output {
+  max-height: none;
 }
 .lvl-term-badge {
   align-self: flex-start;
@@ -1071,14 +1087,17 @@ input, select, textarea { font-family: inherit; }
 }
 .eca-session-prompt-label {
   font-family: 'JetBrains Mono', monospace;
-  font-size: 12px;
+  font-size: 11px;
   color: #3FB950;
   white-space: nowrap;
-  margin-right: 6px;
-  flex-shrink: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  width: 100%;
+  display: block;
+  line-height: 1.4;
 }
 .eca-session-input {
-  flex: 1;
+  width: 100%;
   background: none;
   border: none;
   outline: none;
@@ -1086,6 +1105,11 @@ input, select, textarea { font-family: inherit; }
   font-size: 12px;
   color: #E6EDF3;
   caret-color: #58A6FF;
+  resize: none;
+  overflow-y: auto;
+  line-height: 1.5;
+  padding: 0;
+  box-sizing: border-box;
 }
 
 /* ─── IMPORT MODAL ───────────────────────────────────────── */
@@ -1483,10 +1507,6 @@ input, select, textarea { font-family: inherit; }
     <div class="spacer"></div>
     <!-- Service status pills -->
     <div id="eca-status-bar">
-      <div class="svc-pill starting" id="svc-dancer" title="Dancer — HTTP server">
-        <div class="svc-dot"></div>
-        <span>Dancer :5000</span>
-      </div>
       <div class="svc-pill starting" id="svc-eca" title="ECA Server — WebSocket / LSP-inspired" onclick="openServicesModal()" style="cursor:pointer">
         <div class="svc-dot"></div>
         <span>ECA :7777</span>
@@ -1825,14 +1845,6 @@ input, select, textarea { font-family: inherit; }
     <div class="svc-modal-body">
       <div class="svc-section-title">Services actifs</div>
       <div class="svc-row">
-        <div class="svc-row-icon">🎭</div>
-        <div class="svc-row-info">
-          <div class="svc-row-name">Dancer HTTP Server</div>
-          <div class="svc-row-detail">http://localhost:5000 · Chorus::Web::App · Plack</div>
-        </div>
-        <div class="svc-row-badge"><span class="svc-pill online" id="svc-modal-dancer"><div class="svc-dot"></div>online</span></div>
-      </div>
-      <div class="svc-row">
         <div class="svc-row-icon">🔌</div>
         <div class="svc-row-info">
           <div class="svc-row-name">ECA Server</div>
@@ -1881,8 +1893,7 @@ input, select, textarea { font-family: inherit; }
 
       <div class="svc-section-title" style="margin-top:20px">Architecture</div>
       <div style="background:var(--bg-elevated);border:1px solid var(--border);border-radius:8px;padding:14px 16px;font-family:'JetBrains Mono',monospace;font-size:11px;line-height:2;color:var(--text-secondary)">
-        <span style="color:var(--accent)">Browser</span> → <span style="color:var(--text-muted)">HTTP</span> → <span style="color:var(--accent)">Dancer :5000</span><br>
-        &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;└─ <span style="color:var(--warn)">Chorus::ECA::Client</span> → <span style="color:var(--text-muted)">WS</span> → <span style="color:var(--success)">ECA Server :7777</span><br>
+        <span style="color:var(--accent)">Browser</span> → <span style="color:var(--text-muted)">HTTP</span> → <span style="color:var(--accent)">Node :3000</span> → <span style="color:var(--text-muted)">HTTPS</span> → <span style="color:var(--success)">ECA Server :7777</span><br>
         &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;├─ <span style="color:var(--info)">run.pl</span> (Perl, fork)<br>
         &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;├─ <span style="color:var(--info)">chorus-check</span> (skill)<br>
         &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;└─ <span style="color:var(--info)">chorus-import-project</span> (skill)<br>
@@ -2035,13 +2046,13 @@ input, select, textarea { font-family: inherit; }
         <div class="eca-session-title" id="lvl-term-title">ECA — session interactive</div>
         <button onclick="closeLevelTerminal()" style="background:none;border:none;color:#8B949E;cursor:pointer;font-size:14px;line-height:1;padding:0 2px">✕</button>
       </div>
-      <div class="eca-session-output" id="lvl-term-output" style="min-height:220px;max-height:420px"></div>
+      <div class="eca-session-output" id="lvl-term-output" style="flex:1;min-height:0;overflow-y:auto"></div>
       <div class="eca-session-input-row">
         <span class="eca-session-prompt-label" id="lvl-term-prompt">sandbox ?></span>
-        <input class="eca-session-input" id="lvl-term-input" type="text"
+        <textarea class="eca-session-input" id="lvl-term-input" rows="3"
           placeholder="question ou commande Chorus..."
           autocomplete="off" autocorrect="off" spellcheck="false"
-          onkeydown="levelTerminalKeydown(event)">
+          onkeydown="levelTerminalKeydown(event)"></textarea>
       </div>
     </div>
   </div>
@@ -2514,8 +2525,8 @@ async function initFromServer() {
     const ICONS = ['🔐','📜','🏗️','♿','🏥','☁️','⚖️','🌍','📋'];
 
     // Convention backend : sb.entities[] (1er niveau de workspace/, pas de 'default')
-    //   chaque entity a .projects[] — projet = workspace/<entity>/sources/<projId>/
-    //   rapports  = workspace/<entity>/reports/<projId>/
+    //   chaque entity a .projects[] — projet = workspace/<entity>/<projId>.json (flat)
+    //   rapports  = workspace/<entity>/reports/ (flat, filtré par sous-chaîne projId)
     sandboxes.forEach((sb, i) => {
       const entityList = sb.entities || [];
       const allProjects = entityList.flatMap(e => e.projects || []);
@@ -3133,11 +3144,9 @@ function closePipelineModal() {
 
 
 function projFilePath(proj, sbId) {
+  // Convention réelle : workspace/<entity>/<projId>.json (flat)
   const entityId = proj.entity;
-  const entities = ENTITIES[sbId] || [];
-  const entityObj = entities.find(c => c.id === entityId);
-  const ctxPath = entityObj ? entityObj.path : `workspace/${entityId}`;
-  return `${ctxPath}/sources/project-${proj.id}.json`;
+  return `workspace/${entityId}/${proj.id}.json`;
 }
 
 function updateCmdPreview() {
@@ -3734,6 +3743,7 @@ function openEcaSessionForProject() {
 //   report   → contenu du rapport précis sélectionné
 let _lvlTermCtx = null;
 let _lvlTermHistory = [];
+let _lvlTermStartTs = 0;   // timestamp de début de la requête courante
 let _lvlTermHistIdx = -1;
 let _lvlTermSessionId = null;
 
@@ -3786,7 +3796,7 @@ function openLevelTerminal(level, ctx) {
     const proj = (PROJECTS[ctx.sbId] || []).find(p => p.id === ctx.projId);
     welcome.push(
       { cls:'dim',  text: `━━━ ECA session — ${ctx.sbId}/${ctx.entityId}/${ctx.projId} ━━━` },
-      { cls:'info', text: `[ECA] Contexte chargé : sources/${ctx.projId}/frames.pl · ${proj ? proj.frames : 0} frames · reports/${ctx.projId}/` },
+      { cls:'info', text: `[ECA] Contexte chargé : workspace/${ctx.entityId}/${ctx.projId}.json · ${proj ? proj.frames : 0} frames · workspace/${ctx.entityId}/reports/` },
       { cls:'dim',  text: `Exemples : "liste les NON_CONFORMES" · "chorus-check --explain" · "Pourquoi R07 ?"` },
     );
   } else if (level === 'report') {
@@ -3825,20 +3835,28 @@ function lvlTermAppend(text, cls = 'resp') {
 
 function levelTerminalKeydown(e) {
   const input = document.getElementById('lvl-term-input');
-  if (e.key === 'Enter') {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    // Enter alone → submit; Shift+Enter → newline (default textarea behaviour)
+    e.preventDefault();
     const cmd = input.value.trim();
     input.value = '';
+    input.style.height = '';   // reset auto-grown height
     if (!cmd) return;
     _lvlTermHistory.unshift(cmd);
     _lvlTermHistIdx = -1;
     levelTerminalExec(cmd);
-  } else if (e.key === 'ArrowUp') {
+  } else if (e.key === 'ArrowUp' && !e.shiftKey) {
+    // Only navigate history when caret is on the first line
+    const atTop = input.selectionStart <= (input.value.indexOf('\n') || input.value.length);
+    if (!atTop) return;
     e.preventDefault();
     if (_lvlTermHistIdx < _lvlTermHistory.length - 1) {
       _lvlTermHistIdx++;
       input.value = _lvlTermHistory[_lvlTermHistIdx];
     }
-  } else if (e.key === 'ArrowDown') {
+  } else if (e.key === 'ArrowDown' && !e.shiftKey) {
+    const atBottom = input.selectionStart >= (input.value.lastIndexOf('\n') + 1);
+    if (!atBottom) return;
     e.preventDefault();
     if (_lvlTermHistIdx > 0) {
       _lvlTermHistIdx--;
@@ -3858,20 +3876,34 @@ async function levelTerminalExec(cmd) {
   const out = document.getElementById('lvl-term-output');
   const cmdLine = document.createElement('div');
   cmdLine.className = 'eca-session-line cmd';
-  cmdLine.innerHTML = `<span class="eca-ps">${prompt}</span> ${cmd}`;
+  cmdLine.innerHTML = `<span class="eca-ps">${escapeHtml(prompt)}</span> ${escapeHtml(cmd)}`;
   out.appendChild(cmdLine);
   out.scrollTop = out.scrollHeight;
 
   if (cmd.toLowerCase() === 'clear') { out.innerHTML = ''; return; }
 
-  // Appel réel à eca-server (voir server.js § ROUTE 5bis /terminal) —
-  // remplace les réponses simulées précédemment utilisées ici.
+  _lvlTermStartTs = Date.now();
   const thinking = lvlTermAppend('… ECA réfléchit …', 'dim');
   const input = document.getElementById('lvl-term-input');
   if (input) input.disabled = true;
 
+  // ── Lire la réponse en SSE streaming ─────────────────────────────
+  // La ROUTE 5bis retourne désormais text/event-stream :
+  //   event: chunk   data: { text }          ← token streamé
+  //   event: tool    data: { summary }       ← tool call en cours
+  //   event: ask     data: { question, toolId, chatId } ← ask_user ECA
+  //   event: ping    data: { t }             ← keepalive
+  //   event: done    data: {}                ← fin normale
+  //   event: error   data: { message }       ← erreur
+  let replyLine = null;  // ligne accumulatrice pour les chunks
+  let thinkingRemoved = false;
+
+  function ensureThinkingRemoved() {
+    if (!thinkingRemoved) { thinking.remove(); thinkingRemoved = true; }
+  }
+
   try {
-    const r = await fetch(`${API}/api/sandboxes/${ctx.sbId}/terminal`, {
+    const resp = await fetch(`${API}/api/sandboxes/${ctx.sbId}/terminal`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -3883,20 +3915,139 @@ async function levelTerminalExec(cmd) {
         message:    cmd,
       }),
     });
-    const data = await r.json();
-    thinking.remove();
 
-    if (!data.ok) {
-      lvlTermAppend(`✖ ${data.error || 'erreur inconnue'}`, 'err');
+    if (!resp.ok || !resp.body) {
+      ensureThinkingRemoved();
+      let errMsg = 'erreur réseau';
+      try { const d = await resp.json(); errMsg = d.error || errMsg; } catch {}
+      lvlTermAppend(`✖ ${errMsg}`, 'err');
     } else {
-      (data.reply || '(réponse vide)').split('\n').forEach(line => lvlTermAppend(line, 'resp'));
+      const reader  = resp.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = '';
+
+      outer: while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        const blocks = buf.split('\n\n');
+        buf = blocks.pop();
+        for (const block of blocks) {
+          if (!block.trim()) continue;
+          const evtM = block.match(/^event:\s*(\S+)/m);
+          const datM = block.match(/^data:\s*(.+)/m);
+          if (!evtM) continue;
+          const evt = evtM[1];
+          let data = {};
+          if (datM) { try { data = JSON.parse(datM[1]); } catch {} }
+
+          if (evt === 'chunk') {
+            ensureThinkingRemoved();
+            if (!replyLine) replyLine = lvlTermAppend('', 'resp');
+            // append plain text; render markdown later on done
+            replyLine.textContent += data.text || '';
+            out.scrollTop = out.scrollHeight;
+
+          } else if (evt === 'tool') {
+            ensureThinkingRemoved();
+            lvlTermAppend(`⚙ ${data.summary || '…'}`, 'dim');
+
+          } else if (evt === 'ask') {
+            ensureThinkingRemoved();
+            replyLine = null; // nouvelle réponse après la question
+            lvlTermAskUser(ctx, data.question || '', data.toolId, data.isApproval);
+
+          } else if (evt === 'ping') {
+            // keepalive — mettre à jour le message "réfléchit" si encore visible
+            if (!thinkingRemoved) thinking.textContent = `… ECA réfléchit … (${Math.round((Date.now() - _lvlTermStartTs) / 1000)}s)`;
+
+          } else if (evt === 'error') {
+            ensureThinkingRemoved();
+            lvlTermAppend(`✖ Erreur eca-server : ${data.message || '?'}`, 'err');
+            break outer;
+
+          } else if (evt === 'done') {
+            ensureThinkingRemoved();
+            // Si ECA n'a streamé aucun texte (réponse via outils uniquement)
+            if (!replyLine) lvlTermAppend('✓ Terminé.', 'ok');
+            break outer;
+          }
+        }
+      }
+      ensureThinkingRemoved();
     }
   } catch (e) {
-    thinking.remove();
+    ensureThinkingRemoved();
     lvlTermAppend(`✖ Erreur réseau : ${e.message}`, 'err');
   } finally {
     if (input) { input.disabled = false; input.focus(); }
     out.scrollTop = out.scrollHeight;
+  }
+}
+
+// ─── TERMINAL HELPERS ─────────────────────────────────────────
+
+function escapeHtml(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+/**
+ * Affiche la question posée par ECA (ask_user) et un champ de saisie
+ * temporaire. La réponse est soumise via POST /terminal/respond.
+ */
+function lvlTermAskUser(ctx, question, toolId, isApproval = false) {
+  const out = document.getElementById('lvl-term-output');
+
+  // Affiche la question / demande d'approbation
+  const qLine = document.createElement('div');
+  qLine.className = 'eca-session-line warn';
+  qLine.textContent = isApproval ? `🔐 ECA — ${question}` : `❓ ECA — ${question}`;
+  out.appendChild(qLine);
+
+  // Champ de réponse temporaire
+  const wrap = document.createElement('div');
+  wrap.className = 'eca-ask-user-wrap';
+  wrap.innerHTML = `
+    <span class="eca-session-prompt-label" style="color:var(--warn)">réponse ?›</span>
+    <input class="eca-session-input" style="flex:1;border:none;outline:none;font-size:12px;
+      font-family:'JetBrains Mono',monospace;color:#E6EDF3;background:transparent;caret-color:#F59E0B"
+      placeholder="Tapez votre réponse et appuyez sur Entrée…"
+      autocomplete="off" spellcheck="false">
+  `;
+  out.appendChild(wrap);
+  out.scrollTop = out.scrollHeight;
+
+  const answerInput = wrap.querySelector('input');
+  if (answerInput) answerInput.focus();
+
+  const submit = async () => {
+    const answer = (answerInput.value || '').trim();
+    if (!answer) return;
+    wrap.remove();
+
+    // Afficher la réponse dans la timeline
+    const aLine = document.createElement('div');
+    aLine.className = 'eca-session-line cmd';
+    aLine.innerHTML = `<span style="color:var(--warn)">réponse ?›</span> ${escapeHtml(answer)}`;
+    out.appendChild(aLine);
+    out.scrollTop = out.scrollHeight;
+
+    // Envoyer la réponse à ECA via /terminal/respond
+    try {
+      await fetch(`${API}/api/sandboxes/${ctx.sbId}/terminal/respond`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: answer }),
+      });
+    } catch (e) {
+      lvlTermAppend(`✖ Erreur envoi réponse : ${e.message}`, 'err');
+    }
+  };
+
+  if (answerInput) {
+    answerInput.addEventListener('keydown', e => {
+      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submit(); }
+    });
   }
 }
 
@@ -4901,13 +5052,6 @@ document.getElementById('modal-overlay').addEventListener('click', function(e) {
 
 // ─── ECA SERVICE STATUS — ping réel (remplace l'ancienne simulation) ──
 async function bootServices() {
-  // chorus-web (ce serveur Node) a nécessairement déjà répondu puisque
-  // cette page a été servie par lui — pastille "dancer" vraie dès le départ.
-  const dancer   = document.getElementById('svc-dancer');
-  const mdDancer = document.getElementById('svc-modal-dancer');
-  dancer.className = 'svc-pill online';
-  if (mdDancer) mdDancer.className = 'svc-pill online';
-
   await refreshEcaStatus();
   // Re-vérifie périodiquement (détecte un eca-server qui tombe/revient).
   setInterval(refreshEcaStatus, 30000);
@@ -5357,7 +5501,7 @@ initFromServer(); // surcharge avec les données réelles si le serveur MVP0 ré
           </div>
           <div class="sd-toggle-row" style="margin:0">
             <div class="sd-toggle-label">Runtime</div>
-            <span style="font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--text-muted)">Perl 5.36 · Dancer2 :5000</span>
+            <span style="font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--text-muted)">Node.js · Express :3000</span>
           </div>
         </div>
         <div class="sd-divider"></div>

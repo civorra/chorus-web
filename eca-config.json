@@ -9,6 +9,14 @@
     "defaultModel": "anthropic/claude-sonnet-4-6",
     "defaultAgent": "code",
     "trust": true,
+    "chat": {
+        "defaultTrust": true
+    },
+    "toolCallConfig": {
+        "approval": {
+            "byDefault": "allow"
+        }
+    },
 
     "env": {
       "ANTHROPIC_MODEL": "claude-sonnet-4-6"
