@@ -4580,16 +4580,35 @@ function openHistoryModal(projId) {
       }
       html += '</div>';
     }
-    // Note si des analyses existent (accessibles via View Summary / View Explain)
+    // Section "Analyses" séparée — les fichiers summary/explain ne sont pas
+    // structurellement liés à un run-report spécifique (pas de référence
+    // croisée dans les données). On les affiche dans une section distincte
+    // pour éviter toute fausse association avec un run particulier.
     if (analyses.length) {
-      const summaryN = analyses.filter(r => r.kind === 'summary').length;
-      const explainN = analyses.filter(r => r.kind === 'explain').length;
-      const parts = [];
-      if (summaryN) parts.push(`${summaryN} summary`);
-      if (explainN) parts.push(`${explainN} explain`);
-      html += `<div style="margin-top:10px;padding:6px 10px;font-size:11px;color:var(--text-muted);border-top:1px solid var(--border-light)">
-        📄 ${parts.join(' · ')} — accessibles via <em>View Summary / View Explain</em> dans le panneau de vue
-      </div>`;
+      analyses.sort((a, b) => a.label.localeCompare(b.label));
+      html += `<div style="margin-top:14px">
+        <div style="font-size:10px;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:.08em;margin-bottom:6px">
+          Analyses (${analyses.length}) — non liées à un run spécifique
+        </div>`;
+      for (const r of analyses) {
+        const icon = r.kind === 'summary' ? '📄' : '🔍';
+        const label = r.kind === 'summary' ? 'Summary' : 'Explain';
+        html += `<div class="hm-report-row">
+          <div class="hm-report-icon">${icon}</div>
+          <div class="hm-report-info">
+            <div class="hm-report-name">${r.label}</div>
+            <div class="hm-report-desc">${r.desc||''}</div>
+          </div>
+          <div class="hm-report-path" title="${r.path||''}">${r.path||''}</div>
+          <button class="btn btn-ghost btn-sm" style="padding:2px 7px;font-size:10px;flex-shrink:0"
+            title="Voir ${r.label}"
+            onclick="openMdView('${sbId}', '${proj.entity}', '${projId}', '${r.label}')">👁️ ${label}</button>
+          <button class="btn btn-ghost btn-sm" style="padding:2px 7px;font-size:10px;flex-shrink:0"
+            title="Terminal ECA — ${r.label}"
+            onclick="openLevelTerminal('report', {sbId:'${sbId}', entityId:'${proj.entity}', projId:'${projId}', projName:'${(proj.name||'').replace(/'/g,"\\'")}', reportFile:'${r.label}'})">🖥️</button>
+        </div>`;
+      }
+      html += `</div>`;
     }
     body.innerHTML = html;
   }
