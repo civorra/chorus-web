@@ -6,8 +6,9 @@
       "port": 7777
     },
 
-    "defaultModel": "anthropic/claude-sonnet-5",
+    "defaultModel": "anthropic/claude-sonnet-4-6",
     "defaultAgent": "code",
+    "trust": true,
 
     "env": {
       "ANTHROPIC_MODEL": "claude-sonnet-4-6"

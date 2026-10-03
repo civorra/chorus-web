@@ -37,7 +37,15 @@ function ecaRequest(path, method, bodyObj) {
     }
 
     const req = https.request(
-      { hostname: target.hostname, port: target.port, path: target.pathname, method, headers, rejectUnauthorized: false, timeout: 15000 },
+      { hostname: target.hostname, port: target.port, path: target.pathname, method, headers,
+        rejectUnauthorized: false, timeout: 15000,
+        // Disable connection reuse: the Jetty 12 bug causes socket hang-ups on
+        // GET /chats/:id that leave the globalAgent's pooled sockets broken.
+        // A fresh connection per request avoids reusing a destroyed socket.
+        // Trade-off: one TLS handshake per request (~150ms overhead each).
+        agent: false,
+        // Reduce per-request timeout for polls (not for prompt POST).
+        timeout: method === 'GET' ? 8000 : 15000 },
       (res) => {
         let data = '';
         res.on('data', (d) => (data += d));
@@ -78,17 +86,37 @@ function lastAssistantText(chat) {
  * du traitement par polling. `onTick` (optionnel) est appelé à chaque poll
  * avec le chat courant, utile pour journaliser la progression côté SSE.
  */
-async function promptAndWait(chatId, message, { pollIntervalMs = 1000, timeoutMs = 120000, onTick } = {}) {
+async function promptAndWait(chatId, message, { pollIntervalMs = 300, timeoutMs = 120000, onTick } = {}) {
   await ecaRequest(`/api/v1/chats/${encodeURIComponent(chatId)}/prompt`, 'POST', { message });
 
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     await new Promise((r) => setTimeout(r, pollIntervalMs));
-    const chat = await ecaRequest(`/api/v1/chats/${encodeURIComponent(chatId)}`, 'GET');
+
+    // Primary: GET /api/v1/chats/:id — returns full chat with messages.
+    // Known limitation: a Jetty 12 / Ring adapter bug causes socket hang up
+    // when the chat contains large content (>~5 KB stored messages). In that
+    // case we fall back to the list endpoint which is unaffected.
+    let chat = null;
+    try {
+      chat = await ecaRequest(`/api/v1/chats/${encodeURIComponent(chatId)}`, 'GET');
+    } catch (e) {
+      if (!e.message.includes('socket hang up') && !e.message.includes('ECONNRESET')) {
+        throw e; // Unknown error — propagate immediately.
+      }
+      // Jetty bug fallback: use GET /api/v1/chats (list) to check status only.
+      try {
+        const list = await ecaRequest('/api/v1/chats', 'GET');
+        const entry = Array.isArray(list) ? list.find((c) => c.id === chatId) : null;
+        if (!entry || entry.status === 'running') continue; // still processing
+        // ECA is done but messages are unreadable via :id (Jetty bug).
+        // Return a minimal shell so the caller gets a non-null idle object.
+        chat = { id: chatId, status: entry.status, messages: [], pendingToolCalls: [],
+                 _jettyFallback: true };
+      } catch { continue; /* list call also failed — retry next tick */ }
+    }
+
     if (onTick) onTick(chat);
-    // Statut intermédiaire réel observé côté eca-server : "running"
-    // (distinct du "prompting" renvoyé par la réponse du POST /prompt,
-    // qui ne reflète que l'acceptation de la requête, pas son issue).
     if (chat && chat.status !== 'running') {
       return chat;
     }

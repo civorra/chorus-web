@@ -543,7 +543,8 @@ app.post('/api/sandboxes/:sbId/entities/:entityId/projects/:projId/chat', async 
     : `${prompts.PROMPT_CHAT}\n\nQuestion : ${message}`;
 
   try {
-    const chat = await eca.promptAndWait(chatId, fullMessage, { timeoutMs: 60000 });
+    // First message with AGENTS.md prefix can take longer — use 120s.
+  const chat = await eca.promptAndWait(chatId, fullMessage, { timeoutMs: 120000 });
     if (chat.status === 'error') {
       return res.status(502).json({ ok: false, error: `eca-server a renvoyé une erreur pour le chat ${chatId}` });
     }
@@ -605,13 +606,56 @@ app.post('/api/sandboxes/:sbId/terminal', async (req, res) => {
     contextBlock = `(contexte indisponible : ${e.message})`;
   }
 
-  const chatId = `term-${sessionId}`;
-  const fullMessage = `[Contexte ECA — niveau ${level}]\n${contextBlock}\n\nQuestion : ${message}`;
+  // Stable chatId per sandbox — AGENTS.md is injected only ONCE (first use),
+  // then ECA keeps the full history. All subsequent terminal requests to this
+  // sandbox reuse the same warmed-up chat → fast after the first call.
+  // Using sbId (not sessionId) means different browser sessions, levels, and
+  // entities all share the same ECA chat for that sandbox: no reload cost.
+  const chatId = `eca-term-${sbId}`;
+
+  // Bootstrap on the very first message of this sandbox's chat.
+  // We do NOT inject AGENTS.md content inline: ECA stores injected content
+  // in chat history, and large content (>~5 KB) triggers a Jetty 12 bug on
+  // GET /api/v1/chats/:id (socket hang up during response serialisation).
+  // Instead we send a short hint pointing ECA to AGENTS.md; with trust mode
+  // enabled, ECA reads the file itself via its workspace tools when needed.
+  let agentsPrefix = '';
+  try {
+    let isNew = true;
+    try {
+      // Use the list endpoint — immune to the Jetty 12 bug that hangs up
+      // GET /api/v1/chats/:id when the chat has messages.
+      const list = await eca.ecaRequest('/api/v1/chats', 'GET');
+      isNew = !Array.isArray(list) || !list.find((c) => c.id === chatId);
+    } catch { /* list call failed — assume new chat */ }
+
+    if (isNew) {
+      const chorusHome = chorus.CHORUS_HOME();
+      const agentsMdPath = path.join(chorusHome, 'Engine', 'AGENTS.md');
+      agentsPrefix =
+        `[Chorus ECA Terminal — sandbox: ${sbId}]\n` +
+        `Workspace: ${chorusHome}. ` +
+        `Engine AGENTS.md: ${agentsMdPath}. ` +
+        `Read it via your tools when needed to answer Chorus commands.\n\n`;
+    }
+  } catch { /* unexpected error — proceed without prefix */ }
+
+  // NOTE on isNew detection: we intentionally use GET /api/v1/chats (list)
+  // instead of GET /api/v1/chats/:id for the existence check below, because
+  // the specific-chat GET triggers a Jetty 12 bug (socket hang up) whenever
+  // the chat contains messages.  The list endpoint is unaffected.
+
+  const fullMessage = `${agentsPrefix}[Contexte ECA — niveau ${level}]\n${contextBlock}\n\nQuestion : ${message}`;
 
   try {
-    const chat = await eca.promptAndWait(chatId, fullMessage, { timeoutMs: 60000 });
+    // Allow up to 120s: first message reads AGENTS.md + runs tool calls.
+    const chat = await eca.promptAndWait(chatId, fullMessage, { timeoutMs: 120000 });
     if (chat.status === 'error') {
       return res.status(502).json({ ok: false, error: `eca-server a renvoyé une erreur pour le chat ${chatId}` });
+    }
+    if (chat._jettyFallback) {
+      // Jetty 12 bug: ECA finished but chat content unreadable via GET :id.
+      return res.status(502).json({ ok: false, error: 'eca-server: réponse générée mais non lisible (bug Jetty — redémarrez eca-server si le problème persiste)' });
     }
     res.json({ ok: true, reply: eca.lastAssistantText(chat) });
   } catch (err) {

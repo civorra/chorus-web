@@ -17,8 +17,8 @@ set -e
 #  Mode API key (fallback) : si les credentials OAuth sont absents ET qu'un
 #    secret Docker est disponible (/run/secrets/anthropic_api_key), on injecte
 #    la clé pour maintenir la compatibilité (dev local sans session Pro/Max).
-if [ -f /root/.config/eca/credentials ]; then
-  echo "[eca-bootstrap] Credentials OAuth détectés — mode Pro/Max (pas d'API key injectée)"
+if [ -f /root/.cache/eca/db.transit.json ]; then
+  echo "[eca-bootstrap] Credentials OAuth détectés (db.transit.json) — mode Pro/Max"
 elif [ -f /run/secrets/anthropic_api_key ]; then
   export ANTHROPIC_API_KEY="$(cat /run/secrets/anthropic_api_key)"
   echo "[eca-bootstrap] Credentials OAuth absents — fallback API key injectée"

@@ -1,8 +1,8 @@
-# Secret natif Compose : lu directement depuis le fichier hôte au moment du
-# "up", jamais copié dans ce repo, jamais passé en clair comme variable
-# d'environnement de conteneur (invisible via `docker inspect`). Monté en
-# lecture seule dans chaque service sous /run/secrets/anthropic_api_key —
-# voir Dockerfile / eca-bootstrap.sh pour l'export vers ANTHROPIC_API_KEY.
+# Native Compose secret: read directly from the host file at "up" time,
+# never copied into this repo, never passed as a plain container env var
+# (invisible via `docker inspect`). Mounted read-only in each service
+# under /run/secrets/anthropic_api_key — see Dockerfile / eca-bootstrap.sh
+# for the export to ANTHROPIC_API_KEY.
 secrets:
   anthropic_api_key:
     file: /home/civ/.config/anthropic/api_key
@@ -14,30 +14,31 @@ services:
       dockerfile: Dockerfile.eca
     environment:
       - ECA_REMOTE_PASSWORD=${ECA_REMOTE_PASSWORD:-changeme-local-dev}
-    # Pas de secret anthropic_api_key ici : ECA utilise les credentials OAuth
-    # (abonnement Pro/Max) montés depuis ~/.config/eca/ de l'hôte.
-    # Fallback API key : eca-bootstrap.sh l'injecte automatiquement si les
-    # credentials OAuth sont absents ET que le secret est configuré.
+    # No anthropic_api_key secret here: ECA uses OAuth credentials
+    # (Pro/Max subscription) mounted from ~/.config/eca/ on the host.
+    # API key fallback: eca-bootstrap.sh injects it automatically when
+    # OAuth credentials are absent AND the secret is configured.
     volumes:
-      # Même montage que chorus-web : ECA doit voir Engine/AGENTS.md,
-      # agent/skills/*.md et sandboxes/ pour charger les skills réels.
+      # Same mount as chorus-web: ECA must see Engine/AGENTS.md,
+      # agent/skills/*.md and sandboxes/ to load the real skills.
       - ${CHORUS_HOME}:/chorus
-      # Credentials OAuth ECA (session Pro/Max de l'hôte) — lecture seule.
-      # Permet à eca-server d'utiliser l'authentification OAuth au lieu d'une
-      # API key pay-per-token. Ne jamais monter en lecture/écriture.
-      - /home/civ/.config/eca:/root/.config/eca:ro
-    # Pas de port publié vers l'hôte — seul chorus-web (réseau compose
-    # interne) a besoin de joindre ce service, via http://eca-server:7777.
+      # ECA OAuth credentials (host Pro/Max session) — read-only.
+      # ECA stores OAuth tokens in ~/.cache/eca/db.transit.json (not in
+      # ~/.config/eca/). Mount only this file to avoid polluting the host
+      # cache with the container's own session data.
+      - /home/civ/.cache/eca/db.transit.json:/root/.cache/eca/db.transit.json:ro
+    # No port published to the host — only chorus-web (internal Compose
+    # network) needs to reach this service, via https://eca-server:7777.
     restart: unless-stopped
 
   chorus-web:
     build:
-      # Contexte = racine du dépôt Chorus, pour que le Dockerfile puisse
-      # COPY Engine/ (Makefile.PL + lib/) et installer les modules Chorus::*
-      # nativement via perl Makefile.PL && make && make install.
-      # chorus-web est désormais un vrai dossier (plus un symlink vers
-      # chorus-mvp0-v43/) — BuildKit ne suit pas les symlinks de répertoire
-      # lors de la construction du contexte, ce qui cassait COPY chorus-web/*.
+      # Context = Chorus repo root, so the Dockerfile can COPY Engine/
+      # (Makefile.PL + lib/) and install the Chorus::* modules natively
+      # via perl Makefile.PL && make && make install.
+      # chorus-web is now a real directory (no longer a symlink to
+      # chorus-mvp0-v43/) — BuildKit does not follow directory symlinks
+      # when building the context, which broke COPY chorus-web/*.
       context: ..
       dockerfile: chorus-web/Dockerfile
     ports:
@@ -46,27 +47,27 @@ services:
       - anthropic_api_key
     environment:
       - ANTHROPIC_MODEL=${ANTHROPIC_MODEL:-claude-sonnet-5}
-      # Chemin vu DEPUIS LE CONTENEUR (correspond au point de montage du volume ci-dessous),
-      # jamais le chemin hôte — sinon chorus.js/run.pl cherchent un répertoire inexistant.
+      # Path as seen FROM THE CONTAINER (matches the volume mount point below),
+      # never the host path — otherwise chorus.js/run.pl look for a non-existent directory.
       - CHORUS_HOME=/chorus
-      # Racine des sandboxes — distincte de CHORUS_HOME pour pouvoir monter tout
-      # le dépôt. Pointe ici sur $CHORUS/sandboxes/cyber-sec (chemin hôte
-      # /home/civ/Documents/DEV/Chorus/sandboxes/cyber-sec, vu depuis le
-      # conteneur via le volume ${CHORUS_HOME}:/chorus ci-dessous).
+      # Sandbox root — separate from CHORUS_HOME to allow mounting the full
+      # repo. Points to $CHORUS/sandboxes/cyber-sec (host path
+      # /home/civ/Documents/DEV/Chorus/sandboxes/cyber-sec, seen from the
+      # container via the ${CHORUS_HOME}:/chorus volume below).
       - SANDBOXES=${SANDBOXES:-/chorus/Engine/sandboxes}
-      # Plus de PERL5LIB : les modules Chorus::* sont installés nativement
-      # dans l'image via Makefile.PL/make install (voir Dockerfile).
+      # No PERL5LIB: Chorus::* modules are installed natively in the image
+      # via Makefile.PL/make install (see Dockerfile).
       - PORT=3000
-      # Service eca-server (réseau compose interne). HTTPS obligatoire —
-      # le serveur remote ECA n'écoute qu'en TLS (certificat auto-signé
-      # *.local.eca.dev, cf. eca-client.js § rejectUnauthorized: false).
+      # eca-server service (internal Compose network). HTTPS required —
+      # the ECA remote server only listens over TLS (self-signed certificate
+      # *.local.eca.dev, see eca-client.js § rejectUnauthorized: false).
       - ECA_SERVER_URL=https://eca-server:7777
       - ECA_REMOTE_PASSWORD=${ECA_REMOTE_PASSWORD:-changeme-local-dev}
     volumes:
-      # Monter tout le dépôt Chorus existant en lecture/écriture
-      # (run.pl écrit les rapports dans Engine/sandboxes/*/workspace/)
+      # Mount the entire existing Chorus repo read-write
+      # (run.pl writes reports under Engine/sandboxes/*/workspace/)
       - ${CHORUS_HOME}:/chorus
-      # chorus-web.html est désormais copié dans l'image (voir Dockerfile) — plus de montage ici.
+      # chorus-web.html is now copied into the image (see Dockerfile) — no mount needed here.
     depends_on:
       - eca-server
     restart: unless-stopped
