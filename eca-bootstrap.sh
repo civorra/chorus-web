@@ -7,11 +7,23 @@
 # aucun port ouvert).
 set -e
 
-# Clé Anthropic via secret Docker Compose (/run/secrets/anthropic_api_key),
-# jamais en variable d'env de conteneur — repli sur ANTHROPIC_API_KEY si le
-# secret est absent (dev local sans secrets configurés).
-if [ -f /run/secrets/anthropic_api_key ]; then
+# Authentification Anthropic — deux modes :
+#
+#  Mode OAuth (prioritaire) : si les credentials ECA sont montés depuis l'hôte
+#    (/root/.config/eca/credentials), ECA utilise l'abonnement Pro/Max via OAuth.
+#    Dans ce cas ANTHROPIC_API_KEY NE DOIT PAS être définie — elle écraserait
+#    OAuth et basculerait ECA en mode pay-per-token.
+#
+#  Mode API key (fallback) : si les credentials OAuth sont absents ET qu'un
+#    secret Docker est disponible (/run/secrets/anthropic_api_key), on injecte
+#    la clé pour maintenir la compatibilité (dev local sans session Pro/Max).
+if [ -f /root/.config/eca/credentials ]; then
+  echo "[eca-bootstrap] Credentials OAuth détectés — mode Pro/Max (pas d'API key injectée)"
+elif [ -f /run/secrets/anthropic_api_key ]; then
   export ANTHROPIC_API_KEY="$(cat /run/secrets/anthropic_api_key)"
+  echo "[eca-bootstrap] Credentials OAuth absents — fallback API key injectée"
+else
+  echo "[eca-bootstrap] ⚠ Aucune authentification disponible (ni OAuth ni API key)"
 fi
 
 send_message() {

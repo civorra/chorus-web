@@ -1,8 +1,39 @@
 {
-  "remote": {
-    "enabled": true,
-    "password": "${env:ECA_REMOTE_PASSWORD}",
-    "bindHost": "0.0.0.0",
-    "port": 7777
-  }
+    "remote": {
+      "enabled": true,
+      "password": "${env:ECA_REMOTE_PASSWORD}",
+      "bindHost": "0.0.0.0",
+      "port": 7777
+    },
+
+    "defaultModel": "anthropic/claude-sonnet-5",
+    "defaultAgent": "code",
+
+    "env": {
+      "ANTHROPIC_MODEL": "claude-sonnet-4-6"
+    },
+    
+    "providers": {
+        "anthropic": {
+            "type": "max",
+            "cacheRetention": "long"
+        }
+    },
+
+    "agent": {
+        "architect":{ 
+            "model": "anthropic/claude-sonnet-5", 
+            "variant": "large" 
+        },
+        "code": {
+            "model": "anthropic/claude-sonnet-4-6", 
+            "variant": "medium"
+        },
+        "fast": {
+            "model": "anthropic/claude-haiku-4-5-20251001", 
+            "variant": "medium"
+        }
+    },
+
+    "$schema": "https://eca.dev/config.json"
 }
