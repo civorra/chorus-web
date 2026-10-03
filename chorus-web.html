@@ -3325,21 +3325,23 @@ Run : ${new Date().toISOString().slice(0,19).replace('T',' ')} UTC
     </div>
     <div class="verdict-actions">
       <div class="va-label" style="display:flex;align-items:center;gap:10px">
-        <span>Actions post-verdict via <code class="mono" style="font-size:10px">chorus-check</code> (ECA skill)</span>
+        <span>Analyse post-verdict via ECA — <code class="mono" style="font-size:10px">chorus-check</code></span>
       </div>
       <div class="va-btns">
-        <button class="va-btn" id="va-btn-summary" onclick="runChorusCheckAction('summary')">
+        <button id="va-btn-summary" class="va-btn va-btn-check" onclick="openChorusCheckTerminal('summary')">
           <span class="va-btn-icon">📄</span>
           <div>
-            <div class="va-btn-title"><code class="mono">--summary</code></div>
-            <div class="va-btn-desc">Synthèse 1 page — chiffres clés, recommandation</div>
+            <div class="va-btn-title" style="font-size:14px;font-weight:700;letter-spacing:.01em">Summary</div>
+            <div class="va-btn-desc">Synthèse 1 page — chiffres clés, recommandation finale</div>
+            <div class="va-btn-desc" style="margin-top:3px;color:var(--accent);font-family:'JetBrains Mono',monospace;font-size:10px">chorus-check --summary</div>
           </div>
         </button>
-        <button class="va-btn" id="va-btn-explain" onclick="runChorusCheckAction('explain')">
+        <button id="va-btn-explain" class="va-btn va-btn-check" onclick="openChorusCheckTerminal('explain')">
           <span class="va-btn-icon">🔍</span>
           <div>
-            <div class="va-btn-title"><code class="mono">--explain</code></div>
-            <div class="va-btn-desc">Explications règle par règle (NON_CONFORME)</div>
+            <div class="va-btn-title" style="font-size:14px;font-weight:700;letter-spacing:.01em">Explain</div>
+            <div class="va-btn-desc">Explications règle par règle (éléments NON_CONFORME)</div>
+            <div class="va-btn-desc" style="margin-top:3px;color:var(--accent);font-family:'JetBrains Mono',monospace;font-size:10px">chorus-check --explain</div>
           </div>
         </button>
       </div>
@@ -3369,6 +3371,24 @@ Run : ${new Date().toISOString().slice(0,19).replace('T',' ')} UTC
   renderReportsList([reportEntry]);
 }
 
+/** Disable Summary/Explain buttons if the corresponding report already exists. */
+function updateChorusCheckButtons(reports) {
+  for (const kind of ['summary', 'explain']) {
+    const btn = document.getElementById(`va-btn-${kind}`);
+    if (!btn) continue;
+    const exists = (reports || []).some(r => r.kind === kind);
+    btn.disabled = exists;
+    btn.title    = exists ? `Rapport ${kind} déjà généré` : '';
+    btn.style.opacity  = exists ? '.45' : '';
+    btn.style.cursor   = exists ? 'not-allowed' : '';
+    // Show a small badge on the icon when already done
+    const icon = btn.querySelector('.va-btn-icon');
+    if (icon) icon.textContent = exists
+      ? (kind === 'summary' ? '📄✓' : '🔍✓')
+      : (kind === 'summary' ? '📄'  : '🔍');
+  }
+}
+
 function renderReportsList(reports) {
   document.getElementById('reports-list').innerHTML = reports.map((r, i) => `
     <div style="display:flex;align-items:center;gap:10px;padding:8px 12px;background:var(--bg-surface);border:1px solid var(--border);border-radius:6px">
@@ -3383,6 +3403,7 @@ function renderReportsList(reports) {
     </div>
   `).join('');
   window._lastReports = reports;
+  updateChorusCheckButtons(reports);
 }
 
 /* ─── CHORUS-COMPLETE-REPORT ────────────────────────────── */
@@ -3756,7 +3777,7 @@ function levelPromptLabel(ctx) {
   return 'chorus ?>';
 }
 
-function openLevelTerminal(level, ctx) {
+function openLevelTerminal(level, ctx, autoCmd = null) {
   _lvlTermCtx = { level, ...ctx };
   _lvlTermHistory = [];
   _lvlTermHistIdx = -1;
@@ -3815,7 +3836,46 @@ function openLevelTerminal(level, ctx) {
   setTimeout(() => {
     const input = document.getElementById('lvl-term-input');
     if (input) input.focus();
+    // Auto-execute command if provided (chorus-check --summary/--explain)
+    if (autoCmd) {
+      setTimeout(() => {
+        if (input) { input.value = autoCmd; }
+        levelTerminalExec(autoCmd);
+        if (input) { input.value = ''; }
+      }, 400);
+    }
   }, t + 100);
+}
+
+// ─── CHORUS-CHECK TERMINAL ────────────────────────────────────
+// Ouvre le terminal ECA au niveau 'project' et lance automatiquement
+// chorus-check --summary ou --explain sur le rapport de conformité existant.
+// Le skill ECA reçoit le chemin du rapport — il ne relance pas run.pl.
+function openChorusCheckTerminal(action) {
+  if (!currentProject || !currentSandbox) return;
+  const proj     = currentProject;
+  const sbId     = currentSandbox.id;
+  const entityId = proj.entity;
+
+  // Trouver le rapport de conformité existant (produit par run.pl)
+  const reports   = window._lastReports || [];
+  const runReport = reports.find(r => r.kind === 'run' || (r.run || '').startsWith('run.pl'));
+  const reportFile = runReport ? runReport.label : null;
+
+  // Commande envoyée à ECA : indiquer explicitement le rapport existant
+  // pour que chorus-check ne relance pas run.pl
+  const cmd = reportFile
+    ? `chorus-check ${sbId} ${proj.id} --${action}\n`
+      + `⚠ Le rapport de conformité a déjà été généré : workspace/${entityId}/reports/${reportFile}\n`
+      + `Utilise ce rapport existant — ne relance pas run.pl.`
+    : `chorus-check ${sbId} ${proj.id} --${action}`;
+
+  openLevelTerminal('project', {
+    sbId,
+    entityId,
+    projId:   proj.id,
+    projName: proj.name,
+  }, cmd);
 }
 
 function closeLevelTerminal() {
