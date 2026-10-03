@@ -4533,9 +4533,15 @@ function openHistoryModal(projId) {
   if (reports.length === 0) {
     body.innerHTML = '<div class="hm-empty">Aucun rapport généré pour ce projet.<br><span style="font-size:11px">Lancez <code>run.pl</code> ou <code>chorus-check</code> pour produire des rapports.</span></div>';
   } else {
-    // Group by date
+    // summary/explain sont accessibles via les boutons "View Summary" /
+    // "View Explain" du panneau de vue d'un rapport de pipeline — on les
+    // exclut de la liste pour éviter la redondance.
+    const analyses = reports.filter(r => r.kind === 'summary' || r.kind === 'explain');
+
+    // Group run-reports by date (summary/explain exclus)
     const byDate = {};
     for (const r of reports) {
+      if (r.kind === 'summary' || r.kind === 'explain') continue;
       const d = r.date || 'Inconnu';
       if (!byDate[d]) byDate[d] = [];
       byDate[d].push(r);
@@ -4573,6 +4579,17 @@ function openHistoryModal(projId) {
         </div>`;
       }
       html += '</div>';
+    }
+    // Note si des analyses existent (accessibles via View Summary / View Explain)
+    if (analyses.length) {
+      const summaryN = analyses.filter(r => r.kind === 'summary').length;
+      const explainN = analyses.filter(r => r.kind === 'explain').length;
+      const parts = [];
+      if (summaryN) parts.push(`${summaryN} summary`);
+      if (explainN) parts.push(`${explainN} explain`);
+      html += `<div style="margin-top:10px;padding:6px 10px;font-size:11px;color:var(--text-muted);border-top:1px solid var(--border-light)">
+        📄 ${parts.join(' · ')} — accessibles via <em>View Summary / View Explain</em> dans le panneau de vue
+      </div>`;
     }
     body.innerHTML = html;
   }
