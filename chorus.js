@@ -461,13 +461,15 @@ function indexRunReportsDir(dir, index) {
     try {
       const json = JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8'));
       if (!json.project_file) continue;
-      index.set(path.basename(json.project_file), { file: f, dir, data: json });
+      const key = path.basename(json.project_file);
+      if (!index.has(key)) index.set(key, []);
+      index.get(key).push({ file: f, dir, data: json });
     } catch { /* fichier corrompu/illisible — ignoré */ }
   }
 }
 
 function buildRunReportIndex(sbPath) {
-  const index = new Map(); // basename(project_file) → { file, data }
+  const index = new Map(); // basename(project_file) → [{ file, dir, data }, …]  (chronological)
 
   // Legacy : racine du sandbox (anciens run-report-*.json)
   indexRunReportsDir(path.join(sbPath, 'reports'), index);
@@ -513,15 +515,17 @@ function scanFlatProject(entityPath, slug, jsonFile, runReportIndex) {
   // Priorité 1 : run-report-*.json — source structurée, authoritative,
   // liée explicitement via project_file (racine sandbox en legacy, ou
   // workspace/<entity>/reports/ dans la convention actuelle).
-  const runEntry = runReportIndex && runReportIndex.get(`${slug}.json`);
+  // All run-reports for this project, sorted chronologically (oldest first).
+  // The index value is now an array; the most recent entry drives the displayed
+  // verdict/conformity stats, while all entries are exposed as runEntries.
+  const runEntries = (runReportIndex && runReportIndex.get(`${slug}.json`)) || [];
+  const runEntry   = runEntries[runEntries.length - 1] || null; // most recent
 
   let reportFile = null;
   let reportData = null;
 
   if (runEntry) {
     const j = runEntry.data;
-    // Chemin d'affichage relatif à entityPath si le run-report vit dans
-    // workspace/<entity>/reports/, sinon relatif au sandbox (legacy racine).
     reportFile = runEntry.dir === reportsDir
       ? `reports/${runEntry.file}`
       : path.relative(entityPath, path.join(runEntry.dir, runEntry.file));
@@ -562,6 +566,7 @@ function scanFlatProject(entityPath, slug, jsonFile, runReportIndex) {
     reportFile:  reportFile,
     reportData:  reportData,
     checkReports,
+    runEntries,   // all run-reports (array, chronological)
     norm:        reportData?.norm || null,
   };
 }

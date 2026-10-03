@@ -32,7 +32,7 @@
     "agent": {
         "architect":{ 
             "model": "anthropic/claude-sonnet-5", 
-            "variant": "large" 
+            "variant": "medium" 
         },
         "code": {
             "model": "anthropic/claude-sonnet-4-6", 

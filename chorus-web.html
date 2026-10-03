@@ -1829,7 +1829,9 @@ input, select, textarea { font-family: inherit; }
     <div class="rv-footer">
       <span style="font-size:11px;color:var(--text-muted)" id="rv-footer-stats"></span>
       <span style="flex:1"></span>
-      <button id="rv-complete-btn" class="btn btn-ghost btn-sm" style="border-color:var(--info);color:var(--info);display:none" onclick="runCompleteReportFromModal()">📝 chorus-complete-report</button>
+      <button id="rv-summary-btn" class="btn btn-ghost btn-sm" style="display:none">📄 Summary</button>
+      <button id="rv-explain-btn" class="btn btn-ghost btn-sm" style="display:none">🔍 Explain</button>
+      <button id="rv-complete-btn" class="btn btn-ghost btn-sm" style="border-color:var(--info);color:var(--info);display:none" onclick="runCompleteReportFromModal()">📝 Complete</button>
       <button class="btn btn-ghost btn-sm" onclick="closeReportView()">Fermer</button>
     </div>
   </div>
@@ -2560,16 +2562,24 @@ async function initFromServer() {
         // "reports/xxx.json" (convention actuelle), soit "../../reports/xxx.json"
         // (legacy racine sandbox), soit un simple nom de fichier markdown
         // ("compliance-report-xxx.md", implicitement dans reports/).
-        const runReportRelPath = p.reportFile
-          ? (/^(reports\/|\.\.\/)/.test(p.reportFile) ? p.reportFile : `reports/${p.reportFile}`)
-          : null;
-        const runReportEntry = p.reportFile ? [{
-          icon:  '📋', kind: 'run', label: p.reportFile,
-          desc:  `${p.verdict || '?'} · ${p.reportData?.conformes || 0}/${p.frames || 0} CONFORMES`,
-          path:  `sandboxes/${sb.id}/workspace/${e.id}/${runReportRelPath}`,
-          date:  p.reportData?.date || new Date().toISOString().slice(0,10),
-          run:   'run.pl',
-        }] : [];
+        // All run-reports (most recent first for display)
+        const runReportEntry = (p.runEntries && p.runEntries.length
+          ? [...p.runEntries].reverse()   // most recent first
+          : p.reportFile ? [{ file: p.reportFile, dir: null, data: p.reportData }] : []
+        ).map(entry => {
+          const fname = entry.file;
+          const rdata = entry.data || p.reportData || {};
+          const relPath = fname
+            ? (/^reports\//.test(fname) ? fname : `reports/${fname}`)
+            : null;
+          return {
+            icon:  '📋', kind: 'run', label: fname || p.reportFile,
+            desc:  `${rdata.pipeline_solved ? 'SOLVED' : (p.verdict || '?')} · ${rdata.n_conforme ?? p.reportData?.conformes ?? 0}/${rdata.n_total ?? p.frames ?? 0} CONFORMES`,
+            path:  relPath ? `sandboxes/${sb.id}/workspace/${e.id}/${relPath}` : '',
+            date:  (rdata.generated_at || p.reportData?.date || '').slice(0,10) || new Date().toISOString().slice(0,10),
+            run:   'run.pl',
+          };
+        });
 
         // Rapports chorus-check (synthese-/explain-*.md) — ignorés jusqu'ici,
         // ce qui laissait le panneau "Rapports" vide pour tout projet n'ayant
@@ -2935,7 +2945,7 @@ function projCard(p) {
       <div class="pc-actions">
         <button class="btn btn-success btn-sm" onclick="selectProjectPipeline('${p.id}')">▶ Pipeline</button>
         <button class="btn btn-ghost" style="font-size:11px" onclick="openImportModal('${p.id}')">↺ Ré-importer</button>
-        <button class="btn btn-ghost" style="font-size:11px" onclick="openHistoryModal('${p.id}')">📋 Rapports (${(p.reports||[]).length})</button>
+        <button class="btn btn-ghost" style="font-size:11px" onclick="openHistoryModal('${p.id}')" title="Rapports : ${reportCountLabel(p.reports)}">📋 ${reportCountLabel(p.reports)}</button>
         <button class="btn btn-ghost" style="font-size:11px" title="Terminal ECA — projet ${p.id}" onclick="openLevelTerminal('project', {sbId: currentSandbox.id, entityId: '${p.entity}', projId: '${p.id}', projName: '${(p.name||'').replace(/'/g,"\\'")}'})">🖥️</button>
       </div>
     </div>
@@ -2992,7 +3002,7 @@ function projRow(p) {
       <span class="pr-actions">
         <button class="btn btn-success btn-sm" onclick="selectProjectPipeline('${p.id}')">▶ Pipeline</button>
         <button class="btn btn-ghost btn-sm" onclick="openImportModal('${p.id}')" title="Ré-importer">↺</button>
-        <button class="btn btn-ghost btn-sm" onclick="openHistoryModal('${p.id}')" title="Rapports (${(p.reports||[]).length})">📋 ${(p.reports||[]).length}</button>
+        <button class="btn btn-ghost btn-sm" onclick="openHistoryModal('${p.id}')" title="Rapports : ${reportCountLabel(p.reports)}">📋 ${reportCountLabel(p.reports)}</button>
         <button class="btn btn-ghost btn-sm" title="Terminal ECA — projet ${p.id}" onclick="openLevelTerminal('project', {sbId: currentSandbox.id, entityId: '${p.entity}', projId: '${p.id}', projName: '${(p.name||'').replace(/'/g,"\\'")}'})">🖥️</button>
       </span>
     </div>
@@ -3543,6 +3553,8 @@ async function openReportView(reportInfo, ctx) {
   document.getElementById('rv-run').textContent      = reportInfo.run || 'run.pl';
   document.getElementById('rv-duration').textContent = '—'; // non tracé par run.pl — jamais inventé
 
+  // Store context so footer buttons (Summary/Explain) can use it
+  window._rvCtx = { sbId, entityId, projId, projName: projName || projId };
   document.getElementById('report-view-overlay').hidden = false;
   const tbody = document.getElementById('rv-tbody');
   tbody.innerHTML = `<tr><td colspan="5" style="text-align:center;padding:24px;color:var(--text-muted)">Chargement du rapport réel…</td></tr>`;
@@ -3593,6 +3605,69 @@ async function openReportView(reportInfo, ctx) {
   // Show "chorus-complete-report" button only for --explain reports
   const completeBtn = document.getElementById('rv-complete-btn');
   if (completeBtn) completeBtn.style.display = (reportInfo && reportInfo.kind === 'explain') ? '' : 'none';
+
+  updateRvCheckButtons();
+}
+
+/**
+ * Met à jour les boutons Summary / Explain du footer de la modale report-view.
+ * Toujours en mode "Générer" — les vieilles analyses d'autres runs ne doivent
+ * pas apparaître ici ; elles sont accessibles via la modale historique.
+ * Exception : si l'analyse a été produite dans la SESSION courante (elle est
+ * dans _lastReports avec kind summary/explain ET le run-report courant y est
+ * aussi), on peut proposer "View" — c'est une analyse fraîche du même run.
+ */
+function updateRvCheckButtons() {
+  const ctx      = window._rvCtx || {};
+  const sbId     = ctx.sbId;
+  const entityId = ctx.entityId;
+  const projId   = ctx.projId;
+  if (!sbId || !entityId || !projId) return;
+
+  // Priority 1: fresh same-session analysis (in _lastReports alongside a run-report).
+  // Priority 2: persisted analysis from a previous session (in proj.reports loaded
+  //   from the server). In both cases we show "View …" and call openMdView.
+  // Only fall back to "Generate" when no analysis exists at all.
+  const sessionReports = window._lastReports || [];
+  const hasCurrentRun  = sessionReports.some(r => r.kind === 'run');
+
+  const proj = (PROJECTS[sbId] || []).find(p => p.id === projId);
+  const persistedReports = proj?.reports || [];
+
+  for (const kind of ['summary', 'explain']) {
+    const btn = document.getElementById(`rv-${kind}-btn`);
+    if (!btn) continue;
+    btn.style.display = '';
+
+    // Fresh = produced in the current pipeline session
+    const fresh     = hasCurrentRun ? sessionReports.find(r => r.kind === kind) : null;
+    // Persisted = loaded from the server (previous session), used only if no fresh
+    const persisted = fresh ? null : persistedReports.find(r => r.kind === kind);
+    const existing  = fresh || persisted;
+
+    if (existing) {
+      btn.innerHTML    = kind === 'summary' ? '📄 View Summary' : '🔍 View Explain';
+      // Fresh analyses highlighted in green; persisted in neutral style
+      btn.style.borderColor = fresh ? 'var(--success)' : '';
+      btn.style.color       = fresh ? 'var(--success)' : '';
+      btn.title  = existing.label;
+      btn.onclick = () => openMdView(sbId, entityId, projId, existing.label);
+    } else {
+      btn.innerHTML    = kind === 'summary' ? '📄 Summary' : '🔍 Explain';
+      btn.style.borderColor = '';
+      btn.style.color       = '';
+      btn.title  = `chorus-check --${kind} — générer une nouvelle analyse`;
+      btn.onclick = () => {
+        closeReportView();
+        if (!currentSandbox || currentSandbox.id !== sbId)
+          currentSandbox = SANDBOXES.find(s => s.id === sbId) || { id: sbId, name: sbId };
+        if (!currentProject || currentProject.id !== projId)
+          currentProject = (PROJECTS[sbId] || []).find(p => p.id === projId)
+            || { id: projId, entity: entityId, name: ctx.projName || projId };
+        openChorusCheckTerminal(kind);
+      };
+    }
+  }
 }
 
 function closeReportView() {
@@ -4049,6 +4124,17 @@ async function levelTerminalExec(cmd) {
 
 function escapeHtml(s) {
   return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+/** Compact report count label: "1 run" or "1 run · 13 analyses" */
+function reportCountLabel(reports) {
+  const reps = reports || [];
+  const runN = reps.filter(r => r.kind === 'run').length;
+  const anlN = reps.filter(r => r.kind === 'summary' || r.kind === 'explain').length;
+  if (!runN && !anlN) return '0';
+  if (!anlN) return `${runN}`;
+  if (!runN) return `${anlN} analyses`;
+  return `${runN} run · ${anlN} analyses`;
 }
 
 /**

@@ -706,10 +706,11 @@ app.get('/api/sandboxes/:sbId/entities/:entityId/projects/:projId/run-report', (
 
   try {
     const index = chorus.buildRunReportIndex(sbPath);
-    const entry = index.get(`${projId}.json`);
-    if (!entry) {
+    const entries = index.get(`${projId}.json`);
+    if (!entries || !entries.length) {
       return res.status(404).json({ ok: false, error: `Aucun run-report trouvé pour ${projId} — lancez run.pl d'abord` });
     }
+    const entry = entries[entries.length - 1]; // most recent
     res.json({ ok: true, file: entry.file, data: entry.data });
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message });
