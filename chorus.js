@@ -519,6 +519,15 @@ function scanFlatProject(entityPath, slug, jsonFile, runReportIndex) {
   // The index value is now an array; the most recent entry drives the displayed
   // verdict/conformity stats, while all entries are exposed as runEntries.
   const runEntries = (runReportIndex && runReportIndex.get(`${slug}.json`)) || [];
+
+  // MVP0 — lier chaque run-report à ses fichiers explain/synthese par timestamp
+  // Convention : run-report-YYYYMMDD-HHMMSS.json ↔ {explain,synthese}-<slug>-YYYYMMDD-HHMMSS.md
+  for (const entry of runEntries) {
+    const ts = (entry.file || '').match(/run-report-(\d{8}-\d{6})\.json/)?.[1];
+    entry.explain_file  = ts ? (checkReports.find(f => f.startsWith('explain-')  && f.includes(ts)) ?? null) : null;
+    entry.synthese_file = ts ? (checkReports.find(f => f.startsWith('synthese-') && f.includes(ts)) ?? null) : null;
+  }
+
   const runEntry   = runEntries[runEntries.length - 1] || null; // most recent
 
   let reportFile = null;
