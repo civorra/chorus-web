@@ -1685,7 +1685,21 @@ input, select, textarea { font-family: inherit; }
 .mdv-content a { color: var(--accent); }
 .mdv-footer {
   padding: 10px 20px; border-top: 1px solid var(--border);
-  display: flex; gap: 8px; justify-content: flex-end; flex-shrink: 0;
+  display: flex; gap: 8px; align-items: center; flex-shrink: 0;
+}
+/* Zone cross-check (explain reports) — côté gauche du footer */
+#mdv-cross-area {
+  flex: 1; display: flex; align-items: center; gap: 8px;
+}
+.mdv-cross-badge {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 4px 10px; border-radius: 6px;
+  font-size: 11px; font-weight: 500;
+  background: var(--success-dim); color: var(--success);
+  border: 1px solid var(--success);
+}
+.mdv-cross-badge .mdv-cross-date {
+  font-family: 'JetBrains Mono', monospace; font-size: 10px; opacity: 0.8;
 }
 
 /* Services modal */
@@ -2379,6 +2393,7 @@ input, select, textarea { font-family: inherit; }
       <div class="mdv-content" id="mdv-content">Chargement…</div>
     </div>
     <div class="mdv-footer">
+      <div id="mdv-cross-area"></div>
       <button class="btn btn-ghost btn-sm" onclick="closeMdView()">Fermer</button>
     </div>
   </div>
@@ -4406,6 +4421,7 @@ async function runCompleteReport(reportIndex, _directReport) {
 
 let _rvCurrentFilter = 'ALL';
 let _rvCurrentReport = null;
+let _mdvCtx = null;   // contexte du viewer Markdown (sbId, entityId, projId, filename)
 
 // Motif/raison d'un élément — même chaîne de repli que run.pl (un seul champ
 // "motif" générique, ou l'une de ses variantes spécifiques par type_element).
@@ -5656,9 +5672,12 @@ function closeHistoryModal() {
 // Affiche le contenu réel d'un rapport .md (explain-/synthese-/
 // compliance-report-) rendu en HTML via marked.js.
 async function openMdView(sbId, entityId, projId, filename) {
+  _mdvCtx = { sbId, entityId, projId, filename };
   document.getElementById('mdv-title').textContent = filename;
   document.getElementById('mdv-sub').textContent = `${sbId} / ${entityId} / ${projId}`;
   document.getElementById('mdv-content').innerHTML = 'Chargement…';
+  const crossArea = document.getElementById('mdv-cross-area');
+  if (crossArea) crossArea.innerHTML = '';
   document.getElementById('md-view-overlay').hidden = false;
 
   try {
@@ -5667,14 +5686,82 @@ async function openMdView(sbId, entityId, projId, filename) {
     const text = await r.text();
     document.getElementById('mdv-content').innerHTML =
       (typeof marked !== 'undefined') ? marked.parse(text) : `<pre>${text}</pre>`;
+    updateMdvCrossArea(filename, text);
   } catch (e) {
     document.getElementById('mdv-content').innerHTML =
       `<div style="color:var(--error);font-size:12px">Impossible de charger ${filename} : ${e.message}</div>`;
+    if (crossArea) crossArea.innerHTML = '';
   }
 }
 
 function closeMdView() {
+  _mdvCtx = null;
   document.getElementById('md-view-overlay').hidden = true;
+}
+
+// ─── CROSS-CHECK STATUS (explain-*.md viewer) ─────────────────────────────
+//
+// Détecte si le rapport explain a déjà été enrichi par chorus-complete-report
+// (Phase C4 insère "Vérification croisée (chorus-complete-report, YYYY-MM-DD)").
+// Affiche soit un badge "enrichi" (vert), soit un bouton "Cross-check source"
+// qui ouvre le terminal ECA pré-contextualisé avec la commande chorus-complete-report.
+
+function updateMdvCrossArea(filename, content) {
+  const crossArea = document.getElementById('mdv-cross-area');
+  if (!crossArea) return;
+
+  // S'applique uniquement aux rapports explain-*.md
+  const isExplain = filename && filename.startsWith('explain-') && filename.endsWith('.md');
+  if (!isExplain) { crossArea.innerHTML = ''; return; }
+
+  // Marque insérée par chorus-complete-report Phase C4
+  const enrichMatch = content && content.match(
+    /\*\*[✅🛠️❓]\s*Vérification croisée\s*\(chorus-complete-report,\s*(\d{4}-\d{2}-\d{2})\)/
+  );
+
+  if (enrichMatch) {
+    // Déjà enrichi — badge indicatif
+    const date = enrichMatch[1];
+    crossArea.innerHTML =
+      `<span class="mdv-cross-badge" title="Ce rapport a été enrichi par croisement avec le document source via chorus-complete-report">` +
+      `✅ Croisé avec source` +
+      `<span class="mdv-cross-date">${date}</span>` +
+      `</span>`;
+  } else {
+    // Pas encore enrichi — bouton pour lancer le cross-check
+    crossArea.innerHTML =
+      `<button class="btn btn-ghost btn-sm" onclick="openMdvCrossCheckTerminal()" ` +
+      `title="Croiser les éléments incertains (❓) de ce rapport avec le document source original — chorus-complete-report">` +
+      `🔀 Cross-check source</button>`;
+  }
+}
+
+/**
+ * Ouvre le terminal ECA pré-contextualisé et lance chorus-complete-report.
+ * Extrait le slug timestamp (YYYYMMDD-HHMMSS) depuis le nom du fichier explain.
+ */
+function openMdvCrossCheckTerminal() {
+  const ctx = _mdvCtx;
+  if (!ctx) return;
+
+  const { sbId, entityId, projId, filename } = ctx;
+  // Slug timestamp : dernière occurrence de YYYYMMDD-HHMMSS avant .md
+  const slug = (filename.match(/(\d{8}-\d{6})\.md$/) || [])[1] || null;
+
+  const cmd = slug
+    ? `chorus-complete-report ${sbId} ${entityId} --slug ${slug}`
+    : `chorus-complete-report ${sbId} ${entityId}`;
+
+  closeMdView();
+
+  openLevelTerminal('report', {
+    sbId,
+    entityId,
+    projId,
+    projName: projId,
+    reportFile: slug ? `run-report-${slug}.json` : filename,
+    explainFile: filename,
+  }, cmd);
 }
 
 // ─── AGENT KB ORG VIEWER ────────────────────────────────────────
@@ -5713,6 +5800,9 @@ function orgToMarkdownLite(text) {
 async function openAgentOrgView(slug) {
   if (!currentSandbox) return;
   const sbId = currentSandbox.id;
+  _mdvCtx = null;  // pas un rapport explain — pas de cross-check
+  const crossArea = document.getElementById('mdv-cross-area');
+  if (crossArea) crossArea.innerHTML = '';
   document.getElementById('mdv-title').textContent = `${slug}.org`;
   document.getElementById('mdv-sub').textContent = `${sbId} / agent/chorus/${slug}.org`;
   document.getElementById('mdv-content').innerHTML = 'Chargement…';
