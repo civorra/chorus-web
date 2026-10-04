@@ -789,9 +789,9 @@ function scanSandbox(sbId) {
 
   // Lire config sandbox (config.pl, config.json, ou heuristique depuis le nom)
   let name     = sbId;
-  let norm     = 'ISO 27001:2022';
+  let norm     = '';
   let desc     = '';
-  let standard = 'ISO 27001:2022';
+  let standard = '';
 
   const configJson = readFileSafe(path.join(sbPath, 'config.json'));
   if (configJson) {
@@ -814,6 +814,20 @@ function scanSandbox(sbId) {
       if (mName) name = mName[1];
       if (mNorm) { norm = mNorm[1]; standard = mNorm[1]; }
       if (mDesc) desc = mDesc[1];
+    }
+  }
+
+  // Fallback : dériver standard depuis les sources corpus du README.org
+  // (table "* Corpus", colonne Source) — priorité config.json/pl si déjà renseigné.
+  if (!standard) {
+    const readme = parseSandboxReadme(sbPath);
+    if (readme && readme.corpusTable.length) {
+      const sources = [...new Set(
+        readme.corpusTable
+          .filter(r => !r.isPreSplit && r.source && r.source.trim())
+          .map(r => r.source.trim())
+      )];
+      if (sources.length) standard = sources.join(' · ');
     }
   }
 

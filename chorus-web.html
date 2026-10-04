@@ -1830,6 +1830,7 @@ input, select, textarea { font-family: inherit; }
           </div>
         </div>
         <!-- Recent projects strip -->
+        <div class="sb-overview-grid" id="sandbox-cards"></div>
         <div class="recent-section">
           <div class="recent-section-header">
             <span class="recent-section-title">Activité récente</span>
@@ -1840,7 +1841,7 @@ input, select, textarea { font-family: inherit; }
           </div>
         </div>
 
-        <div class="sb-overview-grid" id="sandbox-cards"></div>
+
       </div>
 
       <!-- PAGE: Sandbox detail -->
@@ -2136,7 +2137,7 @@ input, select, textarea { font-family: inherit; }
         <div class="rv-meta-grid">
           <span class="rv-meta-label">Sandbox</span><span class="rv-meta-value" id="rv-sandbox"></span>
           <span class="rv-meta-label">Projet</span><span class="rv-meta-value" id="rv-projet"></span>
-          <span class="rv-meta-label">Norme</span><span class="rv-meta-value" id="rv-norme">ISO 27001:2022</span>
+          <span class="rv-meta-label">Norme</span><span class="rv-meta-value" id="rv-norme">—</span>
           <span class="rv-meta-label">Frames</span><span class="rv-meta-value" id="rv-frames"></span>
           <span class="rv-meta-label">Date</span><span class="rv-meta-value" id="rv-date"></span>
           <span class="rv-meta-label">Run</span><span class="rv-meta-value" id="rv-run">run.pl</span>
@@ -3442,18 +3443,15 @@ function renderGlobalDashboard() {
 
   const container = document.getElementById('sandbox-cards');
   container.innerHTML = SANDBOXES.map(sb => {
-    // Gauge : conformité moyenne si disponible, sinon import coverage
-    const gaugePct   = sb.compliance_avg != null ? sb.compliance_avg
-                     : (sb.projects_total > 0 ? Math.round(sb.projects_imported / sb.projects_total * 100) : 0);
+    const gaugePct  = sb.compliance_avg != null ? sb.compliance_avg
+                    : (sb.projects_total > 0 ? Math.round(sb.projects_imported / sb.projects_total * 100) : 0);
     const gaugeLabel = sb.compliance_avg != null ? 'avg compliance' : 'import coverage';
     const barColor   = gaugePct >= 80 ? 'var(--success)' : gaugePct >= 50 ? 'var(--warn)' : 'var(--error)';
 
-    // Conformité moyenne affichée dans les stats
     const compAvgHtml = sb.compliance_avg != null
       ? `<span style="font-family:'JetBrains Mono',monospace;font-weight:700;font-size:16px;color:${barColor}">${sb.compliance_avg}%</span>`
       : `<span style="color:var(--text-muted)">—</span>`;
 
-    // Lien Last run — navigue vers l'entity + ouvre le rapport pipeline
     const lastRunHtml = sb.last_run
       ? `<button class="btn btn-ghost btn-sm" style="font-family:'JetBrains Mono',monospace;font-size:11px;padding:2px 6px;border-color:transparent"
            title="Ouvrir le rapport du dernier run (${sb.last_run})"
@@ -3466,12 +3464,11 @@ function renderGlobalDashboard() {
           <div class="sb-ov-icon" style="background:${sb.color}22;font-size:18px">${sb.icon}</div>
           <div style="min-width:0;flex:1">
             <div class="sb-ov-title">${sb.name}</div>
-            <div class="sb-ov-desc" style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
-              ${sb.standard !== '—' ? `<span style="font-size:10px;padding:1px 6px;border-radius:4px;background:var(--accent-dim);color:var(--accent);font-family:'JetBrains Mono',monospace;border:1px solid var(--accent)">${sb.standard}</span>` : ''}
-              ${sb.desc ? `<span style="font-size:11px;color:var(--text-muted)">${sb.desc}</span>` : ''}
-            </div>
+            ${sb.desc ? `<div class="sb-ov-desc"><span style="font-size:11px;color:var(--text-muted)">${sb.desc}</span></div>` : ''}
           </div>
-          <button class="btn btn-ghost btn-sm" style="margin-left:auto;flex-shrink:0" title="Terminal ECA — sandbox ${sb.id}" onclick="event.stopPropagation(); openLevelTerminal('sandbox', {sbId:'${sb.id}'})">🖥️</button>
+          <button class="btn btn-ghost btn-sm" style="margin-left:auto;flex-shrink:0"
+            title="Terminal ECA — sandbox ${sb.id}"
+            onclick="event.stopPropagation(); openLevelTerminal('sandbox', {sbId:'${sb.id}'})">🖥️</button>
         </div>
         <div class="sb-ov-stats">
           <div class="sb-ov-stat">
@@ -3683,9 +3680,10 @@ function renderProjectsTab() {
     const colClass = collapsed ? ' collapsed' : '';
     return `
       <div class="entity-group${colClass}" id="entityg-${key.replace(/[^a-z0-9]/gi,'_')}">
-        <div class="entity-header">
-          <span class="entity-chevron" onclick="toggleEntityGroup('${key}')">▼</span>
-          <span class="entity-folder" style="cursor:pointer" title="Sélectionner cette entity" onclick="selectEntity('${entityId}')">${label}</span>
+        <div class="entity-header" style="cursor:pointer" title="Sélectionner cette entity"
+             onclick="selectEntity('${entityId}')">
+          <span class="entity-chevron" onclick="event.stopPropagation(); toggleEntityGroup('${key}')">▼</span>
+          <span class="entity-folder">${label}</span>
           <span class="entity-path">${ctxPath}</span>
           <span style="margin-left:auto;font-size:11px;color:var(--text-muted)">${count} projet${count > 1 ? 's' : ''}</span>
           <button class="btn btn-ghost btn-sm" style="padding:2px 7px;font-size:10px" title="Terminal ECA — entity ${label}" onclick="event.stopPropagation(); openLevelTerminal('entity', {sbId:'${sbId}', entityId:'${entityId}', entityLabel:'${label}'})">🖥️</button>
@@ -4459,6 +4457,7 @@ async function openReportView(reportInfo, ctx) {
   document.getElementById('rv-filename').textContent = reportInfo.label || `run-report-${projId}.json`;
   document.getElementById('rv-sandbox').textContent  = sbName || sbId;
   document.getElementById('rv-projet').textContent   = projName || projId;
+  document.getElementById('rv-norme').textContent    = SANDBOXES.find(s => s.id === sbId)?.standard || '—';
   document.getElementById('rv-run').textContent      = reportInfo.run || 'run.pl';
   document.getElementById('rv-duration').textContent = '—'; // non tracé par run.pl — jamais inventé
 
