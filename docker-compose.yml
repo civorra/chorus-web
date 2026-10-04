@@ -67,7 +67,8 @@ services:
       # Mount the entire existing Chorus repo read-write
       # (run.pl writes reports under Engine/sandboxes/*/workspace/)
       - ${CHORUS_HOME}:/chorus
-      # chorus-web.html is now copied into the image (see Dockerfile) — no mount needed here.
+      # Bind-mount chorus-web.html so edits on the host sont visibles sans rebuild.
+      - ./chorus-web.html:/app/chorus-web.html:ro
     depends_on:
       - eca-server
     restart: unless-stopped

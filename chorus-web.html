@@ -2536,6 +2536,24 @@ async function initFromServer() {
       const runs     = allProjects.filter(p => p.reportFile).length;
       const dates    = allProjects.map(p => p.reportData?.date).filter(Boolean).sort();
 
+      // Conformité moyenne — moyenne des % de conformité sur tous les projets
+      // ayant un rapport (évite de diluer avec les projets non encore exécutés).
+      const runProjects = allProjects.filter(p => p.reportData && p.compliance != null);
+      const complianceAvg = runProjects.length > 0
+        ? Math.round(runProjects.reduce((s, p) => s + p.compliance, 0) / runProjects.length)
+        : null;
+
+      // Dernier run : entity + projet ayant la date de rapport la plus récente.
+      let lastRunEntity = null, lastRunProject = null, lastRunDate = null;
+      for (const e of entityList) {
+        for (const p of (e.projects || [])) {
+          const d = p.reportData?.date || null;
+          if (d && (!lastRunDate || d > lastRunDate)) {
+            lastRunDate = d; lastRunEntity = e.id; lastRunProject = p.id;
+          }
+        }
+      }
+
       SANDBOXES.push({
         id: sb.id,
         name: sb.name,
@@ -2547,6 +2565,9 @@ async function initFromServer() {
         projects_imported: imported,
         runs,
         last_run: dates.length ? dates[dates.length - 1] : null,
+        compliance_avg:   complianceAvg,
+        last_run_entity:  lastRunEntity,
+        last_run_project: lastRunProject,
       });
 
       ENTITIES[sb.id] = entityList.map(e => ({
@@ -2641,16 +2662,34 @@ function renderGlobalDashboard() {
 
   const container = document.getElementById('sandbox-cards');
   container.innerHTML = SANDBOXES.map(sb => {
-    const importPct = sb.projects_total > 0
-      ? Math.round(sb.projects_imported / sb.projects_total * 100) : 0;
-    const barColor = importPct === 100 ? 'var(--success)' : importPct >= 50 ? 'var(--accent)' : 'var(--text-muted)';
+    // Gauge : conformité moyenne si disponible, sinon import coverage
+    const gaugePct   = sb.compliance_avg != null ? sb.compliance_avg
+                     : (sb.projects_total > 0 ? Math.round(sb.projects_imported / sb.projects_total * 100) : 0);
+    const gaugeLabel = sb.compliance_avg != null ? 'avg compliance' : 'import coverage';
+    const barColor   = gaugePct >= 80 ? 'var(--success)' : gaugePct >= 50 ? 'var(--warn)' : 'var(--error)';
+
+    // Conformité moyenne affichée dans les stats
+    const compAvgHtml = sb.compliance_avg != null
+      ? `<span style="font-family:'JetBrains Mono',monospace;font-weight:700;font-size:16px;color:${barColor}">${sb.compliance_avg}%</span>`
+      : `<span style="color:var(--text-muted)">—</span>`;
+
+    // Lien Last run — navigue vers l'entity + ouvre le rapport pipeline
+    const lastRunHtml = sb.last_run
+      ? `<button class="btn btn-ghost btn-sm" style="font-family:'JetBrains Mono',monospace;font-size:11px;padding:2px 6px;border-color:transparent"
+           title="Ouvrir le rapport du dernier run (${sb.last_run})"
+           onclick="event.stopPropagation(); goToLastRun('${sb.id}')">${sb.last_run}</button>`
+      : `<span style="color:var(--text-muted);font-size:11px">—</span>`;
+
     return `
       <div class="sb-overview-card" onclick="selectSandbox('${sb.id}')">
         <div class="sb-ov-header">
           <div class="sb-ov-icon" style="background:${sb.color}22;font-size:18px">${sb.icon}</div>
-          <div>
+          <div style="min-width:0;flex:1">
             <div class="sb-ov-title">${sb.name}</div>
-            <div class="sb-ov-desc">${sb.desc}</div>
+            <div class="sb-ov-desc" style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+              ${sb.standard !== '—' ? `<span style="font-size:10px;padding:1px 6px;border-radius:4px;background:var(--accent-dim);color:var(--accent);font-family:'JetBrains Mono',monospace;border:1px solid var(--accent)">${sb.standard}</span>` : ''}
+              ${sb.desc ? `<span style="font-size:11px;color:var(--text-muted)">${sb.desc}</span>` : ''}
+            </div>
           </div>
           <button class="btn btn-ghost btn-sm" style="margin-left:auto;flex-shrink:0" title="Terminal ECA — sandbox ${sb.id}" onclick="event.stopPropagation(); openLevelTerminal('sandbox', {sbId:'${sb.id}'})">🖥️</button>
         </div>
@@ -2660,18 +2699,60 @@ function renderGlobalDashboard() {
             <div class="sov-key">Imported</div>
           </div>
           <div class="sb-ov-stat">
-            <div class="sov-val" style="color:var(--info)">${sb.runs}</div>
-            <div class="sov-key">Runs</div>
+            <div class="sov-val">${compAvgHtml}</div>
+            <div class="sov-key">Conformité moy.</div>
           </div>
-          <div class="sb-ov-stat">
-            <div class="sov-val" style="font-size:11px;color:var(--text-muted)">${sb.last_run || '—'}</div>
+          <div class="sb-ov-stat" style="align-items:flex-end">
+            <div style="line-height:1.2">${lastRunHtml}</div>
             <div class="sov-key">Last run</div>
           </div>
         </div>
-        <div class="compliance-bar"><div class="bar" style="width:${importPct}%;background:${barColor}"></div></div>
+        <div class="compliance-bar" title="${gaugeLabel} : ${gaugePct}%">
+          <div class="bar" style="width:${gaugePct}%;background:${barColor}"></div>
+        </div>
       </div>
     `;
   }).join('');
+}
+
+// ─── GO TO LAST RUN ────────────────────────────────────────────
+// Navigue vers le sandbox → scope l'entity du dernier run → ouvre le
+// pipeline modal du projet → pré-affiche le panneau de rapports existants.
+function goToLastRun(sbId) {
+  const sb = SANDBOXES.find(s => s.id === sbId);
+  if (!sb || !sb.last_run_entity || !sb.last_run_project) {
+    // Aucun run connu : simplement naviguer vers le sandbox
+    selectSandbox(sbId);
+    return;
+  }
+
+  // 1. Naviguer vers le sandbox (sélectionne la page, met à jour la sidebar)
+  selectSandbox(sbId);
+
+  // 2. Restreindre la vue au contexte (entity) du dernier run
+  selectEntity(sb.last_run_entity);
+
+  // 3. Trouver le projet du dernier run et pré-charger ses rapports
+  const proj = (PROJECTS[sbId] || []).find(p => p.id === sb.last_run_project);
+  if (!proj) return;
+
+  // Pré-charger _lastReports avec les rapports run.pl du projet (si disponibles)
+  const runReports = (proj.reports || []).filter(r => r.kind === 'run');
+  if (runReports.length) {
+    window._lastReports = runReports;
+  }
+
+  // 4. Ouvrir le pipeline modal pour ce projet
+  selectProjectPipeline(sb.last_run_project);
+
+  // 5. Afficher immédiatement le panneau rapports avec les runs existants
+  if (runReports.length) {
+    const reportsPanel = document.getElementById('pipeline-reports');
+    if (reportsPanel) {
+      reportsPanel.style.display = 'block';
+      renderReportsList(runReports);
+    }
+  }
 }
 
 // ─── SIDEBAR ──────────────────────────────────────────────────
