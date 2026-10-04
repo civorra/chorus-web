@@ -5070,6 +5070,7 @@ async function levelTerminalExec(cmd) {
   //   event: error   data: { message }       ← erreur
   let replyLine = null;  // ligne accumulatrice pour les chunks
   let thinkingRemoved = false;
+  let doneShown = false;   // vrai dès qu'un badge de fin a été affiché
 
   function ensureThinkingRemoved() {
     if (!thinkingRemoved) { thinking.remove(); thinkingRemoved = true; }
@@ -5141,23 +5142,31 @@ async function levelTerminalExec(cmd) {
 
           } else if (evt === 'done') {
             ensureThinkingRemoved();
+            // Nettoyer le marqueur "DONE" textuel qu'ECA écrit parfois en fin
+            // de réponse (cf. DONE_INSTRUCTION dans server.js), mais le badge
+            // est désormais INCONDITIONNEL : la fin de traitement est signalée
+            // par event:done lui-même, pas par la présence du mot dans le texte.
             if (replyLine) {
-              // Détecter et retirer le marqueur DONE final envoyé par ECA
-              // (doit être seul sur la dernière ligne, possible trailing whitespace)
               const raw = replyLine.textContent;
               if (/\s*\bDONE\b\s*$/.test(raw)) {
                 replyLine.textContent = raw.replace(/\s*\bDONE\b\s*$/, '').trimEnd();
-                lvlTermAppend('✅ DONE', 'ok done-badge');
               }
-            } else {
-              // Réponse via outils uniquement — pas de texte streamé
-              lvlTermAppend('✅ DONE', 'ok done-badge');
             }
+            doneShown = true;
+            const elapsed = Math.round((Date.now() - _lvlTermStartTs) / 1000);
+            lvlTermAppend(`✅ Terminé (${elapsed}s)`, 'ok done-badge');
             break outer;
           }
         }
       }
       ensureThinkingRemoved();
+      // Fallback : le stream s'est fermé (reader.done) sans event:done explicite
+      // (ex : coupure réseau, server crash). On signale quand même la fin.
+      if (!doneShown) {
+        const elapsed = Math.round((Date.now() - _lvlTermStartTs) / 1000);
+        lvlTermAppend(`⏸ Session terminée (${elapsed}s)`, 'dim done-badge');
+        doneShown = true;
+      }
     }
   } catch (e) {
     ensureThinkingRemoved();
