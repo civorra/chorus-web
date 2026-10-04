@@ -1203,6 +1203,150 @@ input, select, textarea { font-family: inherit; }
   animation: spin 0.7s linear infinite; display: inline-block;
 }
 
+/* ─── PROJECT VIEW PAGE ──────────────────────────────────── */
+.pv-header {
+  padding: 18px 24px 14px;
+  border-bottom: 1px solid var(--border-light);
+  flex-shrink: 0;
+}
+.pv-title-row {
+  display: flex; align-items: flex-start; gap: 12px;
+  margin-bottom: 10px;
+}
+.pv-type-icon { font-size: 24px; flex-shrink: 0; margin-top: 2px; }
+.pv-title-info { flex: 1; min-width: 0; }
+.pv-title {
+  font-size: 18px; font-weight: 700; color: var(--text-primary);
+  line-height: 1.2; margin-bottom: 4px;
+}
+.pv-meta-line {
+  font-size: 12px; color: var(--text-muted);
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+}
+.pv-meta-sep { color: var(--border); }
+.pv-actions {
+  display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px;
+}
+/* KPI grid */
+.pv-kpi-grid {
+  display: grid; grid-template-columns: repeat(4, 1fr);
+  gap: 10px; padding: 16px 24px;
+  border-bottom: 1px solid var(--border-light);
+  flex-shrink: 0;
+}
+@media (max-width: 640px) { .pv-kpi-grid { grid-template-columns: repeat(2,1fr); } }
+.pv-kpi {
+  background: var(--bg-surface); border: 1px solid var(--border);
+  border-radius: 7px; padding: 11px 14px;
+}
+.pv-kpi-label {
+  font-size: 10px; font-weight: 600; letter-spacing: .08em;
+  text-transform: uppercase; color: var(--text-muted); margin-bottom: 5px;
+}
+.pv-kpi-value {
+  font-size: 22px; font-weight: 700; line-height: 1;
+  font-family: 'JetBrains Mono', monospace;
+}
+.pv-kpi-sub { font-size: 10px; color: var(--text-muted); margin-top: 4px; }
+/* Tabs (project level) */
+.pv-tabs {
+  display: flex; gap: 0; padding: 0 24px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-surface); flex-shrink: 0;
+}
+.pv-tab-btn {
+  padding: 11px 14px; border: none; background: none;
+  color: var(--text-secondary); font-size: 13px; font-weight: 500;
+  border-bottom: 2px solid transparent; margin-bottom: -1px;
+  transition: all .15s; white-space: nowrap; cursor: pointer;
+  font-family: inherit;
+}
+.pv-tab-btn:hover { color: var(--text-primary); }
+.pv-tab-btn.active { color: var(--accent); border-bottom-color: var(--accent); }
+.pv-tab-panel { display: none; padding: 20px 24px; flex: 1; overflow-y: auto; }
+.pv-tab-panel.active { display: block; }
+/* Compliance bar */
+.pv-comp-bar-wrap {
+  margin-bottom: 18px;
+}
+.pv-comp-bar-label {
+  display: flex; align-items: baseline; gap: 10px; margin-bottom: 6px;
+}
+.pv-comp-pct {
+  font-size: 28px; font-weight: 700; font-family: 'JetBrains Mono', monospace;
+}
+.pv-comp-detail { font-size: 12px; color: var(--text-muted); }
+.pv-comp-bar {
+  height: 8px; border-radius: 4px; background: var(--border); overflow: hidden;
+}
+.pv-comp-bar .bar { height: 100%; border-radius: 4px; transition: width .6s ease; }
+/* Aperçu grid */
+.pv-overview-grid {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-top: 16px;
+}
+@media (max-width: 640px) { .pv-overview-grid { grid-template-columns: 1fr; } }
+.pv-panel {
+  background: var(--bg-surface); border: 1px solid var(--border);
+  border-radius: 8px; padding: 14px;
+}
+.pv-panel-title {
+  font-size: 11px; font-weight: 600; text-transform: uppercase;
+  letter-spacing: .08em; color: var(--text-muted); margin-bottom: 10px;
+}
+/* Import history table */
+.pv-import-table {
+  width: 100%; border-collapse: collapse; font-size: 12px;
+}
+.pv-import-table th {
+  text-align: left; padding: 5px 10px;
+  font-size: 10px; font-weight: 600; letter-spacing: .08em;
+  color: var(--text-muted); text-transform: uppercase;
+  border-bottom: 1px solid var(--border);
+}
+.pv-import-table td {
+  padding: 8px 10px; border-bottom: 1px solid var(--border-light);
+  vertical-align: middle;
+}
+.pv-import-table tr:last-child td { border-bottom: none; }
+.pv-import-table tr:hover td { background: var(--bg-hover); }
+.pv-version-badge {
+  font-family: 'JetBrains Mono', monospace; font-size: 10px; font-weight: 600;
+  padding: 1px 7px; border-radius: 4px;
+  background: var(--accent-dim); color: var(--accent); border: 1px solid var(--accent);
+}
+/* Reports list */
+.pv-report-row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 9px 12px; border-radius: 7px;
+  background: var(--bg-elevated); border: 1px solid var(--border-light);
+  margin-bottom: 7px; transition: border-color .15s;
+}
+.pv-report-row:hover { border-color: var(--accent); }
+.pv-report-icon { font-size: 16px; flex-shrink: 0; }
+.pv-report-info { flex: 1; min-width: 0; }
+.pv-report-name {
+  font-family: 'JetBrains Mono', monospace; font-size: 12px; color: var(--accent);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.pv-report-desc { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
+.pv-report-date { font-size: 10px; color: var(--text-muted); flex-shrink: 0; }
+/* Last import card */
+.pv-last-import {
+  display: flex; flex-direction: column; gap: 6px;
+}
+.pv-li-row {
+  display: flex; align-items: center; justify-content: space-between;
+  font-size: 12px;
+}
+.pv-li-key { color: var(--text-muted); }
+.pv-li-val {
+  font-family: 'JetBrains Mono', monospace; color: var(--text-primary); font-weight: 500;
+}
+/* Empty state inline */
+.pv-empty {
+  color: var(--text-muted); font-size: 12px; font-style: italic; padding: 8px 0;
+}
+
 /* ─── RECENT PROJECTS STRIP ─────────────────────────────── */
 .recent-section {
   padding: 4px 24px 8px;
@@ -1598,7 +1742,11 @@ input, select, textarea { font-family: inherit; }
   <header id="topbar">
     <div class="logo" onclick="goHome()" title="Retour à l'accueil" style="cursor:pointer">CHORUS<span>/web</span></div>
     <div class="breadcrumb" id="breadcrumb">
-      <span class="current" id="bc-sandbox">Dashboard</span>
+      <span id="bc-sandbox" style="cursor:pointer" onclick="bcGoSandbox()">Dashboard</span>
+      <span class="sep" id="bc-sep1" hidden>›</span>
+      <span id="bc-entity" hidden style="cursor:pointer;color:var(--text-secondary)" onclick="bcGoSandbox()"></span>
+      <span class="sep" id="bc-sep2" hidden>›</span>
+      <span class="current" id="bc-project" hidden></span>
     </div>
     <div class="spacer"></div>
     <!-- Service status pills -->
@@ -1742,6 +1890,69 @@ input, select, textarea { font-family: inherit; }
         </div>
 
       </div>
+
+      <!-- PAGE: Project detail -->
+      <div class="page" id="page-project">
+        <!-- Header -->
+        <div class="pv-header">
+          <div class="pv-title-row">
+            <div class="pv-type-icon" id="pv-type-icon">📄</div>
+            <div class="pv-title-info">
+              <div class="pv-title" id="pv-title">Project</div>
+              <div class="pv-meta-line">
+                <span id="pv-meta-sandbox" style="color:var(--accent);font-weight:500"></span>
+                <span class="pv-meta-sep">·</span>
+                <span id="pv-meta-entity"></span>
+                <span class="pv-meta-sep">·</span>
+                <span id="pv-meta-id" style="font-family:'JetBrains Mono',monospace;font-size:11px"></span>
+              </div>
+            </div>
+            <span class="badge" id="pv-state-badge" style="flex-shrink:0;align-self:flex-start;margin-top:3px"></span>
+          </div>
+          <div class="pv-actions">
+            <button class="btn btn-ghost btn-sm" onclick="bcGoSandbox()">← Sandbox</button>
+            <button class="btn btn-success btn-sm" id="pv-btn-pipeline" onclick="pvRunPipeline()">▶ Pipeline</button>
+            <button class="btn btn-ghost btn-sm" id="pv-btn-reimport" onclick="pvReimport()">↺ Ré-importer</button>
+            <button class="btn btn-ghost btn-sm" id="pv-btn-terminal" onclick="pvTerminal()">🖥️ Terminal ECA</button>
+          </div>
+        </div>
+        <!-- KPI cards -->
+        <div class="pv-kpi-grid">
+          <div class="pv-kpi">
+            <div class="pv-kpi-label">Frames</div>
+            <div class="pv-kpi-value" id="pv-kpi-frames" style="color:var(--accent)">—</div>
+            <div class="pv-kpi-sub" id="pv-kpi-frames-sub"></div>
+          </div>
+          <div class="pv-kpi">
+            <div class="pv-kpi-label">Evidence</div>
+            <div class="pv-kpi-value" id="pv-kpi-evidence" style="color:var(--info)">—</div>
+            <div class="pv-kpi-sub" id="pv-kpi-evidence-sub"></div>
+          </div>
+          <div class="pv-kpi">
+            <div class="pv-kpi-label">Conformité</div>
+            <div class="pv-kpi-value" id="pv-kpi-compliance">—</div>
+            <div class="pv-kpi-sub" id="pv-kpi-compliance-sub"></div>
+          </div>
+          <div class="pv-kpi">
+            <div class="pv-kpi-label">Version import</div>
+            <div class="pv-kpi-value" id="pv-kpi-version" style="color:var(--text-secondary)">—</div>
+            <div class="pv-kpi-sub" id="pv-kpi-version-sub"></div>
+          </div>
+        </div>
+        <!-- Tabs -->
+        <div class="pv-tabs">
+          <button class="pv-tab-btn active" onclick="pvSwitchTab('apercu')">Aperçu</button>
+          <button class="pv-tab-btn" onclick="pvSwitchTab('imports')">Imports</button>
+          <button class="pv-tab-btn" onclick="pvSwitchTab('rapports')">Rapports</button>
+        </div>
+        <!-- Tab: Aperçu -->
+        <div class="pv-tab-panel active" id="pv-tab-apercu"></div>
+        <!-- Tab: Imports -->
+        <div class="pv-tab-panel" id="pv-tab-imports"></div>
+        <!-- Tab: Rapports -->
+        <div class="pv-tab-panel" id="pv-tab-rapports"></div>
+      </div>
+
     </main>
   </div>
 </div>
@@ -2788,6 +2999,287 @@ async function initFromServer() {
   }
 }
 
+// ─── PROJECT PAGE ─────────────────────────────────────────────
+const TYPE_ICONS = { pdf: '📄', docx: '📝', zip: '🗜️', url: '🌐' };
+
+function selectProject(projId) {
+  if (!currentSandbox) return;
+  const proj = (PROJECTS[currentSandbox.id] || []).find(p => p.id === projId);
+  if (!proj) return;
+  currentProject = proj;
+
+  // Breadcrumb
+  const ents = (typeof ENTITIES !== 'undefined' ? ENTITIES[currentSandbox.id] : null) || [];
+  const ent  = ents.find(e => e.id === proj.entity);
+  const entLabel = ent ? ent.label : (proj.entity || '');
+
+  document.getElementById('bc-sandbox').textContent = currentSandbox.name;
+  if (entLabel) {
+    document.getElementById('bc-entity').textContent = entLabel;
+    document.getElementById('bc-entity').hidden = false;
+    document.getElementById('bc-sep1').hidden   = false;
+  } else {
+    document.getElementById('bc-entity').hidden = true;
+    document.getElementById('bc-sep1').hidden   = true;
+  }
+  document.getElementById('bc-project').textContent = proj.name;
+  document.getElementById('bc-project').hidden = false;
+  document.getElementById('bc-sep2').hidden    = false;
+
+  // Switch page
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  document.getElementById('page-project').classList.add('active');
+
+  // Sidebar active
+  document.querySelectorAll('.sandbox-item').forEach(el => el.classList.remove('active'));
+  document.getElementById('sb-item-' + currentSandbox.id)?.classList.add('active');
+
+  renderProjectPage(proj, entLabel);
+}
+
+function pvSwitchTab(name) {
+  document.querySelectorAll('.pv-tab-btn').forEach(b => {
+    b.classList.toggle('active', b.textContent.toLowerCase().startsWith(name === 'apercu' ? 'ap' : name === 'imports' ? 'im' : 'ra'));
+  });
+  document.querySelectorAll('.pv-tab-panel').forEach(p => p.classList.remove('active'));
+  document.getElementById('pv-tab-' + name)?.classList.add('active');
+}
+
+// Retourne uniquement les boutons d'action pour un rapport (👁️ + 🖥️).
+// Utilisé par pvReportRow et directement par le panneau "Dernier run".
+function pvReportButtons(r, proj, sbId) {
+  const isMd      = r.label && r.label.endsWith('.md');
+  const isJson    = r.kind === 'run' && r.label && r.label.endsWith('.json');
+  const isSummary = r.kind === 'summary';
+  const isExplain = r.kind === 'explain';
+  const safeProj  = (proj.name || '').replace(/'/g, "\\'");
+
+  let viewBtn = '';
+  if (isMd || isSummary || isExplain) {
+    const lbl = isSummary ? '👁️ Summary' : isExplain ? '👁️ Explain' : '👁️';
+    viewBtn = `<button class="btn btn-ghost btn-sm" style="padding:2px 7px;font-size:10px;flex-shrink:0"
+      title="Voir ${r.label}"
+      onclick="openMdView('${sbId}','${proj.entity}','${proj.id}','${r.label}')">${lbl}</button>`;
+  } else if (isJson) {
+    viewBtn = `<button class="btn btn-ghost btn-sm" style="padding:2px 7px;font-size:10px;flex-shrink:0"
+      title="Voir ${r.label}"
+      onclick="openReportView({label:'${r.label}',kind:'run',run:'run.pl'},{sbId:'${sbId}',sbName:'${(currentSandbox&&currentSandbox.name)||sbId}',entityId:'${proj.entity}',projId:'${proj.id}',projName:'${safeProj}'})">👁️</button>`;
+  }
+
+  const termBtn = `<button class="btn btn-ghost btn-sm" style="padding:2px 7px;font-size:10px;flex-shrink:0"
+    title="Terminal ECA — ${r.label}"
+    onclick="openLevelTerminal('report',{sbId:'${sbId}',entityId:'${proj.entity}',projId:'${proj.id}',projName:'${safeProj}',reportFile:'${r.label}'})">🖥️</button>`;
+
+  return viewBtn + termBtn;
+}
+
+// Génère le HTML d'une ligne rapport complète avec les mêmes boutons que le history modal.
+function pvReportRow(r, proj, sbId) {
+  return `
+    <div class="pv-report-row">
+      <span class="pv-report-icon">${r.icon || '📋'}</span>
+      <div class="pv-report-info">
+        <div class="pv-report-name">${r.label}</div>
+        <div class="pv-report-desc">${r.desc || ''}</div>
+      </div>
+      <span class="pv-report-date">${r.date || ''}</span>
+      <div style="display:flex;gap:4px;flex-shrink:0">${pvReportButtons(r, proj, sbId)}</div>
+    </div>`;
+}
+
+function renderProjectPage(proj, entLabel) {
+  const sb = currentSandbox;
+  const compColor = proj.compliance >= 80 ? 'var(--success)' : proj.compliance >= 50 ? 'var(--warn)' : 'var(--error)';
+
+  // ── Header ───────────────────────────────────────────────────
+  document.getElementById('pv-type-icon').textContent  = TYPE_ICONS[proj.type] || '📁';
+  document.getElementById('pv-title').textContent      = proj.name;
+  document.getElementById('pv-meta-sandbox').textContent = sb.icon + ' ' + sb.name;
+  document.getElementById('pv-meta-entity').textContent  = entLabel || '—';
+  document.getElementById('pv-meta-id').textContent      = proj.id;
+
+  const badge = document.getElementById('pv-state-badge');
+  if (proj.state === 'imported') {
+    badge.className = 'badge imported'; badge.textContent = '✓ Importé';
+  } else if (proj.state === 'importing') {
+    badge.className = 'badge importing'; badge.textContent = '⏳ En cours';
+  } else {
+    badge.className = 'badge pending'; badge.textContent = 'Non importé';
+  }
+
+  const btnPipeline = document.getElementById('pv-btn-pipeline');
+  const btnReimport = document.getElementById('pv-btn-reimport');
+  btnPipeline.style.display = proj.state === 'imported'  ? '' : 'none';
+  btnReimport.style.display = proj.state !== 'available' ? '' : 'none';
+
+  // ── KPI cards ─────────────────────────────────────────────────
+  document.getElementById('pv-kpi-frames').textContent    = proj.frames ?? '—';
+  document.getElementById('pv-kpi-frames-sub').textContent = proj.frames ? 'corpus frames' : '';
+  document.getElementById('pv-kpi-evidence').textContent  = proj.evidence ?? '—';
+  document.getElementById('pv-kpi-evidence-sub').textContent = proj.evidence ? 'pièces justif.' : '';
+
+  if (proj.compliance != null) {
+    document.getElementById('pv-kpi-compliance').textContent    = proj.compliance + '%';
+    document.getElementById('pv-kpi-compliance').style.color    = compColor;
+    const conform = proj.frames ? Math.round(proj.compliance / 100 * proj.frames) : null;
+    document.getElementById('pv-kpi-compliance-sub').textContent =
+      conform != null ? `${conform} / ${proj.frames} conformes` : '';
+  } else {
+    document.getElementById('pv-kpi-compliance').textContent    = '—';
+    document.getElementById('pv-kpi-compliance').style.color    = 'var(--text-muted)';
+    document.getElementById('pv-kpi-compliance-sub').textContent = 'aucun run';
+  }
+
+  const imports = proj.imports || [];
+  const lastImp = imports[imports.length - 1];
+  document.getElementById('pv-kpi-version').textContent     = lastImp ? lastImp.version : '—';
+  document.getElementById('pv-kpi-version-sub').textContent = lastImp ? lastImp.date : '';
+
+  // ── Reset tabs ────────────────────────────────────────────────
+  pvSwitchTab('apercu');
+
+  // ── Tab Aperçu ────────────────────────────────────────────────
+  let apercuHtml = '';
+
+  // Compliance bar
+  if (proj.compliance != null) {
+    const conform = Math.round(proj.compliance / 100 * (proj.frames || 0));
+    apercuHtml += `
+      <div class="pv-comp-bar-wrap">
+        <div class="pv-comp-bar-label">
+          <span class="pv-comp-pct" style="color:${compColor}">${proj.compliance}%</span>
+          <span class="pv-comp-detail">${conform} / ${proj.frames || '?'} frames conformes · last run ${proj.lastRun || '—'}</span>
+        </div>
+        <div class="pv-comp-bar">
+          <div class="bar" style="width:${proj.compliance}%;background:${compColor}"></div>
+        </div>
+      </div>`;
+  } else {
+    apercuHtml += `<div class="pv-comp-bar-wrap"><div class="pv-empty">Aucune analyse de conformité disponible — lancez le pipeline.</div></div>`;
+  }
+
+  // Overview grid: last import + quick reports
+  const reports = proj.reports || [];
+  const quickReports = reports.slice(0, 3);
+
+  apercuHtml += `<div class="pv-overview-grid">`;
+
+  // Last run card
+  const lastRunReport = [...reports].reverse().find(r => r.kind === 'run');
+  // Verdict : extrait du desc (ex: "SOLVED · 27/31 CONFORMES" ou "FAILED · …")
+  const verdictRaw  = lastRunReport?.desc || '';
+  const isSolved    = verdictRaw.toUpperCase().includes('SOLVED');
+  const isFailed    = verdictRaw.toUpperCase().includes('FAILED');
+  const verdictColor = isSolved ? 'var(--success)' : isFailed ? 'var(--error)' : 'var(--text-muted)';
+  const verdictWord  = isSolved ? 'SOLVED' : isFailed ? 'FAILED' : (proj.lastRun ? '—' : null);
+
+  apercuHtml += `<div class="pv-panel"><div class="pv-panel-title">Dernier run</div>`;
+  if (proj.lastRun || lastRunReport) {
+    const conform = (proj.compliance != null && proj.frames)
+      ? Math.round(proj.compliance / 100 * proj.frames)
+      : null;
+    apercuHtml += `<div class="pv-last-import">
+      <div class="pv-li-row">
+        <span class="pv-li-key">Date</span>
+        <span class="pv-li-val">${proj.lastRun || lastRunReport?.date || '—'}</span>
+      </div>
+      ${verdictWord ? `<div class="pv-li-row">
+        <span class="pv-li-key">Verdict</span>
+        <span class="pv-li-val" style="color:${verdictColor};font-weight:700">${verdictWord}</span>
+      </div>` : ''}
+      ${conform != null ? `<div class="pv-li-row">
+        <span class="pv-li-key">Conformes</span>
+        <span class="pv-li-val">${conform} / ${proj.frames} frames</span>
+      </div>` : ''}
+      ${proj.compliance != null ? `<div class="pv-li-row">
+        <span class="pv-li-key">Score</span>
+        <span class="pv-li-val" style="color:${compColor};font-weight:700">${proj.compliance}%</span>
+      </div>` : ''}
+      ${lastRunReport ? `<div class="pv-li-row" style="margin-top:4px;gap:6px;flex-wrap:wrap">
+        <span class="pv-li-key">Rapport</span>
+        <span style="font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--text-secondary);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${lastRunReport.label}</span>
+        <div style="display:flex;gap:4px;flex-shrink:0">${pvReportButtons(lastRunReport, proj, sb.id)}</div>
+      </div>` : ''}
+    </div>`;
+  } else {
+    apercuHtml += `<div class="pv-empty">Aucun run — lancez <strong>▶ Pipeline</strong> pour produire un rapport.</div>`;
+  }
+  apercuHtml += `</div>`;
+
+  // Quick reports card
+  apercuHtml += `<div class="pv-panel"><div class="pv-panel-title">Rapports récents</div>`;
+  if (quickReports.length) {
+    apercuHtml += quickReports.map(r => pvReportRow(r, proj, sb.id)).join('');
+    if (reports.length > 3) apercuHtml += `<div style="font-size:11px;color:var(--text-muted);margin-top:6px;text-align:right;cursor:pointer" onclick="pvSwitchTab('rapports')">+${reports.length - 3} autres → Rapports</div>`;
+  } else {
+    apercuHtml += `<div class="pv-empty">Aucun rapport disponible.</div>`;
+  }
+  apercuHtml += `</div></div>`;
+
+  document.getElementById('pv-tab-apercu').innerHTML = apercuHtml;
+
+  // ── Tab Imports ───────────────────────────────────────────────
+  let importsHtml = '';
+  if (imports.length) {
+    importsHtml += `<table class="pv-import-table">
+      <thead><tr>
+        <th>Date</th><th>Version</th><th>Frames</th><th>Modèle</th><th>Note</th>
+      </tr></thead><tbody>`;
+    [...imports].reverse().forEach(imp => {
+      importsHtml += `<tr>
+        <td style="font-family:'JetBrains Mono',monospace">${imp.date}</td>
+        <td><span class="pv-version-badge">${imp.version}</span></td>
+        <td style="color:var(--accent);font-family:'JetBrains Mono',monospace">${imp.frames}</td>
+        <td style="color:var(--text-secondary)">${imp.model || '—'}</td>
+        <td style="color:var(--text-muted);font-size:11px">${imp.note || '—'}</td>
+      </tr>`;
+    });
+    importsHtml += `</tbody></table>`;
+  } else {
+    importsHtml = `<div class="pv-empty">Aucun historique d'import.</div>`;
+  }
+  document.getElementById('pv-tab-imports').innerHTML = importsHtml;
+
+  // ── Tab Rapports ──────────────────────────────────────────────
+  let rapportsHtml = '';
+  if (reports.length) {
+    rapportsHtml = reports.map(r => pvReportRow(r, proj, sb.id)).join('');
+  } else {
+    rapportsHtml = `<div class="pv-empty">Aucun rapport généré pour ce projet. Lancez le pipeline pour en créer.</div>`;
+  }
+  document.getElementById('pv-tab-rapports').innerHTML = rapportsHtml;
+}
+
+// ── Actions depuis la page projet ────────────────────────────
+function pvRunPipeline() {
+  if (currentProject) selectProjectPipeline(currentProject.id);
+}
+function pvReimport() {
+  if (currentProject) openImportModal(currentProject.id);
+}
+function pvTerminal() {
+  if (!currentProject || !currentSandbox) return;
+  openLevelTerminal('project', {
+    sbId: currentSandbox.id, entityId: currentProject.entity,
+    projId: currentProject.id, projName: currentProject.name,
+  });
+}
+
+// ── Breadcrumb navigation ────────────────────────────────────
+function bcGoSandbox() {
+  if (!currentSandbox) { goHome(); return; }
+  // Masquer breadcrumb projet
+  document.getElementById('bc-project').hidden = true;
+  document.getElementById('bc-entity').hidden  = true;
+  document.getElementById('bc-sep1').hidden    = true;
+  document.getElementById('bc-sep2').hidden    = true;
+  document.getElementById('bc-sandbox').textContent = currentSandbox.name;
+  // Recharger la page sandbox
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  document.getElementById('page-sandbox').classList.add('active');
+  if (currentEntityId) renderProjectsTab();
+}
+
 // ─── RECENT PROJECTS ──────────────────────────────────────────
 function relDate(dateStr) {
   if (!dateStr) return '—';
@@ -2871,15 +3363,11 @@ function renderRecentProjects(maxItems = 6) {
 }
 
 function openRecentProject(sbId, entityId, projId) {
-  // 1. Naviguer vers le sandbox
-  selectSandbox(sbId);
-  // 2. Scoper l'entity (affiche uniquement ses projets)
-  if (entityId) selectEntity(entityId);
-  // 3. Ouvrir directement le panneau pipeline du projet
-  if (projId) {
-    // Léger délai pour laisser le DOM se stabiliser
-    setTimeout(() => selectProjectPipeline(projId), 80);
-  }
+  // Positionner le sandbox courant sans déclencher la navigation sandbox
+  currentSandbox  = SANDBOXES.find(s => s.id === sbId);
+  currentEntityId = entityId || null;
+  if (currentSandbox && projId) selectProject(projId);
+  else if (currentSandbox)      selectSandbox(sbId);
 }
 
 // ─── GLOBAL DASHBOARD ─────────────────────────────────────────
@@ -3267,9 +3755,10 @@ function renderProjectsTab() {
 
 function projCard(p) {
   const typeIcons = { pdf: '📄', docx: '📝', zip: '🗜️', url: '🌐' };
+  const sp = `event.stopPropagation();`;
   if (p.state === 'importing') {
     return `
-      <div class="proj-card importing">
+      <div class="proj-card importing" style="cursor:pointer" onclick="selectProject('${p.id}')">
         <div class="pc-header">
           <div>
             <div class="pc-name">${typeIcons[p.type] || '📁'} ${p.name}</div>
@@ -3285,7 +3774,7 @@ function projCard(p) {
   }
   if (p.state === 'available') {
     return `
-      <div class="proj-card not-imported">
+      <div class="proj-card not-imported" style="cursor:pointer" onclick="selectProject('${p.id}')">
         <div class="pc-header">
           <div>
             <div class="pc-name">${typeIcons[p.type] || '📁'} ${p.name}</div>
@@ -3294,7 +3783,7 @@ function projCard(p) {
           <span class="badge pending">Not imported</span>
         </div>
         <div class="pc-actions">
-          <button class="btn btn-ghost btn-sm" onclick="quickImport('${p.id}')">↑ Import</button>
+          <button class="btn btn-ghost btn-sm" onclick="${sp}quickImport('${p.id}')">↑ Import</button>
         </div>
       </div>
     `;
@@ -3303,7 +3792,7 @@ function projCard(p) {
   const comp = p.compliance;
   const compColor = comp >= 90 ? 'var(--success)' : comp >= 75 ? 'var(--warn)' : 'var(--error)';
   return `
-    <div class="proj-card imported">
+    <div class="proj-card imported" style="cursor:pointer" onclick="selectProject('${p.id}')">
       <div class="pc-header">
         <div>
           <div class="pc-name">${typeIcons[p.type] || '📁'} ${p.name}</div>
@@ -3318,10 +3807,10 @@ function projCard(p) {
       </div>
       <div class="pc-meta" style="margin-top:4px">Last run: ${p.lastRun}</div>
       <div class="pc-actions">
-        <button class="btn btn-success btn-sm" onclick="selectProjectPipeline('${p.id}')">▶ Pipeline</button>
-        <button class="btn btn-ghost" style="font-size:11px" onclick="openImportModal('${p.id}')">↺ Ré-importer</button>
-        <button class="btn btn-ghost" style="font-size:11px" onclick="openHistoryModal('${p.id}')" title="Rapports : ${reportCountLabel(p.reports)}">📋 ${reportCountLabel(p.reports)}</button>
-        <button class="btn btn-ghost" style="font-size:11px" title="Terminal ECA — projet ${p.id}" onclick="openLevelTerminal('project', {sbId: currentSandbox.id, entityId: '${p.entity}', projId: '${p.id}', projName: '${(p.name||'').replace(/'/g,"\\'")}'})">🖥️</button>
+        <button class="btn btn-success btn-sm" onclick="${sp}selectProjectPipeline('${p.id}')">▶ Pipeline</button>
+        <button class="btn btn-ghost" style="font-size:11px" onclick="${sp}openImportModal('${p.id}')">↺ Ré-importer</button>
+        <button class="btn btn-ghost" style="font-size:11px" onclick="${sp}openHistoryModal('${p.id}')" title="Rapports : ${reportCountLabel(p.reports)}">📋 ${reportCountLabel(p.reports)}</button>
+        <button class="btn btn-ghost" style="font-size:11px" title="Terminal ECA — projet ${p.id}" onclick="${sp}openLevelTerminal('project', {sbId: currentSandbox.id, entityId: '${p.entity}', projId: '${p.id}', projName: '${(p.name||'').replace(/'/g,"\\'")}'})">🖥️</button>
       </div>
     </div>
   `;
@@ -3335,10 +3824,11 @@ function projCard(p) {
 function projRow(p) {
   const typeIcons = { pdf: '📄', docx: '📝', zip: '🗜️', url: '🌐' };
   const icon = typeIcons[p.type] || '📁';
+  const sp = `event.stopPropagation();`;
 
   if (p.state === 'importing') {
     return `
-      <div class="proj-row importing">
+      <div class="proj-row importing" style="cursor:pointer" onclick="selectProject('${p.id}')">
         <span class="pr-name">${icon} ${p.name}</span>
         <span class="pr-id">${p.id}</span>
         <span class="pr-meta">
@@ -3351,12 +3841,12 @@ function projRow(p) {
   }
   if (p.state === 'available') {
     return `
-      <div class="proj-row not-imported">
+      <div class="proj-row not-imported" style="cursor:pointer" onclick="selectProject('${p.id}')">
         <span class="pr-name">${icon} ${p.name}</span>
         <span class="pr-id">${p.id}</span>
         <span class="pr-meta"><span class="badge pending">Not imported</span></span>
         <span class="pr-actions">
-          <button class="btn btn-ghost btn-sm" onclick="quickImport('${p.id}')">↑ Import</button>
+          <button class="btn btn-ghost btn-sm" onclick="${sp}quickImport('${p.id}')">↑ Import</button>
         </span>
       </div>
     `;
@@ -3365,7 +3855,7 @@ function projRow(p) {
   const comp = p.compliance;
   const compColor = comp >= 90 ? 'var(--success)' : comp >= 75 ? 'var(--warn)' : 'var(--error)';
   return `
-    <div class="proj-row imported">
+    <div class="proj-row imported" style="cursor:pointer" onclick="selectProject('${p.id}')">
       <span class="pr-name" title="${p.name}">${icon} ${p.name}</span>
       <span class="pr-id" title="${p.id}">${p.id}</span>
       <span class="pr-meta">
@@ -3375,10 +3865,10 @@ function projRow(p) {
         <span>Last run: ${p.lastRun}</span>
       </span>
       <span class="pr-actions">
-        <button class="btn btn-success btn-sm" onclick="selectProjectPipeline('${p.id}')">▶ Pipeline</button>
-        <button class="btn btn-ghost btn-sm" onclick="openImportModal('${p.id}')" title="Ré-importer">↺</button>
-        <button class="btn btn-ghost btn-sm" onclick="openHistoryModal('${p.id}')" title="Rapports : ${reportCountLabel(p.reports)}">📋 ${reportCountLabel(p.reports)}</button>
-        <button class="btn btn-ghost btn-sm" title="Terminal ECA — projet ${p.id}" onclick="openLevelTerminal('project', {sbId: currentSandbox.id, entityId: '${p.entity}', projId: '${p.id}', projName: '${(p.name||'').replace(/'/g,"\\'")}'})">🖥️</button>
+        <button class="btn btn-success btn-sm" onclick="${sp}selectProjectPipeline('${p.id}')">▶ Pipeline</button>
+        <button class="btn btn-ghost btn-sm" onclick="${sp}openImportModal('${p.id}')" title="Ré-importer">↺</button>
+        <button class="btn btn-ghost btn-sm" onclick="${sp}openHistoryModal('${p.id}')" title="Rapports : ${reportCountLabel(p.reports)}">📋 ${reportCountLabel(p.reports)}</button>
+        <button class="btn btn-ghost btn-sm" title="Terminal ECA — projet ${p.id}" onclick="${sp}openLevelTerminal('project', {sbId: currentSandbox.id, entityId: '${p.entity}', projId: '${p.id}', projName: '${(p.name||'').replace(/'/g,"\\'")}'})">🖥️</button>
       </span>
     </div>
   `;
