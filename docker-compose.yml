@@ -69,6 +69,7 @@ services:
       - ${CHORUS_HOME}:/chorus
       # Bind-mount chorus-web.html so edits on the host sont visibles sans rebuild.
       - ./chorus-web.html:/app/chorus-web.html:ro
+      - ./chorus.js:/app/chorus.js:ro
     depends_on:
       - eca-server
     restart: unless-stopped

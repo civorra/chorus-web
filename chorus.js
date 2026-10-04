@@ -205,14 +205,107 @@ function parseSandboxReadme(sbPath) {
       isPreSplit: PRESPLIT_SOURCE_RE.test(r[2] || ''),
     }));
 
-  // Note récapitulative pour la "Vue d'ensemble" — section "* Status" si
-  // présente (historique d'enrichissement), sinon repli sur "* Session
-  // notes" (présente dans tous les README.org générés par chorus-feed Mode A).
-  const statusNote =
-    extractOrgSection(content, /^\*\s+Status/i, 600) ||
-    extractOrgSection(content, /^\*\s+Session notes/i, 600);
+  // ── * Coverage — synthèse de couverture (pas de LLM) ──────────────────
+  // Extrait les headings ** ✅/⏭/⛔ à l'intérieur de la section * Coverage.
+  // Format attendu : "** ✅ Integrated — <agent>, <source> (<stats>)"
+  //                  "** ⏭ Deferred — <agent> (<detail>)"
+  //                  "** ⛔ Out of scope — <agent/source>"
+  const coverageEntries = [];
+  let coverageLastUpdate = null;
+  {
+    const lines = content.split('\n');
+    const covIdx = lines.findIndex(l => /^\*\s+Coverage/i.test(l.trim()));
+    if (covIdx !== -1) {
+      // Première ligne non vide après le heading = résumé de dernière MAJ
+      for (let i = covIdx + 1; i < lines.length; i++) {
+        const t = lines[i].trim();
+        if (!t) continue;
+        if (/^\*\*?\s/.test(t)) break; // premier sous-heading ou heading suivant
+        coverageLastUpdate = t.replace(/^\s+/, '').slice(0, 120);
+        break;
+      }
+      // Collecter les headings ** jusqu'à la prochaine section * de niveau 1
+      for (let i = covIdx + 1; i < lines.length; i++) {
+        const l = lines[i];
+        // Fin de section Coverage : heading * de niveau 1 (pas ** ou ***)
+        if (/^\*\s+\S/.test(l) && !/^\*\*/.test(l)) break;
+        const m = l.match(/^\*{2}\s+([\u2705\u23ed\u26d4✅⏭⛔])\s+(Integrated|Deferred|Out of scope)[^\n]*/i);
+        if (!m) continue;
+        const statusIcon = m[1];
+        const kind       = m[2].toLowerCase().replace(/\s+/g, '_'); // integrated|deferred|out_of_scope
+        // Le reste après le kind : "— agent, source (stats)" ou "(stats)"
+        const rest = l.replace(/^\*{2}\s+[\u2705\u23ed\u26d4✅⏭⛔]\s+(Integrated|Deferred|Out of scope)\s*/i, '').trim();
+        // Extraire agent (après "—"), label court, stats entre parenthèses
+        const dashMatch = rest.match(/^—\s*(.+?)(?:\s*\(([^)]+)\))?$/);
+        const parenMatch = rest.match(/^\(([^)]+)\)$/);
+        let label  = '';
+        let detail = '';
+        if (dashMatch) {
+          label  = dashMatch[1].trim();
+          detail = dashMatch[2] || '';
+        } else if (parenMatch) {
+          detail = parenMatch[1];
+        } else {
+          label = rest.replace(/\([^)]*\)$/, '').trim();
+          detail = (rest.match(/\(([^)]*)\)$/) || [])[1] || '';
+        }
+        coverageEntries.push({ status: statusIcon, kind, label, detail });
+      }
+    }
+  }
 
-  return { title, date, status, statusNote, corpusTable };
+  // ── * Agent status — table KB santé par agent ──────────────────────────
+  const agentStatusRows = extractOrgTable(content, /^\*\s+Agent status/i);
+  const agentStatusTable = agentStatusRows.slice(1)
+    .filter(r => r.length >= 2 && r[0] && !/^[-]+$/.test(r[0]))
+    .map(r => ({
+      agent:          r[0]?.trim() || '',
+      kb:             r[1]?.trim() || '',
+      yaml:           r[2]?.trim() || '',
+      helpers:        r[3]?.trim() || '',
+      enrichissements: r[4]?.trim() || '',
+    }));
+
+  // ── * Session notes — enrichissements + bugs + résultat final ─────────
+  let enrichmentCount  = 0;
+  let enrichmentLastDate = null;
+  let bugsFixed        = 0;
+  let finalValidation  = null;
+  {
+    const notesText = extractOrgSection(content, /^\*\s+Session notes/i, 0);
+    if (notesText) {
+      // Compter les "** Enrichissement B[N]" headings
+      const enrichMatches = [...notesText.matchAll(/\*{2}\s+Enrichissement\s+B(\d+)/gi)];
+      enrichmentCount = enrichMatches.length;
+      // Date du dernier enrichissement — chercher dans les lignes de texte
+      const dateMatches = [...notesText.matchAll(/\b(\d{4}-\d{2}-\d{2})\b/g)];
+      if (dateMatches.length) {
+        const dates = dateMatches.map(m => m[1]).sort();
+        enrichmentLastDate = dates[dates.length - 1];
+      }
+      // Bugs résolus
+      const bugsMatch = notesText.match(/\*{2}\s+🐛\s+(\d+)\s+bugs?\s+bloquants/i);
+      if (bugsMatch) bugsFixed = parseInt(bugsMatch[1]);
+      // Résultat final
+      const finalSection = (notesText.match(/\*{2}\s+Résultat final[\s\S]*?(?=\n\s*\*{2}\s|\n\s*\*\s[^*]|$)/) || [])[0] || '';
+      const mSolved   = finalSection.match(/Pipeline\s*[:\-]\s*(SOLVED|FAILED)\s*(✅|❌)?/i);
+      const mConf     = finalSection.match(/Conformes?\s*[:\-]\s*(\d+)\s*\/\s*(\d+)/i);
+      if (mSolved) {
+        finalValidation = {
+          solved:    mSolved[1].toUpperCase() === 'SOLVED',
+          conformes: mConf ? parseInt(mConf[1]) : null,
+          total:     mConf ? parseInt(mConf[2]) : null,
+        };
+      }
+    }
+  }
+
+  return {
+    title, date, status, corpusTable,
+    coverageEntries, coverageLastUpdate,
+    agentStatusTable,
+    enrichmentCount, enrichmentLastDate, bugsFixed, finalValidation,
+  };
 }
 
 // ── CORPUS-DIRECTIVES.md — version pinning par fichier ─────────────────────

@@ -1049,7 +1049,7 @@ input, select, textarea { font-family: inherit; }
 
 /* ── Generic level terminal (sandbox / entity / project / report) ── */
 #level-terminal-overlay {
-  position: fixed; inset: 0; z-index: 210;
+  position: fixed; inset: 0; z-index: 1000;
   background: rgba(5,10,20,.78);
   backdrop-filter: blur(5px);
   display: flex; align-items: center; justify-content: center;
@@ -1832,6 +1832,7 @@ input, select, textarea { font-family: inherit; }
       <button id="rv-summary-btn" class="btn btn-ghost btn-sm" style="display:none">📄 Summary</button>
       <button id="rv-explain-btn" class="btn btn-ghost btn-sm" style="display:none">🔍 Explain</button>
       <button id="rv-complete-btn" class="btn btn-ghost btn-sm" style="border-color:var(--info);color:var(--info);display:none" onclick="runCompleteReportFromModal()">📝 Complete</button>
+      <button class="btn btn-sm" style="background:var(--accent);color:#fff;font-weight:600;gap:6px" onclick="openRvTerminal()" title="Terminal ECA contextualisé sur ce rapport">🖥️ Terminal ECA</button>
       <button class="btn btn-ghost btn-sm" onclick="closeReportView()">Fermer</button>
     </div>
   </div>
@@ -3752,25 +3753,38 @@ function updateRvCheckButtons() {
   if (!sbId || !entityId || !projId) return;
 
   // Priority 1: fresh same-session analysis (in _lastReports alongside a run-report).
-  // Priority 2: linked by timestamp (MVP0 — explain_file/synthese_file on the run entry).
-  // Priority 3: any persisted analysis from a previous session (proj.reports).
-  // If NONE exist for either kind → single "Analyse" button (--from-report mode).
-  const sessionReports   = window._lastReports || [];
-  const hasCurrentRun    = sessionReports.some(r => r.kind === 'run');
-  const proj             = (PROJECTS[sbId] || []).find(p => p.id === projId);
-  const persistedReports = proj?.reports || [];
+  // Priority 2: linked by timestamp — from explain_file/synthese_file on the run entry
+  //             OR derived from the run label (handles minimal reportInfo from history modal).
+  // If NONE found for either kind → single "Analyse" button (--from-report mode).
+  // ⛔ No cross-slug fallback — only files explicitly linked to this run are valid.
+  const sessionReports = window._lastReports || [];
+  const hasCurrentRun  = sessionReports.some(r => r.kind === 'run');
+  const proj           = (PROJECTS[sbId] || []).find(p => p.id === projId);
 
-  // Resolve the best available report for each kind
+  // Resolve the best available report for each kind — strict slug match only
   const resolved = {};
   for (const kind of ['summary', 'explain']) {
     const fresh = hasCurrentRun ? sessionReports.find(r => r.kind === kind) : null;
-    // Linked = timestamp-matched file on the current run-report entry
-    const linkedFile = kind === 'explain'
+
+    // Path A: explain_file/synthese_file already on the reportInfo (full entry)
+    const directFile = kind === 'explain'
       ? (_rvCurrentReport?.explain_file  ?? null)
       : (_rvCurrentReport?.synthese_file ?? null);
-    const linked   = linkedFile ? { kind, label: linkedFile } : null;
-    const persisted = fresh ? null : (linked || persistedReports.find(r => r.kind === kind));
-    resolved[kind] = fresh || persisted;  // null if nothing found
+    let linked = directFile ? { kind, label: directFile } : null;
+
+    // Path B: reportInfo is minimal (only label — e.g. from history modal 👁️).
+    // Derive the timestamp and look up the matching run entry in proj.reports,
+    // which was populated by initFromServer() with the correct linked files.
+    if (!linked && !fresh) {
+      const ts = (_rvCurrentReport?.label || '').match(/run-report-(\d{8}-\d{6})\.json/)?.[1];
+      if (ts) {
+        const matchingRun = (proj?.reports || []).find(r => r.kind === 'run' && (r.label || '').includes(ts));
+        const mFile = kind === 'explain' ? matchingRun?.explain_file : matchingRun?.synthese_file;
+        if (mFile) linked = { kind, label: mFile };
+      }
+    }
+
+    resolved[kind] = fresh || linked;  // null → Analyse button
   }
 
   // ── Case: neither summary nor explain exists → single "Analyse" button ──
@@ -3809,7 +3823,7 @@ function updateRvCheckButtons() {
     const fresh    = hasCurrentRun ? sessionReports.find(r => r.kind === kind) : null;
 
     if (existing) {
-      btn.innerHTML         = kind === 'summary' ? '📄 View Summary' : '🔍 View Explain';
+      btn.innerHTML         = kind === 'summary' ? '📄 Summary' : '🔍 Explain';
       btn.style.borderColor = fresh ? 'var(--success)' : '';
       btn.style.color       = fresh ? 'var(--success)' : '';
       btn.title             = existing.label;
@@ -3862,6 +3876,35 @@ function openAnalyseFromReport() {
 
 function closeReportView() {
   document.getElementById('report-view-overlay').hidden = true;
+}
+
+// ─── TERMINAL ECA CONTEXTUALISÉ — panneau rapport de run ─────────────────────
+// Ouvre un terminal ECA pré-contextualisé avec sandbox / entity / projet /
+// slug du run-report + fichiers explain/synthese liés si disponibles.
+function openRvTerminal() {
+  const ctx = window._rvCtx || {};
+  if (!ctx.sbId) return;
+
+  // Résoudre les fichiers explain/synthese liés à CE run (même logique que updateRvCheckButtons)
+  const proj = (PROJECTS[ctx.sbId] || []).find(p => p.id === ctx.projId);
+  const slug = (_rvCurrentReport?.label || '').match(/run-report-(\d{8}-\d{6})\.json/)?.[1];
+  let explainFile  = _rvCurrentReport?.explain_file  ?? null;
+  let syntheseFile = _rvCurrentReport?.synthese_file ?? null;
+  if ((!explainFile || !syntheseFile) && slug && proj) {
+    const matchRun = (proj.reports || []).find(r => r.kind === 'run' && (r.label || '').includes(slug));
+    explainFile  = explainFile  || matchRun?.explain_file  || null;
+    syntheseFile = syntheseFile || matchRun?.synthese_file || null;
+  }
+
+  openLevelTerminal('report', {
+    sbId:        ctx.sbId,
+    entityId:    ctx.entityId,
+    projId:      ctx.projId,
+    projName:    ctx.projName,
+    reportFile:  _rvCurrentReport?.label || '',
+    explainFile,
+    syntheseFile,
+  });
 }
 
 function runCompleteReportFromModal() {
@@ -4086,10 +4129,19 @@ function openLevelTerminal(level, ctx, autoCmd = null) {
       { cls:'dim',  text: `Exemples : "liste les NON_CONFORMES" · "chorus-check --explain" · "Pourquoi R07 ?"` },
     );
   } else if (level === 'report') {
+    const proj = (PROJECTS[ctx.sbId] || []).find(p => p.id === ctx.projId);
+    const slug = (ctx.reportFile || '').match(/run-report-(\d{8}-\d{6})\.json/)?.[1] || '?';
+    const hasSynthese = !!ctx.syntheseFile;
+    const hasExplain  = !!ctx.explainFile;
     welcome.push(
-      { cls:'dim',  text: `━━━ ECA session — rapport ${ctx.reportFile} ━━━` },
-      { cls:'info', text: `[ECA] Contexte chargé : workspace/${ctx.entityId}/reports/${ctx.projId}/${ctx.reportFile}` },
-      { cls:'dim',  text: `Exemples : "résume ce rapport" · "chorus-complete-report" · "explique R07"` },
+      { cls:'dim',  text: `━━━ ECA session — run-report ${slug} ━━━` },
+      { cls:'info', text: `[ECA] Sandbox  : ${ctx.sbId}` },
+      { cls:'info', text: `[ECA] Entity   : workspace/${ctx.entityId}/` },
+      { cls:'info', text: `[ECA] Projet   : ${ctx.projId}.json  (${proj ? proj.frames : '?'} éléments)` },
+      { cls:'info', text: `[ECA] Run      : workspace/${ctx.entityId}/reports/${ctx.reportFile}` },
+      { cls: hasSynthese ? 'ok'  : 'warn', text: `[ECA] Synthèse : ${hasSynthese ? ctx.syntheseFile : '⚠ absent — lancer chorus-check --summary'}` },
+      { cls: hasExplain  ? 'ok'  : 'warn', text: `[ECA] Explain  : ${hasExplain  ? ctx.explainFile  : '⚠ absent — lancer chorus-check --explain'}` },
+      { cls:'dim',  text: `Exemples : "chorus-complete-report ${ctx.sbId} ${ctx.entityId} --slug ${slug}" · "explique les NON_CONFORMES" · "quels artefacts pipeline ?"` },
     );
   }
 
@@ -4723,8 +4775,8 @@ function openHistoryModal(projId) {
   if (reports.length === 0) {
     body.innerHTML = '<div class="hm-empty">Aucun rapport généré pour ce projet.<br><span style="font-size:11px">Lancez <code>run.pl</code> ou <code>chorus-check</code> pour produire des rapports.</span></div>';
   } else {
-    // summary/explain sont accessibles via les boutons "View Summary" /
-    // "View Explain" du panneau de vue d'un rapport de pipeline — on les
+    // summary/explain sont accessibles via les boutons "Summary" /
+    // "Explain" du panneau de vue d'un rapport de pipeline — on les
     // exclut de la liste pour éviter la redondance.
     const analyses = reports.filter(r => r.kind === 'summary' || r.kind === 'explain');
 
@@ -4946,32 +4998,134 @@ async function openSandboxCorpus() {
     document.getElementById('sbc-overview-content').innerHTML =
       '<div style="color:var(--text-muted);font-size:13px;padding:20px 0">Aucune KB trouvée pour ce sandbox (README.org et agent/chorus/index.org absents).</div>';
   } else {
-    const noteHtml = readme?.statusNote
-      ? `<div style="font-size:12px;color:var(--text-secondary);line-height:1.6;white-space:pre-line">${readme.statusNote}</div>`
-      : '<div style="color:var(--text-muted);font-size:12px">Pas de section "* Status" dans README.org.</div>';
-    document.getElementById('sbc-overview-content').innerHTML = `
-      <div style="font-size:10px;color:var(--text-muted);background:var(--bg-elevated);border:1px solid var(--border);border-radius:6px;padding:6px 10px;margin-bottom:14px">
-        ℹ️ Synthèse structurelle générée directement depuis README.org et agent/chorus/index.org (parsing, pas de LLM).
-        Pour une synthèse sémantique plus riche, une skill dédiée serait nécessaire (non disponible ici).
-      </div>
-      <div class="sbc-ov-grid">
+    // ── helpers de rendu ─────────────────────────────────────────────────
+    const hdr = (label) =>
+      `<div style="font-size:10px;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:.1em;margin-bottom:8px">${label}</div>`;
+
+    // ── IDENTITÉ + PIPELINE ───────────────────────────────────────────────
+    const identiteHtml = `
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:18px">
         <div>
-          <div style="font-size:10px;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:.1em;margin-bottom:8px">Identité du sandbox</div>
+          ${hdr('Identité')}
           <div style="font-size:13px;font-weight:600;color:var(--text-primary);margin-bottom:4px">${readme?.title || sb.name}</div>
-          <div style="font-size:11px;color:var(--text-muted)">Statut : <strong style="color:var(--text-secondary)">${readme?.status || '?'}</strong> · Date : ${readme?.date || '?'}</div>
+          <div style="font-size:11px;color:var(--text-muted)">
+            Statut : <strong style="color:var(--text-secondary)">${readme?.status || '?'}</strong>
+            &nbsp;·&nbsp; Date init : ${readme?.date || '?'}
+          </div>
+          <div style="font-size:11px;color:var(--text-muted);margin-top:2px">Norme : <strong style="color:var(--accent)">${sb.standard || '—'}</strong></div>
         </div>
         <div>
-          <div style="font-size:10px;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:.1em;margin-bottom:8px">Pipeline</div>
+          ${hdr('Pipeline — ' + pipeline.length + ' agent(s)')}
           ${pipeline.length
-            ? `<div style="font-size:12px;color:var(--text-secondary)">${pipeline.map(a=>`<div>#${a.pos} <strong>${a.slug}</strong> — ${a.status||''}</div>`).join('')}</div>`
+            ? `<div style="font-size:12px;color:var(--text-secondary);line-height:1.8">${
+                pipeline.map(a => `<span style="font-family:'JetBrains Mono',monospace;font-size:11px">#${a.pos}</span>
+                  <strong>${a.slug}</strong>
+                  <span style="color:var(--text-muted)">${a.ruleFileCount ? '· ' + a.ruleFileCount + ' règles' : ''}</span><br>`).join('')
+              }</div>`
             : '<div style="color:var(--text-muted);font-size:12px">Aucun agent.</div>'}
         </div>
-      </div>
-      <div style="margin-top:16px">
-        <div style="font-size:10px;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:.1em;margin-bottom:8px">Dernier statut (README.org § Status)</div>
-        ${noteHtml}
-      </div>
-    `;
+      </div>`;
+
+    // ── COUVERTURE CORPUS ─────────────────────────────────────────────────
+    const covEntries = readme?.coverageEntries || [];
+    const nInt  = covEntries.filter(e => e.kind === 'integrated').length;
+    const nDef  = covEntries.filter(e => e.kind === 'deferred').length;
+    const nOos  = covEntries.filter(e => e.kind === 'out_of_scope').length;
+    const kindStyle = { integrated: 'color:var(--success)', deferred: 'color:var(--warn)', out_of_scope: 'color:var(--text-muted)' };
+    const covTableHtml = covEntries.length
+      ? `<div style="overflow-x:auto;margin-top:8px">
+          <table style="width:100%;border-collapse:collapse;font-size:11px">
+            <thead><tr style="border-bottom:1px solid var(--border)">
+              <th style="text-align:left;padding:3px 8px;color:var(--text-muted);font-weight:600">Statut</th>
+              <th style="text-align:left;padding:3px 8px;color:var(--text-muted);font-weight:600">Agent / Source</th>
+              <th style="text-align:left;padding:3px 8px;color:var(--text-muted);font-weight:600">Détail</th>
+            </tr></thead>
+            <tbody>${covEntries.map(e => `
+              <tr style="border-bottom:1px solid var(--border-light)">
+                <td style="padding:3px 8px;white-space:nowrap;${kindStyle[e.kind]||''}">${e.status} ${e.kind === 'integrated' ? 'Integrated' : e.kind === 'deferred' ? 'Deferred' : 'OOS'}</td>
+                <td style="padding:3px 8px;color:var(--text-secondary);max-width:260px;word-break:break-word">${e.label || '—'}</td>
+                <td style="padding:3px 8px;color:var(--text-muted);font-size:10px;font-family:'JetBrains Mono',monospace">${e.detail || ''}</td>
+              </tr>`).join('')}
+            </tbody>
+          </table>
+        </div>`
+      : '<div style="color:var(--text-muted);font-size:12px;margin-top:6px">Aucune entrée Coverage trouvée dans README.org.</div>';
+
+    const coverageHtml = `
+      <div style="margin-bottom:18px">
+        ${hdr('Couverture corpus (README.org § Coverage)')}
+        <div style="display:flex;gap:14px;align-items:center;flex-wrap:wrap;margin-bottom:6px">
+          ${readme?.coverageLastUpdate
+            ? `<span style="font-size:11px;color:var(--text-muted)">📅 MAJ : ${readme.coverageLastUpdate.slice(0, 80)}</span>`
+            : ''}
+          <span style="background:var(--success-dim);color:var(--success);border-radius:4px;padding:2px 8px;font-size:11px;font-weight:600">✅ ${nInt} Integrated</span>
+          ${nDef ? `<span style="background:var(--warn-dim);color:var(--warn);border-radius:4px;padding:2px 8px;font-size:11px;font-weight:600">⏭ ${nDef} Deferred</span>` : ''}
+          ${nOos ? `<span style="background:var(--bg-elevated);color:var(--text-muted);border-radius:4px;padding:2px 8px;font-size:11px">⛔ ${nOos} OOS</span>` : ''}
+        </div>
+        ${covTableHtml}
+      </div>`;
+
+    // ── SANTÉ KB — Agent status ───────────────────────────────────────────
+    const agentStatus = readme?.agentStatusTable || [];
+    const agentStatusHtml = agentStatus.length
+      ? `<div style="overflow-x:auto;margin-top:8px">
+          <table style="width:100%;border-collapse:collapse;font-size:11px">
+            <thead><tr style="border-bottom:1px solid var(--border)">
+              <th style="text-align:left;padding:3px 8px;color:var(--text-muted);font-weight:600">Agent</th>
+              <th style="text-align:left;padding:3px 8px;color:var(--text-muted);font-weight:600">KB</th>
+              <th style="text-align:left;padding:3px 8px;color:var(--text-muted);font-weight:600">YAML</th>
+              <th style="text-align:left;padding:3px 8px;color:var(--text-muted);font-weight:600">Helpers</th>
+              <th style="text-align:center;padding:3px 8px;color:var(--text-muted);font-weight:600">Enrichiss.</th>
+            </tr></thead>
+            <tbody>${agentStatus.map(a => `
+              <tr style="border-bottom:1px solid var(--border-light)">
+                <td style="padding:3px 8px;font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--accent)">${a.agent}</td>
+                <td style="padding:3px 8px;color:${a.kb === '✓' ? 'var(--success)' : 'var(--error)'};text-align:center">${a.kb}</td>
+                <td style="padding:3px 8px;color:var(--text-secondary);font-size:10px">${a.yaml}</td>
+                <td style="padding:3px 8px;color:var(--text-muted);font-size:10px">${a.helpers || '—'}</td>
+                <td style="padding:3px 8px;text-align:center;font-family:'JetBrains Mono',monospace;font-weight:600;color:var(--info)">${a.enrichissements || '0'}</td>
+              </tr>`).join('')}
+            </tbody>
+          </table>
+        </div>`
+      : '<div style="color:var(--text-muted);font-size:12px;margin-top:6px">Table * Agent status absente du README.org.</div>';
+
+    const sbKbHtml = `
+      <div style="margin-bottom:18px">
+        ${hdr('Santé KB (README.org § Agent status)')}
+        ${agentStatusHtml}
+      </div>`;
+
+    // ── SESSION — enrichissements + validation ────────────────────────────
+    const fv = readme?.finalValidation;
+    const confPct = fv?.total ? Math.round(fv.conformes / fv.total * 100) : null;
+    const validHtml = fv
+      ? `<span style="display:inline-flex;align-items:center;gap:6px;padding:3px 10px;border-radius:5px;
+           background:${fv.solved ? 'var(--success-dim)' : 'var(--error-dim)'};
+           border:1px solid ${fv.solved ? 'var(--success)' : 'var(--error)'};
+           color:${fv.solved ? 'var(--success)' : 'var(--error)'};font-size:11px;font-weight:600">
+           ${fv.solved ? '✅ SOLVED' : '❌ FAILED'}
+           &nbsp;·&nbsp; ${fv.conformes}/${fv.total} (${confPct} %) — projet test
+         </span>`
+      : '';
+
+    const sessionHtml = `
+      <div>
+        ${hdr('Session (README.org § Session notes)')}
+        <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:center">
+          ${readme?.enrichmentCount
+            ? `<span style="font-size:12px;color:var(--text-secondary)">🔧 <strong>${readme.enrichmentCount}</strong> enrichissement(s)
+               ${readme.enrichmentLastDate ? `<span style="color:var(--text-muted)">· dernier : ${readme.enrichmentLastDate}</span>` : ''}</span>`
+            : ''}
+          ${readme?.bugsFixed
+            ? `<span style="font-size:12px;color:var(--text-secondary)">🐛 <strong>${readme.bugsFixed}</strong> bug(s) résolu(s)</span>`
+            : ''}
+          ${validHtml}
+        </div>
+      </div>`;
+
+    document.getElementById('sbc-overview-content').innerHTML =
+      identiteHtml + coverageHtml + sbKbHtml + sessionHtml;
   }
 
   // ── Panel Corpus : fichiers sources + mapping vers les agents ──────────
