@@ -617,8 +617,18 @@ app.post('/api/sandboxes/:sbId/terminal', (req, res) => {
       }
     } catch { /* proceed without prefix */ }
 
+    // ⚠ PROTOCOLE TERMINAL : ECA doit écrire "DONE" seul sur sa dernière
+    // ligne quand la tâche est entièrement accomplie (skill exécuté, fichiers
+    // écrits, réponse complète). Ce marqueur est détecté et stylisé par le
+    // frontend — il ne doit PAS apparaître en milieu de réponse.
+    const DONE_INSTRUCTION =
+      '\n\n[TERMINAL PROTOCOL — OBLIGATOIRE] ' +
+      'Quand ta réponse est entièrement terminée — skill accompli, fichiers écrits, question répondue — ' +
+      'tu dois écrire en toute dernière ligne, seule sur sa ligne, le mot exactement : DONE';
+
     const fullMessage =
-      `${agentsPrefix}[Contexte ECA — niveau ${level}]\n${contextBlock}\n\nQuestion : ${message}`;
+      `${agentsPrefix}[Contexte ECA — niveau ${level}]\n${contextBlock}\n\nQuestion : ${message}` +
+      DONE_INSTRUCTION;
 
     // ── Subscribe to ECA SSE events BEFORE sending the prompt ──────────
     // This ensures no events are missed between POST /prompt and our listener.

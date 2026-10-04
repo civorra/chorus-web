@@ -213,12 +213,20 @@ input, select, textarea { font-family: inherit; }
 .stat-card {
   background: var(--bg-surface);
   border: 1px solid var(--border);
+  border-top: 3px solid transparent;
   border-radius: 8px; padding: 14px 16px;
+  display: flex; flex-direction: column;
+}
+.stat-card .stat-card-row {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 6px;
 }
 .stat-card .stat-label {
   font-size: 11px; color: var(--text-muted);
   text-transform: uppercase; letter-spacing: 0.08em; font-weight: 600;
-  margin-bottom: 6px;
+}
+.stat-card .stat-icon {
+  font-size: 16px; line-height: 1; opacity: 0.7;
 }
 .stat-card .stat-value {
   font-size: 26px; font-weight: 700; line-height: 1;
@@ -229,7 +237,26 @@ input, select, textarea { font-family: inherit; }
 .stat-card .stat-value.success { color: var(--success); }
 .stat-card .stat-value.warn { color: var(--warn); }
 .stat-card .stat-sub {
-  font-size: 11px; color: var(--text-muted); margin-top: 4px;
+  font-size: 11px; color: var(--text-muted); margin-top: 5px;
+  min-height: 14px;
+}
+.stat-card .stat-mini-bar {
+  height: 3px; border-radius: 2px; background: var(--border);
+  margin-top: 10px; overflow: hidden;
+}
+.stat-card .stat-mini-bar .bar {
+  height: 100%; border-radius: 2px; transition: width 0.6s ease;
+  width: 0;
+}
+.stat-health-row {
+  display: flex; align-items: center; gap: 6px;
+  margin-top: 10px; flex-wrap: wrap;
+}
+.stat-health-dot {
+  width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0;
+}
+.stat-health-label {
+  font-size: 10px; color: var(--text-muted);
 }
 
 /* ─── SANDBOX DETAIL ─────────────────────────────────────── */
@@ -1038,7 +1065,11 @@ input, select, textarea { font-family: inherit; }
 .eca-session-line.warn   { color: #D29922; }
 .eca-session-line.err    { color: #F85149; }
 .eca-session-line.info   { color: #58A6FF; }
-.eca-session-line.dim    { color: #484F58; }
+.eca-session-line.dim      { color: #484F58; }
+.eca-session-line.done-badge {
+  color: #3FB950; font-weight: 700; letter-spacing: .06em;
+  border-top: 1px solid #3FB95033; margin-top: 4px; padding-top: 6px;
+}
 .eca-session-input-row {
   display: flex; flex-direction: column; gap: 4px;
   background: #0D1117;
@@ -1170,6 +1201,71 @@ input, select, textarea { font-family: inherit; }
   width: 14px; height: 14px; border: 2px solid var(--border);
   border-top-color: var(--accent); border-radius: 50%;
   animation: spin 0.7s linear infinite; display: inline-block;
+}
+
+/* ─── RECENT PROJECTS STRIP ─────────────────────────────── */
+.recent-section {
+  padding: 4px 24px 8px;
+}
+.recent-section-header {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 10px;
+}
+.recent-section-title {
+  font-size: 11px; font-weight: 600; letter-spacing: 0.1em;
+  text-transform: uppercase; color: var(--text-muted);
+}
+.recent-strip {
+  display: flex; gap: 10px;
+  overflow-x: auto; padding-bottom: 6px;
+}
+.recent-strip::-webkit-scrollbar { height: 3px; }
+.recent-strip::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+.recent-card {
+  flex-shrink: 0; width: 210px;
+  background: var(--bg-surface); border: 1px solid var(--border);
+  border-radius: 8px; padding: 11px 13px;
+  cursor: pointer; transition: all 0.15s;
+  display: flex; flex-direction: column; gap: 5px;
+}
+.recent-card:hover {
+  border-color: var(--accent); background: var(--bg-elevated);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 16px rgba(78,155,245,.1);
+}
+.recent-card-sb {
+  display: flex; align-items: center; gap: 4px;
+  font-size: 10px; color: var(--text-muted);
+  white-space: nowrap; overflow: hidden;
+}
+.recent-card-sb-icon { font-size: 12px; flex-shrink: 0; }
+.recent-card-sb-name { font-weight: 600; color: var(--text-secondary); flex-shrink: 0; }
+.recent-card-sb-entity {
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.recent-card-name {
+  font-size: 12px; font-weight: 600; color: var(--text-primary);
+  line-height: 1.35; flex: 1;
+  display: -webkit-box; -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical; overflow: hidden;
+}
+.recent-card-footer {
+  display: flex; align-items: center; gap: 5px; margin-top: 3px;
+}
+.recent-comp-badge {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px; font-weight: 700;
+  padding: 1px 6px; border-radius: 4px; flex-shrink: 0;
+}
+.recent-comp-badge.high { background: var(--success-dim); color: var(--success); }
+.recent-comp-badge.mid  { background: var(--warn-dim);    color: var(--warn); }
+.recent-comp-badge.low  { background: var(--error-dim);   color: var(--error); }
+.recent-comp-badge.none { background: var(--bg-elevated); color: var(--text-muted); }
+.recent-state-dot {
+  width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0;
+}
+.recent-date {
+  font-size: 10px; color: var(--text-muted); margin-left: auto; white-space: nowrap;
 }
 
 /* ─── SANDBOX OVERVIEW CARDS ─────────────────────────────── */
@@ -1542,23 +1638,60 @@ input, select, textarea { font-family: inherit; }
           <div class="subtitle">Chorus · Neuro-symbolic compliance engine</div>
         </div>
         <div class="stats-grid" id="global-stats">
-          <div class="stat-card">
-            <div class="stat-label">Sandboxes</div>
+          <div class="stat-card" style="border-top-color:var(--accent)">
+            <div class="stat-card-row">
+              <div class="stat-label">Sandboxes</div>
+              <div class="stat-icon">🗂️</div>
+            </div>
             <div class="stat-value accent" id="gs-sandboxes">—</div>
+            <div class="stat-sub" id="gs-sandboxes-sub">—</div>
+            <div class="stat-mini-bar" title="Sandboxes avec données de conformité">
+              <div class="bar" id="gs-sandboxes-bar" style="background:var(--accent)"></div>
+            </div>
           </div>
-          <div class="stat-card">
-            <div class="stat-label">Projects</div>
+          <div class="stat-card" style="border-top-color:var(--text-muted)">
+            <div class="stat-card-row">
+              <div class="stat-label">Projects</div>
+              <div class="stat-icon">📋</div>
+            </div>
             <div class="stat-value" id="gs-projects">—</div>
+            <div class="stat-sub" id="gs-projects-sub">—</div>
+            <div class="stat-mini-bar" title="Taux d'import global">
+              <div class="bar" id="gs-projects-bar"></div>
+            </div>
           </div>
-          <div class="stat-card">
-            <div class="stat-label">Imported</div>
+          <div class="stat-card" style="border-top-color:var(--success)">
+            <div class="stat-card-row">
+              <div class="stat-label">Imported</div>
+              <div class="stat-icon">✅</div>
+            </div>
             <div class="stat-value success" id="gs-imported">—</div>
+            <div class="stat-sub" id="gs-imported-sub">—</div>
+            <div class="stat-mini-bar" title="Taux d'import">
+              <div class="bar" id="gs-imported-bar" style="background:var(--success)"></div>
+            </div>
           </div>
-          <div class="stat-card">
-            <div class="stat-label">Pipeline runs</div>
+          <div class="stat-card" style="border-top-color:var(--warn)">
+            <div class="stat-card-row">
+              <div class="stat-label">Pipeline runs</div>
+              <div class="stat-icon">⚡</div>
+            </div>
             <div class="stat-value warn" id="gs-runs">—</div>
+            <div class="stat-sub" id="gs-runs-sub">—</div>
+            <div class="stat-health-row" id="gs-health-dots"></div>
           </div>
         </div>
+        <!-- Recent projects strip -->
+        <div class="recent-section">
+          <div class="recent-section-header">
+            <span class="recent-section-title">Activité récente</span>
+            <span style="font-size:11px;color:var(--text-muted)" id="recent-count"></span>
+          </div>
+          <div class="recent-strip" id="recent-projects-strip">
+            <div style="color:var(--text-muted);font-size:12px;padding:4px 0">Chargement…</div>
+          </div>
+        </div>
+
         <div class="sb-overview-grid" id="sandbox-cards"></div>
       </div>
 
@@ -2655,16 +2788,169 @@ async function initFromServer() {
   }
 }
 
+// ─── RECENT PROJECTS ──────────────────────────────────────────
+function relDate(dateStr) {
+  if (!dateStr) return '—';
+  const diff = Math.round((Date.now() - new Date(dateStr)) / 86400000);
+  if (diff === 0) return "aujourd'hui";
+  if (diff === 1) return 'hier';
+  if (diff < 7)   return `il y a ${diff}j`;
+  if (diff < 30)  return `il y a ${Math.round(diff / 7)}sem`;
+  return `il y a ${Math.round(diff / 30)}mois`;
+}
+
+function renderRecentProjects(maxItems = 6) {
+  const TYPE_ICON = { pdf: '📄', docx: '📝', zip: '🗜️' };
+  const all = [];
+  SANDBOXES.forEach(sb => {
+    (PROJECTS[sb.id] || []).forEach(p => {
+      if (p.state !== 'imported' && p.state !== 'importing') return;
+      const ents = (typeof ENTITIES !== 'undefined' ? ENTITIES[sb.id] : null) || [];
+      const ent  = ents.find(e => e.id === p.entity);
+      all.push({ ...p, _sb: sb, _entityLabel: ent ? ent.label : (p.entity || '—') });
+    });
+  });
+
+  // Tri : importing en tête, puis par lastRun desc
+  all.sort((a, b) => {
+    if (a.state === 'importing' && b.state !== 'importing') return -1;
+    if (b.state === 'importing' && a.state !== 'importing') return  1;
+    if (!a.lastRun && !b.lastRun) return 0;
+    if (!a.lastRun) return  1;
+    if (!b.lastRun) return -1;
+    return new Date(b.lastRun) - new Date(a.lastRun);
+  });
+
+  const recent = all.slice(0, maxItems);
+
+  const countEl = document.getElementById('recent-count');
+  if (countEl) countEl.textContent = all.length > maxItems ? `${all.length} au total` : '';
+
+  const strip = document.getElementById('recent-projects-strip');
+  if (!strip) return;
+
+  if (recent.length === 0) {
+    strip.innerHTML = '<div style="color:var(--text-muted);font-size:12px;padding:4px 0">Aucun projet traité récemment</div>';
+    return;
+  }
+
+  strip.innerHTML = recent.map(p => {
+    const dotColor   = p.state === 'importing' ? 'var(--warn)' : 'var(--success)';
+    const typeIcon   = TYPE_ICON[p.type] || '📁';
+    const sbShort    = p._sb.name.split(/[\s\/·]/)[0]; // premier mot
+    const entityShort = p._entityLabel.length > 16 ? p._entityLabel.slice(0, 14) + '…' : p._entityLabel;
+
+    let compBadge;
+    if (p.state === 'importing') {
+      compBadge = `<span class="recent-comp-badge none">⏳ ${p.progress || 0}%</span>`;
+    } else if (p.compliance != null) {
+      const cls = p.compliance >= 80 ? 'high' : p.compliance >= 50 ? 'mid' : 'low';
+      compBadge = `<span class="recent-comp-badge ${cls}">${p.compliance}%</span>`;
+    } else {
+      compBadge = `<span class="recent-comp-badge none">—</span>`;
+    }
+
+    return `
+      <div class="recent-card"
+           onclick="openRecentProject('${p._sb.id}','${p.entity}','${p.id}')"
+           title="${p.name} · ${p._sb.name}">
+        <div class="recent-card-sb">
+          <span class="recent-card-sb-icon">${p._sb.icon}</span>
+          <span class="recent-card-sb-name">${sbShort}</span>
+          <span>·</span>
+          <span class="recent-card-sb-entity">${entityShort}</span>
+        </div>
+        <div class="recent-card-name">${typeIcon} ${p.name}</div>
+        <div class="recent-card-footer">
+          <span class="recent-state-dot" style="background:${dotColor}" title="${p.state}"></span>
+          ${compBadge}
+          <span class="recent-date">${relDate(p.lastRun)}</span>
+        </div>
+      </div>`;
+  }).join('');
+}
+
+function openRecentProject(sbId, entityId, projId) {
+  // 1. Naviguer vers le sandbox
+  selectSandbox(sbId);
+  // 2. Scoper l'entity (affiche uniquement ses projets)
+  if (entityId) selectEntity(entityId);
+  // 3. Ouvrir directement le panneau pipeline du projet
+  if (projId) {
+    // Léger délai pour laisser le DOM se stabiliser
+    setTimeout(() => selectProjectPipeline(projId), 80);
+  }
+}
+
 // ─── GLOBAL DASHBOARD ─────────────────────────────────────────
 function renderGlobalDashboard() {
-  const totalProj    = Object.values(PROJECTS).reduce((s, p) => s + p.length, 0);
+  const totalProj     = Object.values(PROJECTS).reduce((s, p) => s + p.length, 0);
   const totalImported = Object.values(PROJECTS).reduce((s, p) => s + p.filter(x => x.state === 'imported').length, 0);
-  const totalRuns    = SANDBOXES.reduce((s, x) => s + x.runs, 0);
+  const totalRuns     = SANDBOXES.reduce((s, x) => s + x.runs, 0);
+  const totalPending  = totalProj - totalImported;
+  const importRate    = totalProj > 0 ? Math.round(totalImported / totalProj * 100) : 0;
 
+  // Compliance stats
+  const sbWithComp    = SANDBOXES.filter(s => s.compliance_avg != null);
+  const sbCompPct     = SANDBOXES.length > 0 ? Math.round(sbWithComp.length / SANDBOXES.length * 100) : 0;
+  const compAvg       = sbWithComp.length > 0
+    ? Math.round(sbWithComp.reduce((s, x) => s + x.compliance_avg, 0) / sbWithComp.length)
+    : null;
+
+  // Health distribution (sandboxes avec compliance)
+  const healthy  = sbWithComp.filter(s => s.compliance_avg >= 80).length;
+  const atRisk   = sbWithComp.filter(s => s.compliance_avg >= 50 && s.compliance_avg < 80).length;
+  const critical = sbWithComp.filter(s => s.compliance_avg < 50).length;
+
+  // ── Card 1 : Sandboxes ──────────────────────────────────────
   document.getElementById('gs-sandboxes').textContent = SANDBOXES.length;
+  document.getElementById('gs-sandboxes-sub').textContent = sbWithComp.length > 0
+    ? `${sbWithComp.length} avec données conformité`
+    : 'aucune donnée conformité';
+  document.getElementById('gs-sandboxes-bar').style.width = sbCompPct + '%';
+
+  // ── Card 2 : Projects ───────────────────────────────────────
   document.getElementById('gs-projects').textContent = totalProj;
+  document.getElementById('gs-projects-sub').textContent = totalPending > 0
+    ? `${totalPending} en attente d'import`
+    : totalProj > 0 ? 'tous importés ✓' : '—';
+  const projBarColor = importRate >= 80 ? 'var(--success)' : importRate >= 50 ? 'var(--warn)' : 'var(--error)';
+  const projBar = document.getElementById('gs-projects-bar');
+  projBar.style.width = importRate + '%';
+  projBar.style.background = projBarColor;
+
+  // ── Card 3 : Imported ───────────────────────────────────────
   document.getElementById('gs-imported').textContent = totalImported;
+  document.getElementById('gs-imported-sub').textContent = totalProj > 0
+    ? `${importRate}% taux d'import`
+    : '—';
+  document.getElementById('gs-imported-bar').style.width = importRate + '%';
+
+  // ── Card 4 : Pipeline runs ──────────────────────────────────
   document.getElementById('gs-runs').textContent = totalRuns;
+  if (compAvg != null) {
+    const compColor = compAvg >= 80 ? 'var(--success)' : compAvg >= 50 ? 'var(--warn)' : 'var(--error)';
+    document.getElementById('gs-runs-sub').innerHTML =
+      `conformité moy. <span style="font-weight:700;color:${compColor}">${compAvg}%</span>`;
+  } else {
+    document.getElementById('gs-runs-sub').textContent = 'aucune donnée conformité';
+  }
+  const dotsEl = document.getElementById('gs-health-dots');
+  if (sbWithComp.length > 0) {
+    const dot = (color, count, label) => count > 0
+      ? `<span class="stat-health-dot" style="background:${color}" title="${count} sandbox(es) ${label}"></span>
+         <span class="stat-health-label">${count}</span>`
+      : '';
+    dotsEl.innerHTML =
+      dot('var(--success)', healthy,  '≥ 80%') +
+      dot('var(--warn)',    atRisk,   '50–79%') +
+      dot('var(--error)',  critical, '< 50%') +
+      `<span class="stat-health-label" style="margin-left:2px">sandboxes</span>`;
+  } else {
+    dotsEl.innerHTML = '<span class="stat-health-label">—</span>';
+  }
+
+  renderRecentProjects(6);
 
   const container = document.getElementById('sandbox-cards');
   container.innerHTML = SANDBOXES.map(sb => {
@@ -4350,8 +4636,18 @@ async function levelTerminalExec(cmd) {
 
           } else if (evt === 'done') {
             ensureThinkingRemoved();
-            // Si ECA n'a streamé aucun texte (réponse via outils uniquement)
-            if (!replyLine) lvlTermAppend('✓ Terminé.', 'ok');
+            if (replyLine) {
+              // Détecter et retirer le marqueur DONE final envoyé par ECA
+              // (doit être seul sur la dernière ligne, possible trailing whitespace)
+              const raw = replyLine.textContent;
+              if (/\s*\bDONE\b\s*$/.test(raw)) {
+                replyLine.textContent = raw.replace(/\s*\bDONE\b\s*$/, '').trimEnd();
+                lvlTermAppend('✅ DONE', 'ok done-badge');
+              }
+            } else {
+              // Réponse via outils uniquement — pas de texte streamé
+              lvlTermAppend('✅ DONE', 'ok done-badge');
+            }
             break outer;
           }
         }
