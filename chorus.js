@@ -593,8 +593,16 @@ function buildRunReportIndex(sbPath) {
 
 function scanFlatProject(entityPath, slug, jsonFile, runReportIndex) {
   const reportsDir = path.join(entityPath, 'reports');
+  // chorus-check nomme les rapports avec le slug sans préfixe projet-/project-.
+  // Ex : projet-import-001-IDNOMIC.json → explain-import-001-IDNOMIC-*.md
+  // On accepte les deux formes pour ne pas manquer les rapports liés.
+  const reportSlug = slug.replace(/^(projet|project)[-_]/i, '');
   let reportFiles = [];
-  try { reportFiles = fs.readdirSync(reportsDir).filter(f => f.includes(slug)); } catch {}
+  try {
+    reportFiles = fs.readdirSync(reportsDir).filter(f =>
+      f.includes(slug) || (reportSlug !== slug && f.includes(reportSlug))
+    );
+  } catch {}
 
   const pickLatest = (prefixes, ext) => reportFiles
     .filter(f => prefixes.some(p => f.startsWith(p)) && f.endsWith(ext))

@@ -2605,21 +2605,26 @@ async function initFromServer() {
           };
         });
 
-        // Rapports chorus-check (synthese-/explain-*.md) — ignorés jusqu'ici,
-        // ce qui laissait le panneau "Rapports" vide pour tout projet n'ayant
-        // pas (encore) de run-report associé alors que ces fichiers existent
-        // bel et bien sur le disque (cf. chorus.js § scanFlatProject).
-        const checkReportEntries = (p.checkReports || []).map(filename => ({
-          icon: filename.startsWith('explain-') ? '🔍' : '📄',
-          kind: filename.startsWith('explain-') ? 'explain' : 'summary',
-          label: filename,
-          desc: filename.startsWith('explain-')
-            ? 'Explications règle par règle (chorus-check --explain)'
-            : 'Synthèse 1 page (chorus-check --summary)',
-          path: `sandboxes/${sb.id}/workspace/${e.id}/reports/${filename}`,
-          date: null,
-          run: filename.startsWith('explain-') ? 'chorus-check --explain' : 'chorus-check --summary',
-        }));
+        // Rapports chorus-check (synthese-/explain-*.md) — uniquement ceux
+        // qui NE SONT PAS déjà liés par timestamp à un run-report existant.
+        // Les fichiers liés sont déjà accessibles via les boutons 📄/🔍 sur
+        // leur ligne de run — les dupliquer ici créerait de la confusion.
+        const linkedByRun = new Set(
+          runReportEntry.flatMap(r => [r.explain_file, r.synthese_file]).filter(Boolean)
+        );
+        const checkReportEntries = (p.checkReports || [])
+          .filter(filename => !linkedByRun.has(filename))
+          .map(filename => ({
+            icon: filename.startsWith('explain-') ? '🔍' : '📄',
+            kind: filename.startsWith('explain-') ? 'explain' : 'summary',
+            label: filename,
+            desc: filename.startsWith('explain-')
+              ? 'Explications règle par règle (chorus-check --explain)'
+              : 'Synthèse 1 page (chorus-check --summary)',
+            path: `sandboxes/${sb.id}/workspace/${e.id}/reports/${filename}`,
+            date: null,
+            run: filename.startsWith('explain-') ? 'chorus-check --explain' : 'chorus-check --summary',
+          }));
 
         return {
           id: p.id,
