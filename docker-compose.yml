@@ -26,7 +26,7 @@ services:
       # ECA stores OAuth tokens in ~/.cache/eca/db.transit.json (not in
       # ~/.config/eca/). Mount only this file to avoid polluting the host
       # cache with the container's own session data.
-      - /home/civ/.cache/eca/db.transit.json:/root/.cache/eca/db.transit.json:ro
+      - ${OAUTH_CREDENTIALS}:/root/.cache/eca/db.transit.json:ro
     # No port published to the host — only chorus-web (internal Compose
     # network) needs to reach this service, via https://eca-server:7777.
     restart: unless-stopped

@@ -554,6 +554,10 @@ app.post('/api/sandboxes/:sbId/entities/:entityId/projects/:projId/chat', async 
   }
 });
 
+// ── Map des terminaux actifs (par sbId) ──────────────────────────────────
+// Permet à /terminal/stop d'annuler une génération en cours.
+const activeTerminals = new Map();
+
 // ═════════════════════════════════════════════════════════════
 // ROUTE 5bis — POST /api/sandboxes/:sbId/terminal  (SSE streaming)
 //
@@ -642,6 +646,7 @@ app.post('/api/sandboxes/:sbId/terminal', (req, res) => {
     const finish = (errMsg) => {
       if (finished) return;
       finished = true;
+      activeTerminals.delete(sbId);
       clearInterval(heartbeat);
       if (subReq) { try { subReq.destroy(); } catch {} }
       if (errMsg) sseError(res, errMsg);
@@ -661,6 +666,7 @@ app.post('/api/sandboxes/:sbId/terminal', (req, res) => {
       onError:   (err) => { clearTimeout(timeoutHandle); finish(`ECA events: ${err.message}`); },
     });
     subReq = sReq;
+    activeTerminals.set(sbId, { finish });
 
     // ── Send the prompt ────────────────────────────────────────────────
     try {
@@ -699,6 +705,25 @@ app.post('/api/sandboxes/:sbId/terminal/respond', async (req, res) => {
     res.json({ ok: true });
   } catch (err) {
     res.status(502).json({ ok: false, error: err.message });
+  }
+});
+
+// ═════════════════════════════════════════════════════════════
+// ROUTE 5quater — POST /api/sandboxes/:sbId/terminal/stop
+//
+// Annule la génération ECA en cours pour ce sandbox.
+// Body : {} (vide)
+// Réponse : { ok, cancelled }
+// ═════════════════════════════════════════════════════════════
+
+app.post('/api/sandboxes/:sbId/terminal/stop', (req, res) => {
+  const { sbId } = req.params;
+  const t = activeTerminals.get(sbId);
+  if (t) {
+    t.finish('annulé par l\'utilisateur');
+    res.json({ ok: true, cancelled: true });
+  } else {
+    res.json({ ok: true, cancelled: false });
   }
 });
 

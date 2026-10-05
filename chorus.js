@@ -274,9 +274,16 @@ function parseSandboxReadme(sbPath) {
   {
     const notesText = extractOrgSection(content, /^\*\s+Session notes/i, 0);
     if (notesText) {
-      // Compter les "** Enrichissement B[N]" headings
-      const enrichMatches = [...notesText.matchAll(/\*{2}\s+Enrichissement\s+B(\d+)/gi)];
-      enrichmentCount = enrichMatches.length;
+      // Compter les "** Enrichissement B[N]" headings.
+      // Supporte les formes simples (B6) et groupées (B6/B7, B6 et B7).
+      // Stratégie : compter les numéros individuels de la forme B\d+ dans
+      // chaque heading Enrichissement plutôt que le nombre de headings.
+      const enrichHeadings = [...notesText.matchAll(/\*{2}\s+Enrichissements?\s+(B[\d/\s,eté]+)/gi)];
+      enrichmentCount = enrichHeadings.reduce((total, m) => {
+        // Extraire tous les numéros individuels dans la partie après "B"
+        const nums = [...(m[1] || '').matchAll(/\d+/g)];
+        return total + (nums.length || 1);
+      }, 0);
       // Date du dernier enrichissement — chercher dans les lignes de texte
       const dateMatches = [...notesText.matchAll(/\b(\d{4}-\d{2}-\d{2})\b/g)];
       if (dateMatches.length) {

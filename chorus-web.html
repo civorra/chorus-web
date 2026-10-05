@@ -1127,6 +1127,78 @@ input, select, textarea { font-family: inherit; }
   display: block;
   line-height: 1.4;
 }
+
+/* ── Spinner thinking ── */
+.lvl-term-thinking {
+  display: flex; align-items: center; gap: 8px;
+}
+.lvl-term-spinner {
+  display: inline-block;
+  width: 10px; height: 10px; border-radius: 50%;
+  border: 2px solid #1A3050; border-top-color: #58A6FF;
+  animation: lvlSpin 0.8s linear infinite; flex-shrink: 0;
+}
+@keyframes lvlSpin { to { transform: rotate(360deg); } }
+.lvl-term-elapsed {
+  font-size: 10px; color: #2A4A6A;
+}
+
+/* ── Retry button ── */
+.lvl-term-retry-btn {
+  display: inline-block; margin-left: 8px;
+  background: none; border: 1px solid #2A4A6A; border-radius: 4px;
+  color: #4A7AA0; cursor: pointer; font-size: 10px;
+  font-family: 'JetBrains Mono', monospace;
+  padding: 1px 7px; line-height: 1.5; letter-spacing: .03em;
+  vertical-align: middle; transition: border-color .15s, color .15s;
+}
+.lvl-term-retry-btn:hover {
+  border-color: #58A6FF; color: #58A6FF;
+}
+
+/* ── Fold / unfold ── */
+.lvl-term-fold-toggle {
+  display: block; margin-top: 4px;
+  background: none; border: none; cursor: pointer;
+  font-family: 'JetBrains Mono', monospace; font-size: 10px;
+  color: #2A5080; letter-spacing: .03em; padding: 0;
+  transition: color .15s;
+}
+.lvl-term-fold-toggle:hover { color: #58A6FF; }
+.eca-session-line.foldable { white-space: pre-wrap; }
+/* Séparateurs entre échanges */
+.lvl-term-sep {
+  border: none; border-top: 1px solid #1A2535;
+  margin: 6px 0;
+}
+
+/* ── Markdown rendering ── */
+.eca-session-line.resp { white-space: pre-wrap; }
+.eca-session-line.resp h2.md-h2,
+.eca-session-line.resp h3.md-h3 {
+  color: #58A6FF; font-size: 13px; font-weight: 700;
+  margin: 8px 0 4px; font-family: 'JetBrains Mono', monospace;
+}
+.eca-session-line.resp h4.md-h4 {
+  color: #4A8A9A; font-size: 12px; font-weight: 600;
+  margin: 6px 0 2px; font-family: 'JetBrains Mono', monospace;
+}
+.eca-session-line.resp pre.md-code {
+  background: #0D1620; border: 1px solid #1A2535;
+  border-radius: 6px; padding: 8px 12px;
+  overflow-x: auto; margin: 6px 0;
+  font-size: 11px; line-height: 1.5;
+}
+.eca-session-line.resp code.md-inline {
+  background: #0D1620; border-radius: 3px;
+  padding: 1px 5px; font-size: 11px; color: #E06C75;
+}
+.eca-session-line.resp ul.md-ul {
+  margin: 4px 0; padding-left: 18px;
+}
+.eca-session-line.resp li.md-li { margin: 2px 0; }
+.eca-session-line.resp strong { color: #E6EDF3; font-weight: 700; }
+.eca-session-line.resp em { color: #C9D1D9; font-style: italic; }
 .eca-session-input {
   width: 100%;
   background: none;
@@ -2407,6 +2479,12 @@ input, select, textarea { font-family: inherit; }
       <div class="eca-session-titlebar">
         <div class="eca-session-dots"><span class="dot-r"></span><span class="dot-y"></span><span class="dot-g"></span></div>
         <div class="eca-session-title" id="lvl-term-title">ECA — session interactive</div>
+        <button id="lvl-term-stop-btn" hidden
+          onclick="levelTerminalStop()"
+          title="Annuler (Échap)"
+          style="background:none;border:1px solid #EF4444;border-radius:4px;color:#EF4444;cursor:pointer;font-size:11px;font-family:'JetBrains Mono',monospace;padding:2px 8px;line-height:1.4;letter-spacing:.03em">
+          ⏹ Stop
+        </button>
         <button onclick="closeLevelTerminal()" style="background:none;border:none;color:#8B949E;cursor:pointer;font-size:14px;line-height:1;padding:0 2px">✕</button>
       </div>
       <div class="eca-session-output" id="lvl-term-output" style="flex:1;min-height:0;overflow-y:auto"></div>
@@ -4871,6 +4949,8 @@ let _lvlTermHistory = [];
 let _lvlTermStartTs = 0;   // timestamp de début de la requête courante
 let _lvlTermHistIdx = -1;
 let _lvlTermSessionId = null;
+let _lvlTermAbortCtrl = null;  // AbortController de la requête SSE courante
+let _lvlTermLastCmd   = null;  // dernière commande exécutée (pour Retry)
 
 function levelPromptLabel(ctx) {
   const { level, sbId, entityId, projId, reportFile } = ctx;
@@ -4996,6 +5076,17 @@ function closeLevelTerminal() {
   _lvlTermCtx = null;
 }
 
+function levelTerminalStop() {
+  // 1. Annuler le fetch SSE côté navigateur
+  if (_lvlTermAbortCtrl) { _lvlTermAbortCtrl.abort(); _lvlTermAbortCtrl = null; }
+  // 2. Signaler au serveur d'arrêter la subReq ECA
+  if (_lvlTermCtx && _lvlTermCtx.sbId) {
+    fetch(`${API}/api/sandboxes/${_lvlTermCtx.sbId}/terminal/stop`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
+    }).catch(() => {});
+  }
+}
+
 function lvlTermAppend(text, cls = 'resp') {
   const out  = document.getElementById('lvl-term-output');
   const line = document.createElement('div');
@@ -5008,6 +5099,26 @@ function lvlTermAppend(text, cls = 'resp') {
 
 function levelTerminalKeydown(e) {
   const input = document.getElementById('lvl-term-input');
+  if (e.key === 'Escape' && !input.value.trim() && _lvlTermAbortCtrl) {
+    e.preventDefault();
+    levelTerminalStop();
+    return;
+  }
+  if ((e.key === 'r' || e.key === 'R') && e.altKey && !_lvlTermAbortCtrl && _lvlTermLastCmd) {
+    e.preventDefault();
+    levelTerminalExec(_lvlTermLastCmd);
+    return;
+  }
+  if (e.key === 'Tab' && !input.value.trim()) {
+    // Toggle fold de la dernière réponse foldable
+    e.preventDefault();
+    const out = document.getElementById('lvl-term-output');
+    if (out) {
+      const foldables = out.querySelectorAll('.eca-session-line.foldable');
+      if (foldables.length) toggleFold(foldables[foldables.length - 1]);
+    }
+    return;
+  }
   if (e.key === 'Enter' && !e.shiftKey) {
     // Enter alone → submit; Shift+Enter → newline (default textarea behaviour)
     e.preventDefault();
@@ -5055,10 +5166,29 @@ async function levelTerminalExec(cmd) {
 
   if (cmd.toLowerCase() === 'clear') { out.innerHTML = ''; return; }
 
+  _lvlTermLastCmd = cmd;
   _lvlTermStartTs = Date.now();
-  const thinking = lvlTermAppend('… ECA réfléchit …', 'dim');
+
+  // Spinner animé + timer
+  const thinking = document.createElement('div');
+  thinking.className = 'eca-session-line dim lvl-term-thinking';
+  thinking.innerHTML = '<span class="lvl-term-spinner"></span><span class="lvl-term-elapsed">0s</span>';
+  out.appendChild(thinking);
+  out.scrollTop = out.scrollHeight;
+  const elapsedEl = thinking.querySelector('.lvl-term-elapsed');
+  const timerInterval = setInterval(() => {
+    if (elapsedEl) elapsedEl.textContent = Math.round((Date.now() - _lvlTermStartTs) / 1000) + 's';
+  }, 1000);
+
   const input = document.getElementById('lvl-term-input');
   if (input) input.disabled = true;
+
+  // Bouton Stop visible
+  const stopBtn = document.getElementById('lvl-term-stop-btn');
+  if (stopBtn) stopBtn.hidden = false;
+
+  // AbortController pour ce fetch
+  _lvlTermAbortCtrl = new AbortController();
 
   // ── Lire la réponse en SSE streaming ─────────────────────────────
   // La ROUTE 5bis retourne désormais text/event-stream :
@@ -5073,13 +5203,18 @@ async function levelTerminalExec(cmd) {
   let doneShown = false;   // vrai dès qu'un badge de fin a été affiché
 
   function ensureThinkingRemoved() {
-    if (!thinkingRemoved) { thinking.remove(); thinkingRemoved = true; }
+    if (!thinkingRemoved) {
+      clearInterval(timerInterval);
+      thinking.remove();
+      thinkingRemoved = true;
+    }
   }
 
   try {
     const resp = await fetch(`${API}/api/sandboxes/${ctx.sbId}/terminal`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
+      signal: _lvlTermAbortCtrl.signal,
       body: JSON.stringify({
         level:      ctx.level,
         entityId:   ctx.entityId,
@@ -5153,8 +5288,25 @@ async function levelTerminalExec(cmd) {
               }
             }
             doneShown = true;
+            // Fold réponses longues + rendu Markdown
+            if (replyLine) {
+              renderMarkdownInline(replyLine);
+              maybeFoldResponse(replyLine);
+            }
             const elapsed = Math.round((Date.now() - _lvlTermStartTs) / 1000);
-            lvlTermAppend(`✅ Terminé (${elapsed}s)`, 'ok done-badge');
+            const doneLine = lvlTermAppend(`✅ Terminé (${elapsed}s)`, 'ok done-badge');
+            if (_lvlTermLastCmd) {
+              const retryBtn = document.createElement('button');
+              retryBtn.className = 'lvl-term-retry-btn';
+              retryBtn.textContent = '↻ Retry';
+              const lastCmd = _lvlTermLastCmd;
+              retryBtn.onclick = () => levelTerminalExec(lastCmd);
+              doneLine.appendChild(retryBtn);
+            }
+            // Séparateur visuel entre échanges
+            const sep = document.createElement('hr');
+            sep.className = 'lvl-term-sep';
+            out.appendChild(sep);
             break outer;
           }
         }
@@ -5170,8 +5322,15 @@ async function levelTerminalExec(cmd) {
     }
   } catch (e) {
     ensureThinkingRemoved();
-    lvlTermAppend(`✖ Erreur réseau : ${e.message}`, 'err');
+    if (e.name === 'AbortError') {
+      lvlTermAppend('⏹ Génération annulée', 'warn');
+    } else {
+      lvlTermAppend(`✖ Erreur réseau : ${e.message}`, 'err');
+    }
   } finally {
+    _lvlTermAbortCtrl = null;
+    const stopBtn = document.getElementById('lvl-term-stop-btn');
+    if (stopBtn) stopBtn.hidden = true;
     if (input) { input.disabled = false; input.focus(); }
     out.scrollTop = out.scrollHeight;
   }
@@ -5252,6 +5411,95 @@ function lvlTermAskUser(ctx, question, toolId, isApproval = false) {
       if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submit(); }
     });
   }
+}
+
+// ─── MARKDOWN INLINE ──────────────────────────────────────────
+// Appliqué sur un element .resp après event:done (jamais pendant streaming).
+// Renderer minimal sans dépendance externe.
+function renderMarkdownInline(el) {
+  // Sauvegarder le texte brut pour Copy / Fold
+  if (!el.dataset.rawText) el.dataset.rawText = el.textContent;
+
+  let t = el.textContent;
+
+  // Échapper le HTML résiduel (sécurité)
+  t = t.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+
+  // Blocs de code (``` ... ```) — avant tout le reste
+  t = t.replace(/```(\w*)\n([\s\S]*?)```/g, (_, lang, code) =>
+    `<pre class="md-code"${lang ? ` data-lang="${lang}"` : ''}><code>${code}</code></pre>`);
+
+  // Code inline `…`
+  t = t.replace(/`([^`\n]+)`/g, '<code class="md-inline">$1</code>');
+
+  // Titres
+  t = t.replace(/^### (.+)$/gm, '<h4 class="md-h4">$1</h4>');
+  t = t.replace(/^## (.+)$/gm,  '<h3 class="md-h3">$1</h3>');
+  t = t.replace(/^# (.+)$/gm,   '<h2 class="md-h2">$1</h2>');
+
+  // Gras / italique
+  t = t.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+  t = t.replace(/\*(.+?)\*/g,     '<em>$1</em>');
+
+  // Listes (- ou *)
+  t = t.replace(/^[ \t]*[-\*] (.+)$/gm, '<li class="md-li">$1</li>');
+  t = t.replace(/(<li[^>]*>[\s\S]*?<\/li>\n?)+/g, '<ul class="md-ul">$&</ul>');
+
+  // Sauts de ligne résiduels (hors blocs pre)
+  // On préserve les newlines dans les pre ; on convertit les autres
+  const parts = t.split(/(<pre[\s\S]*?<\/pre>)/);
+  t = parts.map((p, i) =>
+    i % 2 === 0 ? p.replace(/\n/g, '<br>') : p
+  ).join('');
+
+  el.innerHTML = t;
+}
+
+// ─── FOLD / UNFOLD ────────────────────────────────────────────
+const FOLD_THRESHOLD = 20; // lignes
+
+function maybeFoldResponse(el) {
+  // Utiliser rawText (texte brut) si disponible (après renderMarkdownInline)
+  const raw = el.dataset.rawText || el.textContent;
+  const lines = raw.split('\n');
+  if (lines.length < FOLD_THRESHOLD) return;
+  el.dataset.fullText = raw;
+  el.dataset.folded = '1';
+  el.classList.add('foldable');
+  // Afficher les 4 premières lignes + toggle
+  el.textContent = lines.slice(0, 4).join('\n') + '\n…';
+  const toggle = document.createElement('button');
+  toggle.className = 'lvl-term-fold-toggle';
+  toggle.textContent = `▶ ${lines.length} lignes — cliquer pour déplier`;
+  toggle.onclick = () => toggleFold(el);
+  el.appendChild(toggle);
+}
+
+function toggleFold(el) {
+  const out = document.getElementById('lvl-term-output');
+  if (el.dataset.folded === '1') {
+    // Déplier : restaurer le texte brut puis re-render Markdown
+    el.dataset.folded = '0';
+    el.textContent = el.dataset.fullText;
+    renderMarkdownInline(el);
+    const toggle = document.createElement('button');
+    toggle.className = 'lvl-term-fold-toggle';
+    const n = el.dataset.fullText.split('\n').length;
+    toggle.textContent = `▲ Replier (${n} lignes)`;
+    toggle.onclick = () => toggleFold(el);
+    el.appendChild(toggle);
+  } else {
+    // Replier : revenir au texte brut tronqué
+    el.dataset.folded = '1';
+    const lines = (el.dataset.fullText || '').split('\n');
+    el.textContent = lines.slice(0, 4).join('\n') + '\n…';
+    const toggle = document.createElement('button');
+    toggle.className = 'lvl-term-fold-toggle';
+    toggle.textContent = `▶ ${lines.length} lignes — cliquer pour déplier`;
+    toggle.onclick = () => toggleFold(el);
+    el.appendChild(toggle);
+  }
+  if (out) out.scrollTop = out.scrollHeight;
 }
 
 // ─── IMPORT SESSION ───────────────────────────────────────────
@@ -5901,7 +6149,6 @@ async function openSandboxCorpus() {
             Statut : <strong style="color:var(--text-secondary)">${readme?.status || '?'}</strong>
             &nbsp;·&nbsp; Date init : ${readme?.date || '?'}
           </div>
-          <div style="font-size:11px;color:var(--text-muted);margin-top:2px">Norme : <strong style="color:var(--accent)">${sb.standard || '—'}</strong></div>
         </div>
         <div>
           ${hdr('Pipeline — ' + pipeline.length + ' agent(s)')}
