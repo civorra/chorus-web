@@ -6,7 +6,7 @@
       "port": 7777
     },
 
-    "defaultModel": "anthropic/claude-sonnet-4-6",
+    "defaultModel": "${env:ECA_DEFAULT_MODEL}",
     "defaultAgent": "code",
     "trust": true,
     "chat": {
@@ -19,27 +19,27 @@
     },
 
     "env": {
-      "ANTHROPIC_MODEL": "claude-sonnet-4-6"
+      "ANTHROPIC_MODEL": "${env:ECA_MODEL_CODE}"
     },
-    
+
     "providers": {
         "anthropic": {
-            "type": "max",
+            "type": "${env:ANTHROPIC_PROVIDER_TYPE}",
             "cacheRetention": "long"
         }
     },
 
     "agent": {
-        "architect":{ 
-            "model": "anthropic/claude-sonnet-5", 
-            "variant": "medium" 
+        "architect": {
+            "model": "${env:ECA_MODEL_ARCHITECT}",
+            "variant": "medium"
         },
         "code": {
-            "model": "anthropic/claude-sonnet-4-6", 
+            "model": "${env:ECA_MODEL_CODE}",
             "variant": "medium"
         },
         "fast": {
-            "model": "anthropic/claude-haiku-4-5-20251001", 
+            "model": "${env:ECA_MODEL_FAST}",
             "variant": "medium"
         }
     },

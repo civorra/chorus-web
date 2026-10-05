@@ -6712,9 +6712,107 @@ document.getElementById('modal-overlay').addEventListener('click', function(e) {
   if (e.target === this) closeModal();
 });
 
+// ─── AUTH STATUS ─────────────────────────────────────────────
+async function refreshAuthStatus() {
+  const grid   = document.getElementById('sd-auth-status-grid');
+  const navDot = document.getElementById('sd-auth-nav-dot');
+  if (!grid) return;
+  try {
+    const r    = await fetch(`${API}/api/auth/status`);
+    const data = await r.json();
+
+    if (!data.ok || !data.sources || data.sources.length === 0) {
+      grid.innerHTML = '<div style="color:var(--error);font-size:11px">⚠ Aucun credential configuré — renseignez une clé API ci-dessous.</div>';
+      if (navDot) navDot.style.background = 'var(--error)';
+      return;
+    }
+
+    let hasActive = false;
+    const now = Date.now() / 1000;
+    grid.innerHTML = data.sources.map(s => {
+      const expired = s.expiresAt && s.expiresAt < now;
+      const expireSoon = s.expiresAt && !expired && (s.expiresAt - now) < 3600;
+      const color = expired ? 'var(--error)' : expireSoon ? 'var(--warn)' : '#28C840';
+      if (s.active && !expired) hasActive = true;
+      const expStr = s.expiresAt
+        ? new Date(s.expiresAt * 1000).toLocaleString('fr-FR', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' })
+        : null;
+      const sourceLabel = s.source === 'eca-native' ? 'OAuth ECA (Emacs)' : s.source === 'webapp' ? 'Clé webapp' : 'Variable env';
+      return `<div class="sd-toggle-row" style="margin:0;padding:8px 10px;background:var(--surface-2);border-radius:6px">
+        <div style="min-width:0">
+          <div class="sd-toggle-label" style="font-size:12px">${s.provider}</div>
+          <div class="sd-toggle-sub">${sourceLabel} · mode : <code style="font-size:10px">${s.mode}</code>${expStr ? ` · expire ${expStr}` : ''}</div>
+        </div>
+        <span style="width:10px;height:10px;border-radius:50%;background:${color};flex-shrink:0"></span>
+      </div>`;
+    }).join('');
+
+    if (navDot) navDot.style.background = hasActive ? '#28C840' : '#FEBC2E';
+  } catch (e) {
+    if (grid) grid.innerHTML = `<div style="color:var(--error);font-size:11px">Erreur /api/auth/status : ${e.message}</div>`;
+  }
+}
+
+async function saveAuthApiKey() {
+  const provider = document.getElementById('sd-auth-provider').value;
+  const apiKey   = (document.getElementById('sd-auth-apikey').value || '').trim();
+  const msg      = document.getElementById('sd-auth-msg');
+  if (!apiKey) {
+    showAuthMsg('error', '✗ Clé API vide');
+    return;
+  }
+  showAuthMsg('muted', '⏳ Enregistrement en cours…');
+  try {
+    const r    = await fetch(`${API}/api/auth/apikey`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ provider, apiKey }),
+    });
+    const data = await r.json();
+    if (data.ok) {
+      const reloadOk = data.reload && data.reload.ok;
+      const reloadMsg = reloadOk ? '✓ eca-server redémarré' : `⚠ reload : ${(data.reload && data.reload.body) || 'socket Docker indisponible'}`;
+      showAuthMsg('ok', `✓ Clé ${provider} enregistrée. ${reloadMsg}`);
+      document.getElementById('sd-auth-apikey').value = '';
+      await refreshAuthStatus();
+    } else {
+      showAuthMsg('error', `✗ ${data.error || 'Erreur inconnue'}`);
+    }
+  } catch (e) {
+    showAuthMsg('error', `✗ ${e.message}`);
+  }
+}
+
+async function reloadEcaServer() {
+  showAuthMsg('muted', '⟳ Redémarrage eca-server en cours…');
+  try {
+    const r    = await fetch(`${API}/api/auth/reload-eca`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
+    });
+    const data = await r.json();
+    if (data.ok) {
+      showAuthMsg('ok', `✓ eca-server redémarré (${data.container})`);
+      // Re-vérifier le health après le redémarrage (délai ~5s)
+      setTimeout(refreshEcaStatus, 6000);
+    } else {
+      showAuthMsg('warn', `⚠ ${data.result && data.result.body ? data.result.body : 'Vérifiez que /var/run/docker.sock est monté dans le conteneur chorus-web.'}`);
+    }
+  } catch (e) {
+    showAuthMsg('error', `✗ ${e.message}`);
+  }
+}
+
+function showAuthMsg(level, text) {
+  const msg = document.getElementById('sd-auth-msg');
+  if (!msg) return;
+  const colors = { ok: '#28C840', warn: 'var(--warn)', error: 'var(--error)', muted: 'var(--text-muted)' };
+  msg.style.display = 'block';
+  msg.style.color   = colors[level] || 'var(--text-muted)';
+  msg.textContent   = text;
+}
+
 // ─── ECA SERVICE STATUS — ping réel (remplace l'ancienne simulation) ──
 async function bootServices() {
-  await refreshEcaStatus();
+  await Promise.all([refreshEcaStatus(), refreshAuthStatus()]);
   // Re-vérifie périodiquement (détecte un eca-server qui tombe/revient).
   setInterval(refreshEcaStatus, 30000);
 }
@@ -6923,6 +7021,10 @@ initFromServer(); // surcharge avec les données réelles si le serveur MVP0 ré
       <div class="sd-nav-item active" onclick="switchSettingsTab('workspace',this)"><span class="sd-nav-icon">📁</span>Workspace</div>
       <div class="sd-nav-item" onclick="switchSettingsTab('eca',this)"><span class="sd-nav-icon">🔌</span>ECA Server</div>
       <div class="sd-nav-item" onclick="switchSettingsTab('models',this)"><span class="sd-nav-icon">🤖</span>Modèles LLM</div>
+      <div class="sd-nav-item" onclick="switchSettingsTab('auth',this);refreshAuthStatus()">
+        <span class="sd-nav-icon">🔑</span>Authentification
+        <span id="sd-auth-nav-dot" style="width:7px;height:7px;border-radius:50%;background:var(--text-muted);margin-left:auto;flex-shrink:0;display:inline-block"></span>
+      </div>
       <div class="sd-nav-sep"></div>
       <div class="sd-nav-item" onclick="switchSettingsTab('pipeline',this)"><span class="sd-nav-icon">⚙️</span>Pipeline</div>
       <div class="sd-nav-item" onclick="switchSettingsTab('standards',this)"><span class="sd-nav-icon">📜</span>Standards</div>
@@ -7046,6 +7148,40 @@ initFromServer(); // surcharge avec les données réelles si le serveur MVP0 ré
             <input class="sd-input mono" id="sd-m-tokens" type="number" value="8192" step="1024" min="1024">
           </div>
         </div>
+      </div>
+
+      <!-- AUTH -->
+      <div class="sd-section" id="sd-auth">
+        <div class="sd-section-title">Authentification LLM</div>
+        <div class="sd-section-desc">État des credentials par provider. Priorité : OAuth ECA (Emacs/Pro/Max) › Clé webapp › Variable env.</div>
+
+        <!-- Grille de statut -->
+        <div id="sd-auth-status-grid" style="display:grid;gap:8px;margin-bottom:16px">
+          <div style="font-size:11px;color:var(--text-muted)">Chargement…</div>
+        </div>
+
+        <div class="sd-divider"></div>
+
+        <!-- Formulaire API key manuelle -->
+        <div class="sd-section-title" style="font-size:12px;margin-top:4px;margin-bottom:10px">Enregistrer une clé API</div>
+        <div class="sd-field">
+          <div class="sd-label">Provider</div>
+          <select class="sd-select" id="sd-auth-provider">
+            <option value="anthropic">Anthropic</option>
+            <option value="github-copilot">GitHub Copilot</option>
+          </select>
+        </div>
+        <div class="sd-field">
+          <div class="sd-label">Clé API <span class="sd-badge-info">stockée dans .webapp-auth.json</span></div>
+          <input class="sd-input mono" id="sd-auth-apikey" type="password" autocomplete="off"
+                 placeholder="sk-ant-... ou ghu_...">
+        </div>
+        <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">
+          <button class="btn btn-primary" style="font-size:11px" onclick="saveAuthApiKey()">💾 Enregistrer + Recharger ECA</button>
+          <button class="btn btn-ghost" style="font-size:11px" onclick="refreshAuthStatus()">🔄 Actualiser statut</button>
+          <button class="btn btn-ghost" style="font-size:11px" onclick="reloadEcaServer()">⟳ Redémarrer eca-server</button>
+        </div>
+        <div id="sd-auth-msg" style="margin-top:10px;font-size:11px;padding:6px 8px;border-radius:4px;display:none"></div>
       </div>
 
       <!-- PIPELINE -->

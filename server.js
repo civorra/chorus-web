@@ -45,6 +45,7 @@ const Anthropic = require('@anthropic-ai/sdk');
 const chorus  = require('./chorus');
 const prompts = require('./prompts');
 const eca     = require('./eca-client');
+const auth    = require('./auth');
 
 const app    = express();
 const PORT   = parseInt(process.env.PORT || '3000');
@@ -57,6 +58,9 @@ const upload = multer({
   dest: path.join(require('os').tmpdir(), 'chorus-uploads'),
   limits: { fileSize: 50 * 1024 * 1024 }, // 50 MB
 });
+
+// ── Auth routes (avant les autres middlewares) ────────────────
+app.use(auth);
 
 // ── Middleware ────────────────────────────────────────────────
 app.use(express.json({ limit: '2mb' }));
