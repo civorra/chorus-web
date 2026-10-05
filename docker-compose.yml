@@ -32,9 +32,8 @@ services:
       # agent/skills/*.md and sandboxes/ to load the real skills.
       - ${CHORUS_HOME}:/chorus
       # ECA OAuth credentials (host Pro/Max session) — read-only.
-      # ECA stores OAuth tokens in ~/.cache/eca/db.transit.json (not in
-      # ~/.config/eca/). Mount only this file to avoid polluting the host
-      # cache with the container's own session data.
+      # La webapp n'écrit plus dans db.transit.json (OAuth natif Node.js
+      # écrit dans .webapp-auth.json sur le volume /chorus).
       - ${OAUTH_CREDENTIALS}:/root/.cache/eca/db.transit.json:ro
       # eca-config.json monté en volume : override du COPY Dockerfile.eca,
       # évite un rebuild pour changer de provider (Anthropic ↔ Copilot).
@@ -80,6 +79,10 @@ services:
       - ECA_CONTAINER_NAME=${ECA_CONTAINER_NAME:-chorus-web-eca-server-1}
       # Chemin du socket Docker dans le conteneur (ne pas modifier sauf proxy)
       - DOCKER_SOCKET=/var/run/docker.sock
+      # OAuth client IDs — défauts = client_ids ECA ; surcharger si OAuth App dédiée
+      - ANTHROPIC_OAUTH_CLIENT_ID=${ANTHROPIC_OAUTH_CLIENT_ID:-9d1c250a-e61b-44d9-88ed-5944d1962f5e}
+      - ANTHROPIC_OAUTH_SCOPE=${ANTHROPIC_OAUTH_SCOPE:-org:create_api_key user:profile user:inference}
+      - COPILOT_OAUTH_CLIENT_ID=${COPILOT_OAUTH_CLIENT_ID:-Iv1.b507a08c87ecfe98}
     volumes:
       # Mount the entire existing Chorus repo read-write
       # (run.pl writes reports under Engine/sandboxes/*/workspace/)
@@ -87,6 +90,8 @@ services:
       # Bind-mount chorus-web.html so edits on the host sont visibles sans rebuild.
       - ./chorus-web.html:/app/chorus-web.html:ro
       - ./chorus.js:/app/chorus.js:ro
+      - ./auth.js:/app/auth.js:ro
+      - ./server.js:/app/server.js:ro
       # Docker socket — nécessaire pour /api/auth/reload-eca (restart eca-server).
       # Lecture seule insuffisante : POST /restart requiert accès RW au socket.
       - /var/run/docker.sock:/var/run/docker.sock

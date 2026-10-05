@@ -1,0 +1,4 @@
+{
+    "remote": { "enabled": false },
+    "$schema": "https://eca.dev/config.json"
+}

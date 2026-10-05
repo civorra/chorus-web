@@ -6712,6 +6712,151 @@ document.getElementById('modal-overlay').addEventListener('click', function(e) {
   if (e.target === this) closeModal();
 });
 
+// ─── ECA LOGIN FLOW ──────────────────────────────────────────
+let _ecaLoginSession = null;
+let _ecaLoginWaitReq = null;
+
+function ecaLoginShow(visible) {
+  document.getElementById('sd-auth-login-box').style.display = visible ? 'block' : 'none';
+}
+function ecaLoginStep(urlVisible, spinnerVisible) {
+  document.getElementById('sd-auth-login-url-step').style.display  = urlVisible     ? 'block' : 'none';
+  document.getElementById('sd-auth-login-spinner').style.display   = spinnerVisible ? 'block' : 'none';
+}
+function ecaLoginSpinner(msg) { ecaLoginStep(false, true); document.getElementById('sd-auth-login-spinner').textContent = '⏳ ' + msg; }
+
+async function ecaLoginFlow(provider) {
+  const labels = { anthropic: 'Anthropic', 'github-copilot': 'GitHub Copilot' };
+  document.getElementById('sd-auth-login-title').textContent = '🔐 Connexion — ' + (labels[provider] || provider);
+  document.getElementById('sd-auth-login-code-block').style.display  = 'none';
+  document.getElementById('sd-auth-login-input-block').style.display = 'none';
+  ecaLoginShow(true);
+  ecaLoginSpinner('Démarrage du subprocess ECA…');
+  showAuthMsg('muted', '');
+
+  try {
+    const r    = await fetch(`${API}/api/auth/eca-login/start`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ provider }),
+    });
+    const data = await r.json();
+    if (!data.ok) { ecaLoginShow(false); showAuthMsg('error', '✗ ' + data.error); return; }
+
+    _ecaLoginSession = data.sessionId;
+
+    if (data.action === 'done') {
+      ecaLoginShow(false);
+      showAuthMsg('ok', '✓ Déjà authentifié');
+      await refreshAuthStatus();
+      return;
+    }
+
+    // Afficher l'URL
+    ecaLoginStep(true, false);
+    const urlEl  = document.getElementById('sd-auth-login-url');
+    const msgEl  = document.getElementById('sd-auth-login-msg');
+    msgEl.textContent = data.message || '1. Ouvrez ce lien dans votre navigateur :';
+    if (data.url) { urlEl.href = data.url; urlEl.textContent = data.url; }
+
+    if (data.action === 'device-code') {
+      // GitHub Copilot : afficher le code, attendre providers/updated
+      document.getElementById('sd-auth-login-code-block').style.display = 'block';
+      document.getElementById('sd-auth-login-code').textContent = data.userCode || '';
+      _ecaWaitDeviceCode();
+
+    } else if (data.action === 'authorize' || data.action === 'input') {
+      // Anthropic : afficher le champ de saisie du code retour
+      document.getElementById('sd-auth-login-input-block').style.display = 'block';
+      const fields = data.fields || [];
+      if (fields.length) {
+        const f = fields[0];
+        document.getElementById('sd-auth-login-field-label').textContent = (f.label || 'Code') + ' :';
+        const inp = document.getElementById('sd-auth-login-field-input');
+        inp.type = (f.type === 'secret') ? 'password' : 'text';
+        inp.placeholder = 'Collez le code ici…';
+        inp.value = '';
+        inp.focus();
+      }
+
+    } else if (data.action === 'choose-method') {
+      // Rare — on prend la première méthode disponible automatiquement
+      const methods = data.methods || [];
+      if (methods.length) {
+        ecaLoginSpinner(`Méthode sélectionnée : ${methods[0].label}…`);
+        const r2 = await fetch(`${API}/api/auth/eca-login/start`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ provider, method: methods[0].key }),
+        });
+        const d2 = await r2.json();
+        if (!d2.ok) { ecaLoginShow(false); showAuthMsg('error', '✗ ' + d2.error); return; }
+        _ecaLoginSession = d2.sessionId;
+        // Re-enter flow with new session (simplified: reload)
+        await ecaLoginFlow(provider);
+      }
+    }
+
+  } catch (e) {
+    ecaLoginShow(false);
+    showAuthMsg('error', '✗ ' + e.message);
+  }
+}
+
+function _ecaWaitDeviceCode() {
+  if (!_ecaLoginSession) return;
+  const es = new EventSource(`${API}/api/auth/eca-login/${_ecaLoginSession}/wait`);
+  _ecaLoginWaitReq = es;
+  es.addEventListener('done', async () => {
+    es.close(); _ecaLoginWaitReq = null;
+    ecaLoginShow(false);
+    showAuthMsg('ok', '✓ Authentifié avec succès — eca-server redémarré');
+    await refreshAuthStatus();
+    setTimeout(refreshEcaStatus, 7000);
+  });
+  es.addEventListener('error', (e) => {
+    es.close(); _ecaLoginWaitReq = null;
+    let msg = 'Erreur pendant l\'attente';
+    try { msg = JSON.parse(e.data).message; } catch {}
+    ecaLoginShow(false);
+    showAuthMsg('error', '✗ ' + msg);
+  });
+}
+
+async function ecaLoginSubmit() {
+  if (!_ecaLoginSession) return;
+  const code = document.getElementById('sd-auth-login-field-input').value.trim();
+  if (!code) return;
+  ecaLoginSpinner('Validation du code…');
+  try {
+    const r = await fetch(`${API}/api/auth/eca-login/${_ecaLoginSession}/submit`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ data: { code } }),
+    });
+    const d = await r.json();
+    if (d.ok && d.done) {
+      ecaLoginShow(false);
+      showAuthMsg('ok', '✓ Authentifié avec succès — eca-server redémarré');
+      await refreshAuthStatus();
+      setTimeout(refreshEcaStatus, 7000);
+    } else if (!d.ok) {
+      ecaLoginStep(true, false);
+      document.getElementById('sd-auth-login-input-block').style.display = 'block';
+      showAuthMsg('error', '✗ ' + (d.error || 'Code invalide'));
+    }
+  } catch (e) {
+    ecaLoginStep(true, false);
+    showAuthMsg('error', '✗ ' + e.message);
+  }
+}
+
+function ecaLoginCancel() {
+  if (_ecaLoginWaitReq) { _ecaLoginWaitReq.close(); _ecaLoginWaitReq = null; }
+  if (_ecaLoginSession) {
+    fetch(`${API}/api/auth/eca-login/${_ecaLoginSession}`, { method: 'DELETE' }).catch(() => {});
+    _ecaLoginSession = null;
+  }
+  ecaLoginShow(false);
+}
+
 // ─── AUTH STATUS ─────────────────────────────────────────────
 async function refreshAuthStatus() {
   const grid   = document.getElementById('sd-auth-status-grid');
@@ -7162,8 +7307,66 @@ initFromServer(); // surcharge avec les données réelles si le serveur MVP0 ré
 
         <div class="sd-divider"></div>
 
-        <!-- Formulaire API key manuelle -->
-        <div class="sd-section-title" style="font-size:12px;margin-top:4px;margin-bottom:10px">Enregistrer une clé API</div>
+        <!-- Boutons OAuth ECA -->
+        <div class="sd-section-title" style="font-size:12px;margin-top:4px;margin-bottom:10px">Connexion OAuth (workflow ECA)</div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px">
+          <button class="btn btn-primary" style="font-size:11px" onclick="ecaLoginFlow('anthropic')">🔐 Anthropic</button>
+          <button class="btn btn-primary" style="font-size:11px" onclick="ecaLoginFlow('github-copilot')">🐙 GitHub Copilot</button>
+        </div>
+
+        <!-- Zone de login inline (affichée pendant le flow OAuth) -->
+        <div id="sd-auth-login-box" style="display:none;background:var(--surface-2);border-radius:8px;padding:12px;margin-bottom:12px">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+            <span id="sd-auth-login-title" style="font-size:12px;font-weight:600"></span>
+            <button class="btn btn-ghost" style="font-size:10px;padding:2px 6px" onclick="ecaLoginCancel()">✕ Annuler</button>
+          </div>
+          <!-- Étape : URL à ouvrir -->
+          <div id="sd-auth-login-url-step" style="display:none">
+            <div style="font-size:11px;color:var(--text-muted);margin-bottom:6px" id="sd-auth-login-msg"></div>
+            <div style="display:flex;gap:6px;align-items:center;margin-bottom:8px">
+              <a id="sd-auth-login-url" href="#" target="_blank" rel="noopener"
+                 style="font-size:11px;color:var(--accent);word-break:break-all;flex:1"></a>
+              <button class="btn btn-ghost" style="font-size:10px;padding:2px 8px;flex-shrink:0"
+                      onclick="navigator.clipboard.writeText(document.getElementById('sd-auth-login-url').href)">📋</button>
+            </div>
+            <!-- Code device-flow (GitHub Copilot) -->
+            <div id="sd-auth-login-code-block" style="display:none;margin-bottom:10px">
+              <div style="font-size:11px;color:var(--text-muted);margin-bottom:4px">Entrez ce code sur la page qui s'ouvre :</div>
+              <div style="display:flex;gap:8px;align-items:center">
+                <code id="sd-auth-login-code"
+                      style="font-size:18px;font-weight:700;letter-spacing:3px;color:var(--accent);
+                             background:var(--surface-3);padding:6px 12px;border-radius:6px"></code>
+                <button class="btn btn-ghost" style="font-size:10px;padding:2px 8px"
+                        onclick="navigator.clipboard.writeText(document.getElementById('sd-auth-login-code').textContent)">📋</button>
+              </div>
+              <div style="margin-top:8px;font-size:11px;color:var(--text-muted)">
+                ⏳ <span id="sd-auth-login-wait-msg">En attente de l'authentification…</span>
+              </div>
+            </div>
+            <!-- Saisie code retour (Anthropic authorize) -->
+            <div id="sd-auth-login-input-block" style="display:none">
+              <div style="font-size:11px;color:var(--text-muted);margin-bottom:6px"
+                   id="sd-auth-login-field-label">Code d'autorisation :</div>
+              <div style="display:flex;gap:6px">
+                <input class="sd-input mono" id="sd-auth-login-field-input" type="password"
+                       autocomplete="off" placeholder="Collez le code ici…" style="flex:1;font-size:12px">
+                <button class="btn btn-primary" style="font-size:11px;flex-shrink:0"
+                        onclick="ecaLoginSubmit()">✓ Valider</button>
+              </div>
+            </div>
+          </div>
+          <!-- Spinner de traitement -->
+          <div id="sd-auth-login-spinner" style="display:none;font-size:11px;color:var(--text-muted)">
+            ⏳ Initialisation ECA…
+          </div>
+        </div>
+
+        <div class="sd-divider"></div>
+
+        <!-- Formulaire API key manuelle (fallback) -->
+        <div class="sd-section-title" style="font-size:12px;margin-top:4px;margin-bottom:10px">
+          Clé API manuelle <span class="sd-badge-info">fallback</span>
+        </div>
         <div class="sd-field">
           <div class="sd-label">Provider</div>
           <select class="sd-select" id="sd-auth-provider">

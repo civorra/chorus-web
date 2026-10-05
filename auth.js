@@ -18,7 +18,9 @@
 
 const fs      = require('fs');
 const http    = require('http');
+const https   = require('https');
 const path    = require('path');
+const crypto  = require('crypto');
 const express = require('express');
 
 const router = express.Router();
@@ -285,6 +287,308 @@ router.post('/api/auth/reload-eca', express.json(), async (req, res) => {
   const containerName = (req.body && req.body.container) || ECA_CONTAINER_NAME();
   const result = await dockerRestart(containerName);
   res.json({ ok: result.ok, container: containerName, result });
+});
+
+// ══════════════════════════════════════════════════════════════
+// ECA LOGIN — OAuth natif Node.js (zéro dépendance ECA locale)
+//
+// Réplique exactement le workflow /login d'Emacs ECA en appelant
+// directement les endpoints OAuth des providers. Aucun binaire ECA,
+// aucun Emacs, aucune dépendance externe — http/https/crypto Node.js natifs.
+//
+// Providers et flows :
+//   anthropic     → PKCE + OOB (code affiché sur console.anthropic.com)
+//   github-copilot → Device Flow RFC 8628 (code + polling GitHub)
+// ══════════════════════════════════════════════════════════════
+
+// ── OAuth constants ───────────────────────────────────────────
+
+// Valeurs par défaut = client_ids extraits du binaire ECA (eca.dev).
+// Surchargeables via .env si vous enregistrez vos propres OAuth Apps.
+const ANTHROPIC_CLIENT_ID  = process.env.ANTHROPIC_OAUTH_CLIENT_ID || '9d1c250a-e61b-44d9-88ed-5944d1962f5e';
+const ANTHROPIC_SCOPE      = process.env.ANTHROPIC_OAUTH_SCOPE     || 'org:create_api_key user:profile user:inference';
+const ANTHROPIC_REDIRECT   = 'https://console.anthropic.com/oauth/code/callback';
+const ANTHROPIC_AUTH_URL   = 'https://claude.ai/oauth/authorize';
+const ANTHROPIC_TOKEN_URL  = 'https://console.anthropic.com/v1/oauth/token';
+const ANTHROPIC_APIKEY_URL = 'https://api.anthropic.com/api/oauth/claude_cli/create_api_key';
+
+const COPILOT_CLIENT_ID    = process.env.COPILOT_OAUTH_CLIENT_ID   || 'Iv1.b507a08c87ecfe98';
+const COPILOT_DEVICE_URL   = 'https://github.com/login/device/code';
+const COPILOT_TOKEN_URL    = 'https://github.com/login/oauth/access_token';
+const COPILOT_GRANT_TYPE   = 'urn:ietf:params:oauth:grant-type:device_code';
+
+// ── PKCE helpers ─────────────────────────────────────────────
+
+function generatePKCE() {
+  const verifier  = crypto.randomBytes(32).toString('base64url');
+  const challenge = crypto.createHash('sha256').update(verifier).digest('base64url');
+  return { verifier, challenge };
+}
+
+// ── HTTPS helper ─────────────────────────────────────────────
+
+function httpsPost(urlStr, body, headers) {
+  return new Promise((resolve, reject) => {
+    const u    = new URL(urlStr);
+    const isForm = (headers['Content-Type'] || '').includes('x-www-form-urlencoded');
+    const data = isForm
+      ? new URLSearchParams(body).toString()
+      : JSON.stringify(body);
+    const opts = {
+      hostname: u.hostname,
+      path:     u.pathname + (u.search || ''),
+      method:   'POST',
+      headers:  { ...headers, 'Content-Length': Buffer.byteLength(data) },
+    };
+    const req = https.request(opts, (res) => {
+      let d = '';
+      res.on('data', c => (d += c));
+      res.on('end', () => {
+        let parsed;
+        try { parsed = JSON.parse(d); } catch { parsed = d; }
+        resolve({ status: res.statusCode, data: parsed });
+      });
+    });
+    req.on('error', reject);
+    req.write(data);
+    req.end();
+  });
+}
+
+// ── Session store (in-memory, TTL 10 min) ────────────────────
+
+const ecaSessions = new Map();
+
+function makeSession(id, provider, extra) {
+  const s = { id, provider, ...extra };
+  s.ttl = setTimeout(() => ecaSessions.delete(id), 10 * 60 * 1000);
+  ecaSessions.set(id, s);
+  return s;
+}
+function dropSession(id) {
+  const s = ecaSessions.get(id);
+  if (s) { clearTimeout(s.ttl); ecaSessions.delete(id); }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// ROUTE — POST /api/auth/eca-login/start
+//
+// Body : { provider: 'anthropic' | 'github-copilot' }
+//
+// Anthropic  → PKCE + OOB : retourne { action:'authorize', url, fields }
+//              L'user ouvre url → s'authentifie → Anthropic affiche un code
+//              → l'user colle le code → /submit
+//
+// Copilot    → Device Flow : retourne { action:'device-code', url, userCode }
+//              L'user va sur url, entre userCode → /wait (SSE polling)
+// ═══════════════════════════════════════════════════════════════
+
+router.post('/api/auth/eca-login/start', express.json(), async (req, res) => {
+  const { provider } = req.body || {};
+  if (!['anthropic', 'github-copilot'].includes(provider)) {
+    return res.status(400).json({ ok: false, error: 'provider invalide (anthropic | github-copilot)' });
+  }
+
+  const sessionId = `oauth-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+
+  try {
+    if (provider === 'anthropic') {
+      // ── Anthropic PKCE ─────────────────────────────────────
+      const { verifier, challenge } = generatePKCE();
+      const state = crypto.randomBytes(16).toString('hex');
+      const params = new URLSearchParams({
+        response_type:         'code',
+        client_id:             ANTHROPIC_CLIENT_ID,
+        redirect_uri:          ANTHROPIC_REDIRECT,
+        scope:                 ANTHROPIC_SCOPE,
+        code_challenge:        challenge,
+        code_challenge_method: 'S256',
+        state,
+      });
+      const url = `${ANTHROPIC_AUTH_URL}?${params}`;
+      makeSession(sessionId, provider, { verifier, state });
+      return res.json({
+        ok: true, sessionId, action: 'authorize', url,
+        fields:  [{ key: 'code', label: 'Code d\'autorisation', type: 'secret' }],
+        message: 'Ouvrez ce lien, authentifiez-vous, puis collez le code affiché :',
+      });
+    }
+
+    // ── GitHub Copilot Device Flow ──────────────────────────
+    const r = await httpsPost(
+      COPILOT_DEVICE_URL,
+      { client_id: COPILOT_CLIENT_ID, scope: '' },
+      { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' }
+    );
+    if (r.status !== 200 || !r.data.device_code) {
+      return res.status(502).json({ ok: false, error: `GitHub device/code : HTTP ${r.status} — ${JSON.stringify(r.data)}` });
+    }
+    const { device_code, user_code, verification_uri, expires_in, interval } = r.data;
+    makeSession(sessionId, provider, { device_code, interval: (interval || 5) * 1000, expiresAt: Date.now() + expires_in * 1000 });
+    return res.json({
+      ok: true, sessionId, action: 'device-code',
+      url:      verification_uri,
+      userCode: user_code,
+      message:  'Ouvrez ce lien et entrez le code ci-dessous :',
+    });
+
+  } catch (e) {
+    dropSession(sessionId);
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════
+// ROUTE — POST /api/auth/eca-login/:sessionId/submit
+//
+// Anthropic uniquement : { data: { code: string } }
+// Échange le code contre un token OAuth puis crée une API key.
+// Écrit dans .webapp-auth.json + restart eca-server.
+// ═══════════════════════════════════════════════════════════════
+
+router.post('/api/auth/eca-login/:sessionId/submit', express.json(), async (req, res) => {
+  const session = ecaSessions.get(req.params.sessionId);
+  if (!session) return res.status(404).json({ ok: false, error: 'Session introuvable ou expirée' });
+  if (session.provider !== 'anthropic') {
+    return res.status(400).json({ ok: false, error: 'submit uniquement pour le provider anthropic (Copilot utilise /wait)' });
+  }
+
+  const code = (req.body && req.body.data && req.body.data.code || '').trim();
+  if (!code) return res.status(400).json({ ok: false, error: 'code manquant' });
+
+  try {
+    // 1. Échanger le code contre un access_token
+    const tokenRes = await httpsPost(
+      ANTHROPIC_TOKEN_URL,
+      {
+        grant_type:    'authorization_code',
+        code,
+        client_id:     ANTHROPIC_CLIENT_ID,
+        redirect_uri:  ANTHROPIC_REDIRECT,
+        code_verifier: session.verifier,
+      },
+      { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' }
+    );
+    if (tokenRes.status !== 200 || !tokenRes.data.access_token) {
+      return res.status(401).json({ ok: false, error: `Échange token échoué : ${JSON.stringify(tokenRes.data)}` });
+    }
+    const accessToken = tokenRes.data.access_token;
+
+    // 2. Créer une API key persistante depuis le token OAuth
+    const keyRes = await httpsPost(
+      ANTHROPIC_APIKEY_URL,
+      {},
+      { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json', Accept: 'application/json' }
+    );
+    if (keyRes.status !== 200 || !keyRes.data.api_key) {
+      return res.status(502).json({ ok: false, error: `Création API key échouée : ${JSON.stringify(keyRes.data)}` });
+    }
+    const apiKey     = keyRes.data.api_key;
+    const expiresAt  = tokenRes.data.expires_in
+      ? Math.floor(Date.now() / 1000) + tokenRes.data.expires_in
+      : null;
+
+    // 3. Stocker dans .webapp-auth.json
+    writeWebappAuth(WEBAPP_AUTH_FILE(), 'anthropic', {
+      api_key:    apiKey,
+      expires_at: expiresAt,
+      source:     'oauth-pkce',
+    });
+    dropSession(sessionId);
+
+    // 4. Restart eca-server (best-effort)
+    const reload = await dockerRestart(ECA_CONTAINER_NAME()).catch(e => ({ ok: false, body: e.message }));
+    res.json({ ok: true, done: true, action: 'done', reload });
+
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════
+// ROUTE — GET /api/auth/eca-login/:sessionId/wait  (SSE)
+//
+// GitHub Copilot Device Flow : poll jusqu'à obtention du token.
+// Écrit dans .webapp-auth.json + restart eca-server.
+// Events SSE : ping · done { provider } · error { message }
+// ═══════════════════════════════════════════════════════════════
+
+router.get('/api/auth/eca-login/:sessionId/wait', (req, res) => {
+  const session = ecaSessions.get(req.params.sessionId);
+
+  res.setHeader('Content-Type',  'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection',    'keep-alive');
+  res.flushHeaders();
+
+  if (!session) {
+    res.write(`event: error\ndata: ${JSON.stringify({ message: 'Session introuvable ou expirée' })}\n\n`);
+    return res.end();
+  }
+
+  const ping = setInterval(() => res.write('event: ping\ndata: {}\n\n'), 15000);
+  let   done = false;
+
+  const finish = (ok, payload) => {
+    if (done) return;
+    done = true;
+    clearInterval(ping);
+    clearTimeout(expTimer);
+    if (ok) {
+      dropSession(session.id);
+      dockerRestart(ECA_CONTAINER_NAME()).catch(() => {});
+      res.write(`event: done\ndata: ${JSON.stringify(payload)}\n\n`);
+    } else {
+      res.write(`event: error\ndata: ${JSON.stringify(payload)}\n\n`);
+    }
+    res.end();
+  };
+
+  const expTimer = setTimeout(
+    () => finish(false, { message: 'Délai d\'autorisation expiré — relancez le flow' }),
+    session.expiresAt - Date.now()
+  );
+
+  // Polling GitHub
+  const poll = async () => {
+    if (done) return;
+    try {
+      const r = await httpsPost(
+        COPILOT_TOKEN_URL,
+        { client_id: COPILOT_CLIENT_ID, device_code: session.device_code, grant_type: COPILOT_GRANT_TYPE },
+        { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' }
+      );
+      if (r.data.access_token) {
+        writeWebappAuth(WEBAPP_AUTH_FILE(), 'github-copilot', {
+          access_token: r.data.access_token,
+          token_type:   r.data.token_type || 'bearer',
+          scope:        r.data.scope || '',
+          source:       'device-flow',
+        });
+        return finish(true, { provider: 'github-copilot' });
+      }
+      // authorization_pending ou slow_down → continuer à poller
+      if (!r.data.error || r.data.error === 'authorization_pending' || r.data.error === 'slow_down') {
+        const interval = r.data.error === 'slow_down' ? session.interval * 2 : session.interval;
+        setTimeout(poll, interval);
+      } else {
+        finish(false, { message: `GitHub OAuth : ${r.data.error_description || r.data.error}` });
+      }
+    } catch (e) {
+      setTimeout(poll, session.interval); // erreur réseau → retry
+    }
+  };
+  setTimeout(poll, session.interval);
+});
+
+// ═══════════════════════════════════════════════════════════════
+// ROUTE — DELETE /api/auth/eca-login/:sessionId
+// Annule une session de login en cours.
+// ═══════════════════════════════════════════════════════════════
+
+router.delete('/api/auth/eca-login/:sessionId', (req, res) => {
+  dropSession(req.params.sessionId);
+  res.json({ ok: true });
 });
 
 module.exports = router;

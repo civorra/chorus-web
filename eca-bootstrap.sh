@@ -55,8 +55,23 @@ except Exception:
   if [ -n "$API_KEY" ]; then
     export ANTHROPIC_API_KEY="$API_KEY"
     echo "[eca-bootstrap] ANTHROPIC_API_KEY injectée depuis .webapp-auth.json"
-  else
-    echo "[eca-bootstrap] ⚠ .webapp-auth.json présent mais api_key introuvable"
+  fi
+  # Copilot token (provider github-copilot)
+  COPILOT_TOKEN=$(python3 -c "
+import json, sys
+try:
+    d = json.load(open('$WEBAPP_AUTH'))
+    c = d.get('github-copilot', {})
+    print(c.get('access_token', ''), end='')
+except Exception:
+    pass
+" 2>/dev/null)
+  if [ -n "$COPILOT_TOKEN" ]; then
+    export GITHUB_COPILOT_TOKEN="$COPILOT_TOKEN"
+    echo "[eca-bootstrap] GITHUB_COPILOT_TOKEN injectée depuis .webapp-auth.json"
+  fi
+  if [ -z "$API_KEY" ] && [ -z "$COPILOT_TOKEN" ]; then
+    echo "[eca-bootstrap] ⚠ .webapp-auth.json présent mais aucun token exploitable"
   fi
 elif [ -f /run/secrets/anthropic_api_key ]; then
   export ANTHROPIC_API_KEY="$(cat /run/secrets/anthropic_api_key)"
