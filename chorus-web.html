@@ -1871,50 +1871,7 @@ input, select, textarea { font-family: inherit; }
           <h1>Sandboxes overview</h1>
           <div class="subtitle">Chorus · Neuro-symbolic compliance engine</div>
         </div>
-        <div class="stats-grid" id="global-stats">
-          <div class="stat-card" style="border-top-color:var(--accent)">
-            <div class="stat-card-row">
-              <div class="stat-label">Sandboxes</div>
-              <div class="stat-icon">🗂️</div>
-            </div>
-            <div class="stat-value accent" id="gs-sandboxes">—</div>
-            <div class="stat-sub" id="gs-sandboxes-sub">—</div>
-            <div class="stat-mini-bar" title="Sandboxes avec données de conformité">
-              <div class="bar" id="gs-sandboxes-bar" style="background:var(--accent)"></div>
-            </div>
-          </div>
-          <div class="stat-card" style="border-top-color:var(--text-muted)">
-            <div class="stat-card-row">
-              <div class="stat-label">Projects</div>
-              <div class="stat-icon">📋</div>
-            </div>
-            <div class="stat-value" id="gs-projects">—</div>
-            <div class="stat-sub" id="gs-projects-sub">—</div>
-            <div class="stat-mini-bar" title="Taux d'import global">
-              <div class="bar" id="gs-projects-bar"></div>
-            </div>
-          </div>
-          <div class="stat-card" style="border-top-color:var(--success)">
-            <div class="stat-card-row">
-              <div class="stat-label">Imported</div>
-              <div class="stat-icon">✅</div>
-            </div>
-            <div class="stat-value success" id="gs-imported">—</div>
-            <div class="stat-sub" id="gs-imported-sub">—</div>
-            <div class="stat-mini-bar" title="Taux d'import">
-              <div class="bar" id="gs-imported-bar" style="background:var(--success)"></div>
-            </div>
-          </div>
-          <div class="stat-card" style="border-top-color:var(--warn)">
-            <div class="stat-card-row">
-              <div class="stat-label">Pipeline runs</div>
-              <div class="stat-icon">⚡</div>
-            </div>
-            <div class="stat-value warn" id="gs-runs">—</div>
-            <div class="stat-sub" id="gs-runs-sub">—</div>
-            <div class="stat-health-row" id="gs-health-dots"></div>
-          </div>
-        </div>
+
         <!-- Recent projects strip -->
         <div class="sb-overview-grid" id="sandbox-cards"></div>
         <div class="recent-section">
@@ -3466,72 +3423,6 @@ function openRecentProject(sbId, entityId, projId) {
 
 // ─── GLOBAL DASHBOARD ─────────────────────────────────────────
 function renderGlobalDashboard() {
-  const totalProj     = Object.values(PROJECTS).reduce((s, p) => s + p.length, 0);
-  const totalImported = Object.values(PROJECTS).reduce((s, p) => s + p.filter(x => x.state === 'imported').length, 0);
-  const totalRuns     = SANDBOXES.reduce((s, x) => s + x.runs, 0);
-  const totalPending  = totalProj - totalImported;
-  const importRate    = totalProj > 0 ? Math.round(totalImported / totalProj * 100) : 0;
-
-  // Compliance stats
-  const sbWithComp    = SANDBOXES.filter(s => s.compliance_avg != null);
-  const sbCompPct     = SANDBOXES.length > 0 ? Math.round(sbWithComp.length / SANDBOXES.length * 100) : 0;
-  const compAvg       = sbWithComp.length > 0
-    ? Math.round(sbWithComp.reduce((s, x) => s + x.compliance_avg, 0) / sbWithComp.length)
-    : null;
-
-  // Health distribution (sandboxes avec compliance)
-  const healthy  = sbWithComp.filter(s => s.compliance_avg >= 80).length;
-  const atRisk   = sbWithComp.filter(s => s.compliance_avg >= 50 && s.compliance_avg < 80).length;
-  const critical = sbWithComp.filter(s => s.compliance_avg < 50).length;
-
-  // ── Card 1 : Sandboxes ──────────────────────────────────────
-  document.getElementById('gs-sandboxes').textContent = SANDBOXES.length;
-  document.getElementById('gs-sandboxes-sub').textContent = sbWithComp.length > 0
-    ? `${sbWithComp.length} avec données conformité`
-    : 'aucune donnée conformité';
-  document.getElementById('gs-sandboxes-bar').style.width = sbCompPct + '%';
-
-  // ── Card 2 : Projects ───────────────────────────────────────
-  document.getElementById('gs-projects').textContent = totalProj;
-  document.getElementById('gs-projects-sub').textContent = totalPending > 0
-    ? `${totalPending} en attente d'import`
-    : totalProj > 0 ? 'tous importés ✓' : '—';
-  const projBarColor = importRate >= 80 ? 'var(--success)' : importRate >= 50 ? 'var(--warn)' : 'var(--error)';
-  const projBar = document.getElementById('gs-projects-bar');
-  projBar.style.width = importRate + '%';
-  projBar.style.background = projBarColor;
-
-  // ── Card 3 : Imported ───────────────────────────────────────
-  document.getElementById('gs-imported').textContent = totalImported;
-  document.getElementById('gs-imported-sub').textContent = totalProj > 0
-    ? `${importRate}% taux d'import`
-    : '—';
-  document.getElementById('gs-imported-bar').style.width = importRate + '%';
-
-  // ── Card 4 : Pipeline runs ──────────────────────────────────
-  document.getElementById('gs-runs').textContent = totalRuns;
-  if (compAvg != null) {
-    const compColor = compAvg >= 80 ? 'var(--success)' : compAvg >= 50 ? 'var(--warn)' : 'var(--error)';
-    document.getElementById('gs-runs-sub').innerHTML =
-      `conformité moy. <span style="font-weight:700;color:${compColor}">${compAvg}%</span>`;
-  } else {
-    document.getElementById('gs-runs-sub').textContent = 'aucune donnée conformité';
-  }
-  const dotsEl = document.getElementById('gs-health-dots');
-  if (sbWithComp.length > 0) {
-    const dot = (color, count, label) => count > 0
-      ? `<span class="stat-health-dot" style="background:${color}" title="${count} sandbox(es) ${label}"></span>
-         <span class="stat-health-label">${count}</span>`
-      : '';
-    dotsEl.innerHTML =
-      dot('var(--success)', healthy,  '≥ 80%') +
-      dot('var(--warn)',    atRisk,   '50–79%') +
-      dot('var(--error)',  critical, '< 50%') +
-      `<span class="stat-health-label" style="margin-left:2px">sandboxes</span>`;
-  } else {
-    dotsEl.innerHTML = '<span class="stat-health-label">—</span>';
-  }
-
   renderRecentProjects(6);
 
   const container = document.getElementById('sandbox-cards');
