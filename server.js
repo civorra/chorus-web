@@ -50,7 +50,14 @@ const auth    = require('./auth');
 const app    = express();
 const PORT   = parseInt(process.env.PORT || '3000');
 const PERL   = process.env.PERL_BIN || 'perl';
-const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+// Client Anthropic direct — instancié uniquement si la clé est disponible.
+// Toutes les routes AI passent par eca-client.js (eca-server) ; ce client
+// n'est conservé que pour un usage direct futur éventuel.
+// Guard requis : sans clé (ex. provider = GitHub Copilot), le SDK throw au
+// démarrage même si client n'est jamais appelé — ce qui crash chorus-web.
+const client = process.env.ANTHROPIC_API_KEY
+  ? new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
+  : null;
 const MODEL  = process.env.ANTHROPIC_MODEL || 'claude-opus-4-5';
 
 // ── Multer : upload dans /tmp ─────────────────────────────────
@@ -811,8 +818,15 @@ app.listen(PORT, () => {
     console.warn(`  ⚠  CHORUS_HOME non défini — éditez .env`);
   }
 
+  const provider = process.env.ECA_DEFAULT_MODEL
+    ? process.env.ECA_DEFAULT_MODEL.split('/')[0]
+    : 'anthropic';
   if (!process.env.ANTHROPIC_API_KEY) {
-    console.warn(`  ⚠  ANTHROPIC_API_KEY non définie — /check et /chat ne fonctionneront pas`);
+    if (provider === 'anthropic') {
+      console.warn(`  ⚠  ANTHROPIC_API_KEY non définie — vérifiez le secret Docker ou le provider ECA`);
+    } else {
+      console.log(`  ℹ  ANTHROPIC_API_KEY absente — provider actif : ${provider} (via eca-server)`);
+    }
   }
 
   console.log(`  Modèle LLM  : ${MODEL}\n`);
