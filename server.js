@@ -914,6 +914,72 @@ app.get('/api/sandboxes/:sbId/entities/:entityId/projects/:projId/reports/:filen
   }
 });
 
+// ── Export HTML/PDF d'un rapport summary/explain — bouton "💾 Save as" du
+// panneau de visualisation Markdown.
+//
+// Appelle directement scripts/md2html.py / scripts/md2pdf.py en subprocess
+// (jamais via un skill ECA — conversion déterministe, pas de LLM requis).
+// Le .md source est recopié dans un fichier temporaire (le nom de fichier
+// réel peut contenir des caractères que le script ne gère pas forcément
+// bien en argument, et on évite tout risque d'écriture concurrente dans le
+// sandbox) ; le fichier converti est streamé directement en téléchargement,
+// jamais persisté dans le sandbox ni ailleurs sur le disque au-delà de /tmp.
+app.get('/api/sandboxes/:sbId/entities/:entityId/projects/:projId/reports/:filename/export/:format', (req, res) => {
+  const { sbId, entityId, projId, filename, format } = req.params;
+
+  if (!/^[\w\-\.]+\.md$/.test(filename)) {
+    return res.status(400).json({ ok: false, error: 'Nom de fichier invalide' });
+  }
+  if (!['html', 'pdf'].includes(format)) {
+    return res.status(400).json({ ok: false, error: `Format invalide : ${format} (html|pdf)` });
+  }
+
+  let content;
+  try {
+    content = chorus.readReport(sbId, entityId, projId, filename);
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: e.message });
+  }
+  if (!content) return res.status(404).json({ ok: false, error: 'Rapport introuvable' });
+
+  const tmpDir  = fs.mkdtempSync(path.join(require('os').tmpdir(), 'chorus-export-'));
+  const baseName = filename.replace(/\.md$/, '');
+  const mdPath   = path.join(tmpDir, `${baseName}.md`);
+  const outPath  = path.join(tmpDir, `${baseName}.${format}`);
+  const script   = path.join(chorus.CHORUS_HOME(), 'Engine', 'scripts', format === 'pdf' ? 'md2pdf.py' : 'md2html.py');
+
+  const cleanup = () => { try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {} };
+
+  try {
+    fs.writeFileSync(mdPath, content, 'utf8');
+  } catch (e) {
+    cleanup();
+    return res.status(500).json({ ok: false, error: `Écriture du fichier temporaire impossible : ${e.message}` });
+  }
+
+  const proc = spawn('python3', [script, mdPath, outPath]);
+  let stderr = '';
+  proc.stderr.on('data', d => { stderr += d.toString(); });
+
+  proc.on('close', code => {
+    if (code !== 0 || !fs.existsSync(outPath)) {
+      cleanup();
+      return res.status(500).json({ ok: false, error: `Conversion ${format} échouée (code ${code}) : ${stderr.slice(-500)}` });
+    }
+    res.download(outPath, `${baseName}.${format}`, (err) => {
+      cleanup();
+      if (err && !res.headersSent) {
+        res.status(500).json({ ok: false, error: `Téléchargement échoué : ${err.message}` });
+      }
+    });
+  });
+
+  proc.on('error', err => {
+    cleanup();
+    if (!res.headersSent) res.status(500).json({ ok: false, error: `Impossible de lancer python3 : ${err.message}` });
+  });
+});
+
 // ── Servir le frontend ────────────────────────────────────────
 
 const HTML_FILE = path.join(__dirname, 'chorus-web.html');

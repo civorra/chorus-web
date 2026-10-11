@@ -2487,6 +2487,8 @@ input, select, textarea { font-family: inherit; }
     </div>
     <div class="mdv-footer">
       <div id="mdv-cross-area"></div>
+      <button class="btn btn-ghost btn-sm" onclick="exportMdReport('html')" title="Convertit le Markdown en HTML autonome via scripts/md2html.py">💾 Save as HTML</button>
+      <button class="btn btn-ghost btn-sm" onclick="exportMdReport('pdf')" title="Convertit le Markdown en PDF via scripts/md2pdf.py">💾 Save as PDF</button>
       <button class="btn btn-ghost btn-sm" onclick="closeMdView()">Fermer</button>
     </div>
   </div>
@@ -6666,6 +6668,36 @@ async function openMdView(sbId, entityId, projId, filename) {
 function closeMdView() {
   _mdvCtx = null;
   document.getElementById('md-view-overlay').hidden = true;
+}
+
+// Bouton "💾 Save as HTML/PDF" du panneau de visualisation Markdown — appelle
+// directement server.js § ROUTE export (scripts/md2html.py / md2pdf.py en
+// subprocess, jamais via un skill ECA — conversion déterministe, pas de LLM
+// requis). Téléchargement direct du fichier converti, rien n'est persisté
+// dans le sandbox.
+async function exportMdReport(format) {
+  if (!_mdvCtx) return;
+  const { sbId, entityId, projId, filename } = _mdvCtx;
+  const url = `${API}/api/sandboxes/${sbId}/entities/${entityId}/projects/${projId}/reports/${filename}/export/${format}`;
+
+  try {
+    const r = await fetch(url);
+    if (!r.ok) {
+      const data = await r.json().catch(() => ({}));
+      throw new Error(data.error || `HTTP ${r.status}`);
+    }
+    const blob = await r.blob();
+    const blobUrl = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = blobUrl;
+    a.download = filename.replace(/\.md$/, `.${format}`);
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(blobUrl);
+  } catch (e) {
+    alert(`Export ${format.toUpperCase()} échoué : ${e.message}`);
+  }
 }
 
 // ─── CROSS-CHECK STATUS (explain-*.md viewer) ─────────────────────────────
