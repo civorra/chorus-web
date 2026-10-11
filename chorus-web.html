@@ -3151,7 +3151,7 @@ function buildSandboxEntry(sb, iconIndex) {
       compliance: p.compliance,
       lastRun: p.reportData?.date || null,
       verdict: p.verdict,
-      imports: [],
+      imports: p.imports || [],
       reports: [...runReportEntry, ...checkReportEntries],
       corpus: [],
     };
@@ -4812,12 +4812,16 @@ let _rvCurrentReport = null;
 let _mdvCtx = null;   // contexte du viewer Markdown (sbId, entityId, projId, filename)
 
 // Motif/raison d'un élément — même chaîne de repli que run.pl (un seul champ
-// "motif" générique, ou l'une de ses variantes spécifiques par type_element).
+// "motif" générique, ou l'une de ses variantes spécifiques par type_element),
+// plus les équivalents anglais rencontrés sur les sandboxes à corpus EN
+// (ex. 02-building-en) où Helpers.pm écrit "non_conformity_motif"/"reason"
+// au lieu de "motif".
 function elementMotif(e) {
   return e.motif ?? e.motif_impact ?? e.motif_generation ?? e.motif_affectation
     ?? e.motif_enrolement ?? e.motif_introduction ?? e.motif_utilisation
     ?? e.motif_fin_de_vie ?? e.motif_renouvellement ?? e.motif_recouvrement
-    ?? e.archi_motif ?? e.motif_fourniture_code_source ?? '—';
+    ?? e.archi_motif ?? e.motif_fourniture_code_source
+    ?? e.non_conformity_motif ?? e.reason ?? e.non_conformity_reason ?? '—';
 }
 
 // Transforme les elements[] du run-report-*.json réel en lignes affichables.
@@ -4826,11 +4830,20 @@ function elementMotif(e) {
 // données réelles du pipeline Chorus).
 function rowsFromRunReport(data) {
   return (data.elements || []).map(e => {
+    // Verdicts bilingues : certains sandboxes (corpus EN, ex. UK Approved
+    // Doc A) produisent des Frames avec verdict YES/NO/UNKNOWN au lieu de
+    // CONFORME/NON_CONFORME/UNKNOWN (FR). Les deux formes doivent être
+    // reconnues pour que la vue report-view ne regroupe pas tous les
+    // éléments anglophones dans "à confirmer" par défaut.
+    const CONFORME_VALUES     = ['CONFORME', 'YES'];
+    const NON_CONFORME_VALUES = ['NON_CONFORME', 'NO'];
     const status = e.a_confirmer
       ? 'A_CONFIRMER'
-      : (e.verdict === 'CONFORME' || e.verdict === 'NON_CONFORME')
-        ? e.verdict
-        : 'A_CONFIRMER'; // unprocessed / type inconnu — regroupé avec "à confirmer"
+      : CONFORME_VALUES.includes(e.verdict)
+        ? 'CONFORME'
+        : NON_CONFORME_VALUES.includes(e.verdict)
+          ? 'NON_CONFORME'
+          : 'A_CONFIRMER'; // unprocessed / type inconnu / UNKNOWN — regroupé avec "à confirmer"
     const chain = Array.isArray(e._rule_trace) && e._rule_trace.length
       ? e._rule_trace.map(t => t.rule_id).join(' → ')
       : '—';

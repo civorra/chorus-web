@@ -39,6 +39,95 @@ function fileExists(p) {
   try { fs.accessSync(p); return true; } catch { return false; }
 }
 
+// ── Parsing import-report-*.org (historique multi-imports) ───────────────
+//
+// Format produit par chorus-import-project.md (header #+KEY: value + table
+// "Résumé" en org-table pipe) — cf. import-report-003/004/005.org dans
+// workspace/<entity>/reports/. Un seul import-report par invocation ; le
+// même #+OUTPUT peut apparaître dans plusieurs rapports successifs
+// (ré-imports/patches du même projet), d'où le besoin d'agréger par slug
+// plutôt que de ne garder que le dernier (contrairement à _import, qui lui
+// ne porte que l'état du JSON produit par le DERNIER import).
+//
+// Tolérant : les 3 rapports connus (003/004/005) n'ont pas tous le même
+// jeu de lignes dans leur table Résumé (ex: "Éléments produits dans
+// elements[]" présent dans -005, absent dans -003/-004 sous ce libellé
+// exact) — chaque champ est extrait indépendamment et vaut `null` s'il est
+// absent, plutôt que de faire échouer le parsing entier.
+
+function parseImportReportOrg(content) {
+  const header = {};
+  for (const m of content.matchAll(/^#\+([A-Z_]+):\s*(.+)$/gm)) {
+    header[m[1]] = m[2].trim();
+  }
+
+  // Table "Résumé" — première table pipe rencontrée après le header.
+  const summary = {};
+  const lines = content.split('\n');
+  for (const line of lines) {
+    const m = line.match(/^\s*\|\s*(.+?)\s*\|\s*(.+?)\s*\|\s*$/);
+    if (!m) continue;
+    const [, key, val] = m;
+    if (/^-+$/.test(key.replace(/\|/g, ''))) continue; // ligne séparatrice
+    summary[key] = val;
+  }
+
+  const findSummary = (re) => {
+    const k = Object.keys(summary).find(k => re.test(k));
+    return k ? summary[k] : null;
+  };
+
+  const toInt = (v) => {
+    if (v == null) return null;
+    const m = String(v).match(/-?\d+/);
+    return m ? parseInt(m[0], 10) : null;
+  };
+
+  return {
+    date:        header.DATE || null,
+    source:      header.SOURCE || null,
+    output:      header.OUTPUT || null,
+    mode:        header.MODE || null,
+    extension:   header.EXTENSION || null,
+    frames:      toInt(findSummary(/Éléments produits/i))
+               ?? toInt(findSummary(/Alignement direct/i)),
+    aConfirmer:  toInt(findSummary(/_a_confirmer/i)),
+    gaps:        toInt(findSummary(/Gaps/i)),
+  };
+}
+
+// Historique d'import pour un projet donné (slug) — agrège tous les
+// import-report-*.org de reports/ dont #+OUTPUT référence ce slug (par
+// sous-chaîne, comme le reste du filtrage reports/<projet> de ce module),
+// triés chronologiquement (plus ancien en premier — le HTML les affiche
+// ensuite en ordre inverse, le plus récent en tête).
+
+function collectImportHistory(reportsDir, slug) {
+  let files = [];
+  try {
+    files = fs.readdirSync(reportsDir)
+      .filter(f => f.startsWith('import-report-') && f.endsWith('.org'))
+      .sort();
+  } catch { return []; }
+
+  const entries = [];
+  for (const f of files) {
+    const content = readFileSafe(path.join(reportsDir, f));
+    if (!content) continue;
+    const parsed = parseImportReportOrg(content);
+    if (!parsed.output || !parsed.output.includes(slug)) continue;
+    entries.push({
+      date:    parsed.date,
+      version: parsed.mode,
+      frames:  parsed.frames,
+      model:   parsed.extension,
+      note:    parsed.source ? `Source : ${parsed.source}` : null,
+      file:    f,
+    });
+  }
+  return entries;
+}
+
 // ── Parsing org-mode minimal (tables, headings) ───────────────
 //
 // Pas un parseur org complet — juste ce qu'il faut pour extraire les tables
@@ -746,6 +835,14 @@ function scanFlatProject(entityPath, slug, jsonFile, runReportIndex) {
   // seule forme stable pour matcher contre le thesaurus (qui référence tantôt
   // le .json final, tantôt le .md/.docx d'origine — jamais le chemin complet).
   let sourceFile = null;
+  // Historique d'import (onglet "Import" de la vue projet — chorus-web.html
+  // § pvSwitchTab lit proj.imports). Priorité 1 : agrégation des
+  // import-report-*.org de reports/ (un par invocation de
+  // chorus-import-project, cf. collectImportHistory) — couvre les
+  // ré-imports/patches successifs du même projet. Priorité 2 (fallback) :
+  // l'entrée unique _import du JSON produit, si aucun .org ne correspond
+  // (sandbox legacy / projet créé autrement que via chorus-import-project).
+  let imports = collectImportHistory(reportsDir, slug);
   try {
     const projJson = JSON.parse(readFileSafe(jsonFile) || '{}');
     const imp = projJson._import || {};
@@ -753,7 +850,16 @@ function scanFlatProject(entityPath, slug, jsonFile, runReportIndex) {
       || (Array.isArray(imp.sources) ? imp.sources[0] : null)
       || (Array.isArray(imp._sources) ? imp._sources[0] : null)
       || null;
-  } catch { /* JSON invalide ou _import absent — sourceFile reste null */ }
+    if (!imports.length && imp && Object.keys(imp).length) {
+      imports = [{
+        date:   imp.import_date || null,
+        version: imp.mode || null,
+        frames:  imp.total_elements_resolved ?? imp.total_direct ?? null,
+        model:   imp.extension_used || null,
+        note:    imp.note || imp._duplicate_warning || null,
+      }];
+    }
+  } catch { /* JSON invalide ou _import absent — sourceFile reste vide */ }
   const sourceBasename = sourceFile
     ? path.basename(sourceFile).replace(/\.[^.]+$/, '')
     : null;
@@ -775,6 +881,7 @@ function scanFlatProject(entityPath, slug, jsonFile, runReportIndex) {
     reportData:  reportData,
     checkReports,
     runEntries,   // all run-reports (array, chronological)
+    imports,      // historique d'import (cf. commentaire ci-dessus — collectImportHistory + fallback _import)
     norm:        reportData?.norm || null,
   };
 }
