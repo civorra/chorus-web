@@ -134,10 +134,84 @@ async function promptAndWait(chatId, message, { pollIntervalMs = 300, timeoutMs 
  * handlers:
  *   onChunk(text)              — assistant text fragment (stream token)
  *   onAsk({ question, toolId })— ECA issued an ask_user tool call
- *   onToolLog(summary)         — tool call summary for progress display
+ *   onToolLog(toolInfo)        — structured tool call info for progress display,
+ *                                see classifyToolCall() for the shape
  *   onDone()                   — chat reached 'idle' status
  *   onError(err)               — network or parse error
  */
+
+// ── Tool call classification ────────────────────────────────────────────
+// Regroupe les ~15 outils ECA en familles affichables (icône + couleur côté
+// frontend) plutôt que de relayer un résumé texte opaque. Les noms d'outils
+// sont préfixés "eca__" côté serveur ECA — on matche sur le nom nu.
+const TOOL_FAMILIES = {
+  eca__read_file:          { family: 'read',  icon: '📖', label: 'Lecture' },
+  eca__grep:               { family: 'read',  icon: '🔎', label: 'Recherche' },
+  eca__directory_tree:     { family: 'read',  icon: '🌳', label: 'Arborescence' },
+  eca__editor_diagnostics: { family: 'read',  icon: '🩺', label: 'Diagnostics' },
+  eca__edit_file:          { family: 'edit',  icon: '✏️', label: 'Édition' },
+  eca__write_file:         { family: 'edit',  icon: '📝', label: 'Écriture' },
+  eca__move_file:          { family: 'edit',  icon: '📦', label: 'Déplacement' },
+  eca__shell_command:      { family: 'shell', icon: '💻', label: 'Commande shell' },
+  eca__git:                { family: 'git',   icon: '🌿', label: 'Git' },
+  // ⚠️ Nom réel observé dans le payload serveur : "spawn_agent" (sans
+  // préfixe "eca__", contrairement aux autres outils) — confirmé en
+  // conditions réelles via content.name sur un vrai toolCalled/toolCallRun.
+  spawn_agent:             { family: 'agent', icon: '🤖', label: 'Sous-agent' },
+  eca__task:               { family: 'task',  icon: '🗂️', label: 'Tâche' },
+  eca__skill:              { family: 'skill', icon: '📘', label: 'Skill' },
+};
+const DEFAULT_FAMILY = { family: 'other', icon: '⚙', label: 'Outil' };
+
+/** Extrait un libellé court et pertinent depuis les arguments d'un tool call. */
+function toolArgHint(name, args) {
+  if (!args) return '';
+  if (args.path) return args.path;
+  if (args.source && args.destination) return `${args.source} → ${args.destination}`;
+  if (args.command) return args.command.length > 80 ? args.command.slice(0, 80) + '…' : args.command;
+  if (args.pattern) return args.pattern;
+  if (args.agent) return `${args.agent}${args.activity ? ' — ' + args.activity : ''}`;
+  if (args.op) return args.op;
+  return '';
+}
+
+/**
+ * Construit un objet structuré { family, icon, label, name, hint, detail,
+ * isSubagent, agentName, subagentChatId, agentModel, agentStep } à partir
+ * d'un événement toolCalled/toolCallRun.
+ *
+ * Cas particulier "spawn_agent" : le serveur ECA fournit un bloc
+ * `content.details` dédié quand il s'agit d'un sous-agent, confirmé en
+ * conditions réelles :
+ *   details: { type: 'subagent', subagentChatId, agentName, model, step, maxSteps }
+ * On l'exploite pour permettre au frontend de distinguer visuellement
+ * (indentation, couleur, libellé "agent: explorer") un appel de sous-agent
+ * d'un tool-call standard — voir lvlTermAppendTool() dans chorus-web.html.
+ */
+function classifyToolCall(content) {
+  const meta = TOOL_FAMILIES[content.name] || DEFAULT_FAMILY;
+  const hint = toolArgHint(content.name, content.arguments);
+  const outputText = Array.isArray(content.outputs)
+    ? content.outputs.filter((o) => o.type === 'text').map((o) => o.text).join('\n')
+    : '';
+  const isSubagent = content.details?.type === 'subagent';
+  return {
+    family: meta.family,
+    icon:   meta.icon,
+    label:  meta.label,
+    name:   content.name,
+    hint,
+    summary: content.summary || `${meta.label}${hint ? ' — ' + hint : ''}`,
+    detail: outputText.slice(0, 4000),
+    isSubagent,
+    agentName:      isSubagent ? content.details.agentName : null,
+    subagentChatId: isSubagent ? content.details.subagentChatId : null,
+    agentModel:     isSubagent ? content.details.model : null,
+    agentStep:      isSubagent ? content.details.step : null,
+    agentMaxSteps:  isSubagent ? content.details.maxSteps : null,
+  };
+}
+
 function subscribeEcaEvents(chatId, { onChunk, onAsk, onToolLog, onDone, onError } = {}) {
   const base = new URL(ECA_SERVER_URL);
   let resolvePromise, rejectPromise;
@@ -192,7 +266,7 @@ function subscribeEcaEvents(chatId, { onChunk, onAsk, onToolLog, onDone, onError
                     || content.outputs?.[0]?.text || '(question ECA)';
                   if (onAsk) onAsk({ question, toolId: content.id, isApproval: false });
                 } else if (onToolLog) {
-                  onToolLog(content.summary || `[tool] ${content.name}`);
+                  onToolLog(classifyToolCall(content));
                 }
               }
             }

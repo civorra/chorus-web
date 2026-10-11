@@ -848,6 +848,14 @@ input, select, textarea { font-family: inherit; }
   font-size: 13px; font-weight: 600; color: var(--text-primary);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
+.isp-sim-badge {
+  display: inline-block; margin-left: 8px;
+  font-size: 9px; font-weight: 700; letter-spacing: 0.03em;
+  color: #D29922; background: rgba(210,153,34,0.12);
+  border: 1px solid rgba(210,153,34,0.4);
+  border-radius: 4px; padding: 2px 6px; vertical-align: middle;
+  font-family: 'JetBrains Mono', monospace; cursor: help;
+}
 .isp-header-sub {
   font-size: 11px; color: var(--text-muted); margin-top: 2px;
   font-family: 'JetBrains Mono', monospace;
@@ -1229,10 +1237,56 @@ input, select, textarea { font-family: inherit; }
 }
 .lvl-term-fold-toggle:hover { color: #58A6FF; }
 .eca-session-line.foldable { white-space: pre-wrap; }
+.eca-tool-line {
+  padding: 3px 14px 3px 10px;
+  margin: 1px 0;
+}
+.eca-tool-head {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 11px;
+}
+.eca-tool-icon { font-size: 11px; }
+.eca-tool-label { font-weight: 600; white-space: nowrap; }
+.eca-tool-summary {
+  color: #8B949E; overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; flex: 1; min-width: 0;
+}
+.eca-tool-chevron { color: #484F58; font-size: 10px; }
+.eca-tool-detail {
+  margin: 4px 0 2px 20px; padding: 6px 10px;
+  background: #0A1420; border: 1px solid #1E2D40; border-radius: 4px;
+  font-size: 10.5px; color: #8B949E; max-height: 220px; overflow-y: auto;
+  white-space: pre-wrap; word-break: break-word;
+}
+.eca-tool-detail.hidden { display: none; }
+
+/* ── Sous-agents (spawn_agent) — indentation + libellé dédié ─────────── */
+.eca-subagent-line {
+  margin-left: 18px;
+  background: rgba(179,136,255,0.05);
+  border-radius: 0 4px 4px 0;
+}
+.eca-subagent-tag {
+  font-weight: 700; font-size: 10.5px;
+  border: 1px solid; border-radius: 10px;
+  padding: 1px 8px; white-space: nowrap;
+  font-family: 'JetBrains Mono', monospace;
+}
+.eca-subagent-step {
+  font-size: 9.5px; color: #8B949E;
+  font-family: 'JetBrains Mono', monospace;
+  margin-left: 2px;
+}
+
 /* Séparateurs entre échanges */
 .lvl-term-sep {
   border: none; border-top: 1px solid #1A2535;
   margin: 6px 0;
+}
+.lvl-term-restore-sep {
+  text-align: center; font-size: 10px; color: #4E6A8A;
+  padding: 8px 0; margin: 4px 0;
+  border-top: 1px dashed #1E2D40; border-bottom: 1px dashed #1E2D40;
 }
 
 /* ── Markdown rendering ── */
@@ -1645,6 +1699,41 @@ input, select, textarea { font-family: inherit; }
 .svc-pill.online   .svc-dot { background: var(--success); animation: pulse 2s infinite; }
 .svc-pill.offline  .svc-dot { background: var(--error); }
 
+/* ── Badge + dropdown : sessions ECA terminal actives ────────────────── */
+#eca-active-terminals-badge {
+  background: rgba(78,155,245,0.1); border-color: #4E9BF5; color: #4E9BF5;
+}
+#eca-active-terminals-panel {
+  position: fixed; top: 46px; right: 16px; z-index: 1000;
+  width: 340px; max-height: 60vh; overflow-y: auto;
+  background: var(--bg-surface); border: 1px solid var(--border);
+  border-radius: 10px; box-shadow: 0 8px 32px rgba(0,0,0,.35);
+}
+#eca-active-terminals-panel .eat-header {
+  padding: 10px 14px; border-bottom: 1px solid var(--border);
+  font-size: 12px; font-weight: 600; color: var(--text-secondary);
+}
+.eat-item {
+  padding: 8px 14px; border-bottom: 1px solid var(--border);
+  cursor: pointer; font-size: 11.5px;
+}
+.eat-item:hover { background: var(--bg-hover, rgba(255,255,255,.04)); }
+.eat-item:last-child { border-bottom: none; }
+.eat-item-top { display: flex; align-items: center; gap: 6px; }
+.eat-item-level {
+  font-family: 'JetBrains Mono', monospace; font-size: 9px;
+  padding: 1px 6px; border-radius: 4px;
+  background: rgba(78,155,245,0.15); color: #4E9BF5;
+}
+.eat-item-sb { font-weight: 600; color: var(--text-primary); flex: 1; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.eat-item-elapsed { font-size: 10px; color: var(--text-muted); font-family: 'JetBrains Mono', monospace; }
+.eat-item-msg {
+  margin-top: 3px; color: var(--text-muted); font-size: 10.5px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.eat-empty { padding: 16px 14px; color: var(--text-muted); font-size: 11.5px; text-align: center; }
+
 /* ECA-web panel (Remote session viewer) */
 .eca-web-panel {
   margin: 8px 0; border-radius: 10px; overflow: hidden;
@@ -1917,7 +2006,14 @@ input, select, textarea { font-family: inherit; }
         <div class="svc-dot"></div>
         <span>ECA :7777</span>
       </div>
+      <div class="svc-pill" id="eca-active-terminals-badge" hidden
+           title="Sessions ECA actives — cliquez pour voir le détail"
+           onclick="toggleActiveTerminalsPanel()" style="cursor:pointer;position:relative">
+        <div class="svc-dot" style="background:#4E9BF5;animation:pulse 2s infinite"></div>
+        <span id="eca-active-terminals-count">0 session active</span>
+      </div>
     </div>
+    <div id="eca-active-terminals-panel" hidden></div>
     <div class="engine-badge" style="margin-left:8px">engine v2.1 · LIVE</div>
     <button onclick="openSettings()" title="Configuration" style="margin-left:10px;background:none;border:1px solid var(--border);border-radius:6px;color:var(--text-secondary);cursor:pointer;padding:4px 8px;font-size:15px;line-height:1;display:flex;align-items:center" onmouseover="this.style.borderColor='var(--accent)';this.style.color='var(--accent)'" onmouseout="this.style.borderColor='var(--border)';this.style.color='var(--text-secondary)'">⚙️</button>
   </header>
@@ -2102,18 +2198,18 @@ input, select, textarea { font-family: inherit; }
     <div class="cm-stats" id="sbc-stats"></div>
     <!-- Tabs internes -->
     <div style="display:flex;gap:0;border-bottom:1px solid var(--border);padding:0 20px;flex-shrink:0">
-      <button class="rv-filter-btn active" id="sbc-tab-overview" onclick="switchSbcTab('overview')" style="border-radius:0;border:none;border-bottom:2px solid var(--accent);padding:8px 16px">Vue d'ensemble</button>
-      <button class="rv-filter-btn" id="sbc-tab-corpus" onclick="switchSbcTab('corpus')" style="border-radius:0;border:none;border-bottom:2px solid transparent;padding:8px 16px">Corpus</button>
+      <button class="rv-filter-btn active" id="sbc-tab-corpus" onclick="switchSbcTab('corpus')" style="border-radius:0;border:none;border-bottom:2px solid var(--accent);padding:8px 16px">Sources</button>
+      <button class="rv-filter-btn" id="sbc-tab-overview" onclick="switchSbcTab('overview')" style="border-radius:0;border:none;border-bottom:2px solid transparent;padding:8px 16px">Knowledge Base</button>
       <button class="rv-filter-btn" id="sbc-tab-agents" onclick="switchSbcTab('agents')" style="border-radius:0;border:none;border-bottom:2px solid transparent;padding:8px 16px">Agents</button>
-      <button class="rv-filter-btn" id="sbc-tab-frames" onclick="switchSbcTab('frames')" style="border-radius:0;border:none;border-bottom:2px solid transparent;padding:8px 16px">Pipeline &amp; KB</button>
-    </div>
-    <!-- Panel: Vue d'ensemble (synthèse structurelle README.org + stats pipeline) -->
-    <div id="sbc-panel-overview" style="flex:1;overflow-y:auto;padding:16px 20px">
-      <div id="sbc-overview-content"></div>
+      <button class="rv-filter-btn" id="sbc-tab-frames" onclick="switchSbcTab('frames')" style="border-radius:0;border:none;border-bottom:2px solid transparent;padding:8px 16px">Pipeline</button>
     </div>
     <!-- Panel: Corpus (fichiers sources + mapping agents, agent/chorus/index.org) -->
-    <div id="sbc-panel-corpus" style="flex:1;overflow-y:auto;padding:16px 20px;display:none">
+    <div id="sbc-panel-corpus" style="flex:1;overflow-y:auto;padding:16px 20px">
       <div id="sbc-corpus-list"></div>
+    </div>
+    <!-- Panel: Vue d'ensemble (synthèse structurelle README.org + stats pipeline) -->
+    <div id="sbc-panel-overview" style="flex:1;overflow-y:auto;padding:16px 20px;display:none">
+      <div id="sbc-overview-content"></div>
     </div>
     <!-- Panel: Agents (vue légère — une carte par agent) -->
     <div id="sbc-panel-agents" style="flex:1;overflow-y:auto;padding:16px 20px;display:none">
@@ -2136,7 +2232,9 @@ input, select, textarea { font-family: inherit; }
     <div class="isp-header">
       <div class="isp-header-icon">📥</div>
       <div class="isp-header-info">
-        <div class="isp-header-title" id="isp-title">Import — nouveau projet</div>
+        <div class="isp-header-title" id="isp-title">Import — nouveau projet
+          <span class="isp-sim-badge" title="Parcours illustratif — n'exécute aucune commande ECA réelle. Pour une vraie session ECA interactive, utilisez le bouton 🖥️ Terminal ECA.">● APERÇU SIMULÉ</span>
+        </div>
         <div class="isp-header-sub" id="isp-sub">chorus-import-project · architect</div>
       </div>
       <button class="isp-close" onclick="closeImportSession()" title="Fermer">✕</button>
@@ -2159,18 +2257,18 @@ input, select, textarea { font-family: inherit; }
             <div class="eca-dot yellow" style="width:9px;height:9px"></div>
             <div class="eca-dot green" style="width:9px;height:9px"></div>
           </div>
-          <div class="eca-web-addr" id="eca-web-addr">web.eca.dev</div>
+          <div class="eca-web-addr" id="eca-web-addr">aperçu simulé</div>
           <button onclick="toggleEcaWeb()" style="background:none;border:none;color:#2A4A6A;font-size:11px;cursor:pointer;font-family:'JetBrains Mono',monospace" id="eca-web-toggle-btn">▼ collapse</button>
         </div>
         <div id="eca-web-body" class="eca-web-body">
           <div class="eca-web-toolbar">
-            <span style="color:#1E5080">⚡ ECA Remote Session</span>
+            <span style="color:#1E5080">⚡ Aperçu de session (démo, non connecté)</span>
             <div class="eca-web-session-id" id="eca-web-session-id">session: —</div>
             <span style="flex:1"></span>
             <span id="eca-web-model-label" style="color:#2A6080">model: —</span>
           </div>
           <div class="eca-web-content" id="eca-web-log">
-            <div style="color:#1E3A5F">Connexion au serveur ECA (ws://localhost:7777)…</div>
+            <div style="color:#1E3A5F">Aperçu illustratif du déroulé — aucune connexion réelle au serveur ECA.</div>
           </div>
           <div class="eca-web-status-bar">
             <div class="eca-web-status-item">
@@ -2508,6 +2606,11 @@ input, select, textarea { font-family: inherit; }
           title="Annuler (Échap)"
           style="background:none;border:1px solid #EF4444;border-radius:4px;color:#EF4444;cursor:pointer;font-size:11px;font-family:'JetBrains Mono',monospace;padding:2px 8px;line-height:1.4;letter-spacing:.03em">
           ⏹ Stop
+        </button>
+        <button onclick="lvlTermClearHistoryConfirm()"
+          title="Effacer l'historique persisté de ce contexte (restauré automatiquement sinon à la prochaine ouverture)"
+          style="background:none;border:none;color:#4E6A8A;cursor:pointer;font-size:12px;line-height:1;padding:0 6px">
+          🗑
         </button>
         <button onclick="closeLevelTerminal()" style="background:none;border:none;color:#8B949E;cursor:pointer;font-size:14px;line-height:1;padding:0 2px">✕</button>
       </div>
@@ -5626,6 +5729,90 @@ function levelPromptLabel(ctx) {
   return 'chorus ?>';
 }
 
+// ── Persistance légère de l'historique du terminal ─────────────────────
+// Clé indexée sur le CONTEXTE (sandbox/entity/projet/rapport), pas sur
+// _lvlTermSessionId qui est régénéré à chaque ouverture — c'est précisément
+// ce qui permet de retrouver l'historique après une fermeture accidentelle
+// ou un refresh de page. On ne persiste QUE l'historique figé d'échanges
+// déjà terminés (event:done) : jamais pendant un streaming actif, pour
+// éviter toute tentative (hors-scope ici) de "reprendre" un flux SSE déjà
+// clos côté serveur à la fermeture de l'onglet.
+const LVL_TERM_HIST_PREFIX  = 'eca-term-hist:';
+const LVL_TERM_HIST_MAXCHAR = 60_000; // ~60 Ko bruts conservés par contexte
+const LVL_TERM_HIST_TTL_MS  = 7 * 24 * 3600 * 1000; // purge après 7 jours d'inactivité
+
+function lvlTermHistKey(ctx) {
+  if (!ctx) return null;
+  return LVL_TERM_HIST_PREFIX +
+    [ctx.sbId, ctx.level, ctx.entityId || '', ctx.projId || '', ctx.reportFile || ''].join(':');
+}
+
+/** Sauvegarde l'état courant de la sortie du terminal (HTML figé, hors
+ * curseur/lignes de frappe en cours) sous la clé de contexte. Tronque au
+ * besoin en ne gardant que la fin (les échanges les plus récents). */
+function lvlTermSaveHistory() {
+  const key = lvlTermHistKey(_lvlTermCtx);
+  const out = document.getElementById('lvl-term-output');
+  if (!key || !out) return;
+  let html = out.innerHTML;
+  if (html.length > LVL_TERM_HIST_MAXCHAR) {
+    html = html.slice(html.length - LVL_TERM_HIST_MAXCHAR);
+  }
+  try {
+    localStorage.setItem(key, JSON.stringify({ html, savedAt: Date.now() }));
+  } catch { /* quota localStorage dépassé — best-effort, pas bloquant */ }
+}
+
+/** Restaure (si présent et non expiré) l'historique précédent pour ce
+ * contexte, inséré juste après le message de bienvenue. Retourne true si
+ * une restauration a eu lieu (pour informer l'utilisateur visuellement). */
+function lvlTermRestoreHistory(ctx) {
+  const key = lvlTermHistKey(ctx);
+  if (!key) return false;
+  let raw;
+  try { raw = localStorage.getItem(key); } catch { return false; }
+  if (!raw) return false;
+  let parsed;
+  try { parsed = JSON.parse(raw); } catch { localStorage.removeItem(key); return false; }
+  if (!parsed || !parsed.html || (Date.now() - (parsed.savedAt || 0)) > LVL_TERM_HIST_TTL_MS) {
+    localStorage.removeItem(key);
+    return false;
+  }
+  const out = document.getElementById('lvl-term-output');
+  if (!out) return false;
+  const sep = document.createElement('div');
+  sep.className = 'lvl-term-restore-sep';
+  sep.textContent = `━━━ Historique restauré (dernière activité ${new Date(parsed.savedAt).toLocaleString('fr-FR')}) ━━━`;
+  out.appendChild(sep);
+  const wrap = document.createElement('div');
+  wrap.innerHTML = parsed.html;
+  out.appendChild(wrap);
+  out.scrollTop = out.scrollHeight;
+  return true;
+}
+
+/** Purge l'historique persisté pour un contexte donné (appelé à la
+ * fermeture explicite du terminal par l'utilisateur). */
+function lvlTermClearHistory(ctx) {
+  const key = lvlTermHistKey(ctx);
+  if (key) { try { localStorage.removeItem(key); } catch {} }
+}
+
+/** Handler du bouton 🗑 — efface l'historique persisté ET l'affichage
+ * courant du contexte actif, après confirmation (action non réversible). */
+function lvlTermClearHistoryConfirm() {
+  if (!_lvlTermCtx) return;
+  if (!confirm('Effacer définitivement l\'historique sauvegardé de ce terminal ?')) return;
+  lvlTermClearHistory(_lvlTermCtx);
+  const out = document.getElementById('lvl-term-output');
+  document.querySelectorAll('.lvl-term-restore-sep').forEach(el => {
+    // Supprime le séparateur de restauration et tout ce qu'il introduisait
+    let next = el.nextElementSibling;
+    el.remove();
+    if (next) next.remove();
+  });
+}
+
 function openLevelTerminal(level, ctx, autoCmd = null) {
   _lvlTermCtx = { level, ...ctx };
   _lvlTermHistory = [];
@@ -5692,6 +5879,7 @@ function openLevelTerminal(level, ctx, autoCmd = null) {
     t += 180;
   });
   setTimeout(() => {
+    lvlTermRestoreHistory(_lvlTermCtx);
     const input = document.getElementById('lvl-term-input');
     if (input) input.focus();
     // Auto-execute command if provided (chorus-check --summary/--explain)
@@ -5788,6 +5976,87 @@ function lvlTermAppend(text, cls = 'resp') {
   const line = document.createElement('div');
   line.className = `eca-session-line ${cls}`;
   line.textContent = text;
+  out.appendChild(line);
+  out.scrollTop = out.scrollHeight;
+  return line;
+}
+
+// Couleur de bordure par famille d'outil — cohérent avec la légende du
+// panneau terminal (lecture = neutre, édition = accent, shell = warn,
+// git = info, agent = violet pour bien distinguer un sous-agent spawné).
+const TOOL_FAMILY_COLOR = {
+  read:  '#4E6A8A',
+  edit:  '#58A6FF',
+  shell: '#D29922',
+  git:   '#3FB950',
+  agent: '#B388FF',
+  task:  '#8B949E',
+  skill: '#4E9BF5',
+  other: '#6E7B8A',
+};
+
+/**
+ * Affiche un tool-call enrichi (icône + famille + résumé), avec repli
+ * cliquable sur le détail complet (sortie de l'outil) quand disponible.
+ * `toolInfo` provient de eca-client.js#classifyToolCall — voir sa doc pour
+ * le détail des champs { family, icon, label, name, hint, summary, detail,
+ * isSubagent, agentName, subagentChatId, agentModel, agentStep }.
+ *
+ * Cas sous-agent (isSubagent === true, tool "spawn_agent") : rendu distinct
+ * — indentation visuelle + bordure plus épaisse + libellé "agent:<nom>"
+ * et étape courante, pour bien signaler qu'il s'agit d'une délégation vers
+ * un contexte isolé (sous-chat ECA dédié, subagentChatId) plutôt qu'un
+ * outil exécuté directement dans la conversation principale.
+ */
+function lvlTermAppendTool(toolInfo) {
+  const out = document.getElementById('lvl-term-output');
+  const color = TOOL_FAMILY_COLOR[toolInfo.family] || TOOL_FAMILY_COLOR.other;
+  const line = document.createElement('div');
+  line.className = toolInfo.isSubagent
+    ? 'eca-session-line dim eca-tool-line eca-subagent-line'
+    : 'eca-session-line dim eca-tool-line';
+  line.style.borderLeft = toolInfo.isSubagent ? `3px solid ${color}` : `2px solid ${color}`;
+
+  const hasDetail = !!(toolInfo.detail && toolInfo.detail.trim());
+  const head = document.createElement('div');
+  head.className = 'eca-tool-head';
+  head.style.cursor = hasDetail ? 'pointer' : 'default';
+
+  let labelHtml;
+  if (toolInfo.isSubagent) {
+    const stepHtml = toolInfo.agentStep
+      ? `<span class="eca-subagent-step">étape ${toolInfo.agentStep}${toolInfo.agentMaxSteps ? '/' + toolInfo.agentMaxSteps : ''}</span>`
+      : '';
+    labelHtml =
+      `<span class="eca-subagent-tag" style="color:${color};border-color:${color}">agent: ${escapeHtml(toolInfo.agentName || '?')}</span>` +
+      stepHtml;
+  } else {
+    labelHtml = `<span class="eca-tool-label" style="color:${color}">${toolInfo.label || 'Outil'}</span>`;
+  }
+
+  head.innerHTML =
+    `<span class="eca-tool-icon">${toolInfo.icon || '⚙'}</span>` +
+    labelHtml +
+    `<span class="eca-tool-summary">${escapeHtml(toolInfo.summary || toolInfo.name || '…')}</span>` +
+    (hasDetail ? `<span class="eca-tool-chevron">▸</span>` : '');
+  if (toolInfo.isSubagent && toolInfo.agentModel) {
+    head.title = `Sous-agent "${toolInfo.agentName}" — modèle ${toolInfo.agentModel}` +
+      (toolInfo.subagentChatId ? ` — chat ${toolInfo.subagentChatId}` : '');
+  }
+  line.appendChild(head);
+
+  if (hasDetail) {
+    const detail = document.createElement('pre');
+    detail.className = 'eca-tool-detail hidden';
+    detail.textContent = toolInfo.detail;
+    line.appendChild(detail);
+    head.onclick = () => {
+      detail.classList.toggle('hidden');
+      head.querySelector('.eca-tool-chevron').textContent =
+        detail.classList.contains('hidden') ? '▸' : '▾';
+    };
+  }
+
   out.appendChild(line);
   out.scrollTop = out.scrollHeight;
   return line;
@@ -5955,7 +6224,7 @@ async function levelTerminalExec(cmd) {
 
           } else if (evt === 'tool') {
             ensureThinkingRemoved();
-            lvlTermAppend(`⚙ ${data.summary || '…'}`, 'dim');
+            lvlTermAppendTool(data);
 
           } else if (evt === 'ask') {
             ensureThinkingRemoved();
@@ -6003,6 +6272,10 @@ async function levelTerminalExec(cmd) {
             const sep = document.createElement('hr');
             sep.className = 'lvl-term-sep';
             out.appendChild(sep);
+            // Persister l'échange figé (voir § Persistance légère de
+            // l'historique du terminal) — jamais pendant le streaming actif,
+            // uniquement une fois l'échange effectivement terminé.
+            lvlTermSaveHistory();
             // Un run.pl/chorus-check/chorus-complete-report lancé depuis ce
             // terminal ('project'/'report') peut avoir produit de nouveaux
             // rapports sur le filesystem — rescanner le sandbox pour que
@@ -6022,6 +6295,7 @@ async function levelTerminalExec(cmd) {
         const elapsed = Math.round((Date.now() - _lvlTermStartTs) / 1000);
         lvlTermAppend(`⏸ Session terminée (${elapsed}s)`, 'dim done-badge');
         doneShown = true;
+        lvlTermSaveHistory();
         if (ctx.level === 'project' || ctx.level === 'report') {
           refreshSandboxReports(ctx.sbId);
         }
@@ -6922,7 +7196,7 @@ async function openSandboxCorpus() {
   document.getElementById('sbc-corpus-list').innerHTML = 'Chargement…';
   document.getElementById('sbc-agents-list').innerHTML = 'Chargement…';
   document.getElementById('sbc-frames-list').innerHTML = 'Chargement…';
-  switchSbcTab('overview');
+  switchSbcTab('corpus');
   document.getElementById('sb-corpus-overlay').hidden = false;
 
   let data = null;
@@ -7990,6 +8264,103 @@ async function bootServices() {
   await Promise.all([refreshEcaStatus(), refreshAuthStatus()]);
   // Re-vérifie périodiquement (détecte un eca-server qui tombe/revient).
   setInterval(refreshEcaStatus, 30000);
+  // Badge "sessions ECA actives" — polling léger, indépendant du statut
+  // online/offline du serveur (purement informatif, ne modifie rien).
+  refreshActiveTerminals();
+  setInterval(refreshActiveTerminals, 8000);
+}
+
+let _activeTerminalsCache = [];
+
+async function refreshActiveTerminals() {
+  try {
+    const r = await fetch(`${API}/api/terminals/active`);
+    const data = await r.json();
+    _activeTerminalsCache = (data && data.sessions) || [];
+  } catch { _activeTerminalsCache = []; }
+
+  const badge = document.getElementById('eca-active-terminals-badge');
+  const count = document.getElementById('eca-active-terminals-count');
+  if (!badge || !count) return;
+  const n = _activeTerminalsCache.length;
+  badge.hidden = n === 0;
+  count.textContent = n === 1 ? '1 session active' : `${n} sessions actives`;
+
+  // Si le panneau est ouvert, le garder synchronisé en live.
+  const panel = document.getElementById('eca-active-terminals-panel');
+  if (panel && !panel.hidden) renderActiveTerminalsPanel();
+}
+
+function toggleActiveTerminalsPanel() {
+  const panel = document.getElementById('eca-active-terminals-panel');
+  if (!panel) return;
+  panel.hidden = !panel.hidden;
+  if (!panel.hidden) {
+    renderActiveTerminalsPanel();
+    setTimeout(() => document.addEventListener('click', _eatOutsideClickHandler), 0);
+  } else {
+    document.removeEventListener('click', _eatOutsideClickHandler);
+  }
+}
+
+function _eatOutsideClickHandler(e) {
+  const panel = document.getElementById('eca-active-terminals-panel');
+  const badge = document.getElementById('eca-active-terminals-badge');
+  if (!panel || panel.hidden) return;
+  if (panel.contains(e.target) || badge.contains(e.target)) return;
+  panel.hidden = true;
+  document.removeEventListener('click', _eatOutsideClickHandler);
+}
+
+function fmtElapsed(ms) {
+  if (ms == null) return '—';
+  const s = Math.round(ms / 1000);
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  return `${m}m${String(s % 60).padStart(2, '0')}`;
+}
+
+/**
+ * Rend la liste des sessions ECA actives. Chaque entrée navigue vers le
+ * sandbox concerné au clic (selectSandbox) — on ne peut PAS rouvrir/
+ * rattacher le flux SSE déjà en cours ailleurs (c'est une requête HTTP
+ * streamée propre à l'onglet/fenêtre qui l'a ouverte, pas un canal pub/sub
+ * indépendant) : ce badge est informatif + navigation contextuelle, pas une
+ * vraie reprise de connexion sur un flux existant.
+ */
+function renderActiveTerminalsPanel() {
+  const panel = document.getElementById('eca-active-terminals-panel');
+  if (!panel) return;
+  const sessions = _activeTerminalsCache;
+
+  if (!sessions.length) {
+    panel.innerHTML = `<div class="eat-header">Sessions ECA actives</div><div class="eat-empty">Aucune session en cours.</div>`;
+    return;
+  }
+
+  const levelLabel = { sandbox: 'sandbox', entity: 'entity', project: 'projet', report: 'rapport' };
+  const items = sessions.map(s => {
+    const target = s.entityId ? `${s.sbId}/${s.entityId}${s.projId ? '/' + s.projId : ''}` : s.sbId;
+    return `
+      <div class="eat-item" onclick="goToActiveTerminal('${s.sbId}')">
+        <div class="eat-item-top">
+          <span class="eat-item-level">${levelLabel[s.level] || s.level}</span>
+          <span class="eat-item-sb">${target}</span>
+          <span class="eat-item-elapsed">${fmtElapsed(s.elapsedMs)}</span>
+        </div>
+        ${s.lastMessage ? `<div class="eat-item-msg">${escapeHtml(s.lastMessage)}</div>` : ''}
+      </div>`;
+  }).join('');
+
+  panel.innerHTML = `<div class="eat-header">Sessions ECA actives (${sessions.length})</div>${items}`;
+}
+
+/** Navigue vers le sandbox d'une session active — ne rouvre pas le terminal
+ * lui-même (voir note dans renderActiveTerminalsPanel) mais place l'utilisateur
+ * au bon endroit pour en ouvrir un nouveau ou attendre la fin de l'actuel. */
+function goToActiveTerminal(sbId) {
+  document.getElementById('eca-active-terminals-panel').hidden = true;
+  selectSandbox(sbId);
 }
 
 async function refreshEcaStatus() {
@@ -8107,44 +8478,44 @@ function ecaWebLog(html) {
 }
 
 async function initEcaWebPanel(proj, sbId, model) {
-  const sessionId = 'eca-' + Math.random().toString(36).slice(2,8);
+  const sessionId = 'demo-' + Math.random().toString(36).slice(2,8);
   const latency   = Math.floor(Math.random()*8)+2;
 
-  document.getElementById('eca-web-addr').textContent = 'web.eca.dev → ws://localhost:7777';
+  document.getElementById('eca-web-addr').textContent = 'aperçu simulé — non connecté';
   document.getElementById('eca-web-session-id').textContent = 'session: ' + sessionId;
   document.getElementById('eca-web-model-label').textContent = 'model: ' + model;
   document.getElementById('eca-web-skill').textContent = 'chorus-import-project';
-  document.getElementById('eca-web-latency').textContent = latency + 'ms';
+  document.getElementById('eca-web-latency').textContent = latency + 'ms (simulé)';
 
   const log = document.getElementById('eca-web-log');
   if (log) log.innerHTML = '';
 
   await delay(300);
-  ecaWebLog(`<span class="eca-web-streaming">[ECA] Handshake WS → ws://localhost:7777 ✓</span>`);
+  ecaWebLog(`<span class="eca-web-streaming">[aperçu] Déroulé illustratif — aucune requête réelle envoyée au serveur ECA</span>`);
   await delay(300);
-  ecaWebLog(`<span class="eca-web-streaming">[ECA] Session ouverte : <span style="color:#4E9BF5">${sessionId}</span></span>`);
+  ecaWebLog(`<span class="eca-web-streaming">[aperçu] Séquence : <span style="color:#4E9BF5">${sessionId}</span></span>`);
   await delay(200);
-  ecaWebLog(`<span class="eca-web-ok">[ECA] Skill <strong>chorus-import-project</strong> dispatché → agent architect</span>`);
+  ecaWebLog(`<span class="eca-web-ok">[aperçu] Skill illustré : <strong>chorus-import-project</strong> (agent architect)</span>`);
   await delay(150);
-  ecaWebLog(`<span style="color:#2A5A8A">[ECA] LLM provider : ${model.includes('opus') ? 'Anthropic' : 'Anthropic'} → ${model}</span>`);
+  ecaWebLog(`<span style="color:#2A5A8A">[aperçu] Modèle affiché à titre indicatif : ${model}</span>`);
 
   // Update status dot
   document.getElementById('eca-web-dot').style.background = '#10B981';
   document.getElementById('eca-web-dot').style.animation  = 'pulse 2s infinite';
-  document.getElementById('eca-web-status').textContent = 'streaming';
+  document.getElementById('eca-web-status').textContent = 'aperçu (démo)';
 }
 
 function ecaWebPhase(phase) {
-  ecaWebLog(`<span class="eca-web-streaming">[ECA] Phase: <strong style="color:#6AB0E0">${phase}</strong></span>`);
+  ecaWebLog(`<span class="eca-web-streaming">[aperçu] Phase: <strong style="color:#6AB0E0">${phase}</strong></span>`);
   const log = document.getElementById('eca-web-log');
   if (log) log.scrollTop = log.scrollHeight;
 }
 
 function ecaWebDone() {
-  ecaWebLog(`<span class="eca-web-ok">[ECA] Session terminée — skill completed ✓</span>`);
+  ecaWebLog(`<span class="eca-web-ok">[aperçu] Fin du déroulé illustratif ✓ (aucune action réelle effectuée)</span>`);
   document.getElementById('eca-web-dot').style.animation = 'none';
   document.getElementById('eca-web-dot').style.background = '#10B981';
-  document.getElementById('eca-web-status').textContent = 'completed';
+  document.getElementById('eca-web-status').textContent = 'terminé (démo)';
 }
 
 // ─── PIPELINE ECA-DISPATCH LOGS ──────────────────────────────

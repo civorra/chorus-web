@@ -636,6 +636,31 @@ app.post('/api/sandboxes/:sbId/entities/:entityId/projects/:projId/chat', async 
 const activeTerminals = new Map();
 
 // ═════════════════════════════════════════════════════════════
+// ROUTE 5bis-0 — GET /api/terminals/active
+//
+// Expose l'état de activeTerminals pour un badge global côté frontend
+// ("🖥 N session(s) ECA actives"), cliquable pour retrouver/rouvrir un
+// terminal en cours sans devoir se souvenir du sandbox/niveau où il a été
+// lancé. Lecture seule — ne modifie rien, pas de risque de concurrence
+// avec /terminal/stop ou /terminal/respond.
+// ═════════════════════════════════════════════════════════════
+
+app.get('/api/terminals/active', (req, res) => {
+  const sessions = Array.from(activeTerminals.entries()).map(([sessionId, t]) => ({
+    sessionId,
+    sbId:        t.sbId,
+    level:       t.level,
+    entityId:    t.entityId || null,
+    projId:      t.projId || null,
+    reportFile:  t.reportFile || null,
+    startedAt:   t.startedAt || null,
+    elapsedMs:   t.startedAt ? Date.now() - t.startedAt : null,
+    lastMessage: t.lastMessage || null,
+  }));
+  res.json({ ok: true, count: sessions.length, sessions });
+});
+
+// ═════════════════════════════════════════════════════════════
 // ROUTE 5bis — POST /api/sandboxes/:sbId/terminal  (SSE streaming)
 //
 // Backend du "🖥️ Terminal ECA" générique (niveaux sandbox / entity /
@@ -758,12 +783,16 @@ app.post('/api/sandboxes/:sbId/terminal', (req, res) => {
     const { req: sReq, done } = eca.subscribeEcaEvents(chatId, {
       onChunk:   (text) => { if (!finished) sseSend(res, 'chunk', { text }); },
       onAsk:     (payload) => { if (!finished) sseSend(res, 'ask', payload); },
-      onToolLog: (summary) => { if (!finished) sseSend(res, 'tool', { summary }); },
+      onToolLog: (toolInfo) => { if (!finished) sseSend(res, 'tool', toolInfo); },
       onDone:    () => { clearTimeout(timeoutHandle); finish(); },
       onError:   (err) => { clearTimeout(timeoutHandle); finish(`ECA events: ${err.message}`); },
     });
     subReq = sReq;
-    activeTerminals.set(sessionId, { finish, chatId });
+    activeTerminals.set(sessionId, {
+      finish, chatId, sbId, level, entityId, projId, reportFile,
+      startedAt: Date.now(),
+      lastMessage: message.length > 160 ? message.slice(0, 160) + '…' : message,
+    });
 
     // ── Send the prompt ────────────────────────────────────────────────
     try {
