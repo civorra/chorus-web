@@ -249,7 +249,41 @@ function parseSandboxReadme(sbPath) {
           label = rest.replace(/\([^)]*\)$/, '').trim();
           detail = (rest.match(/\(([^)]*)\)$/) || [])[1] || '';
         }
-        coverageEntries.push({ status: statusIcon, kind, label, detail });
+
+        // ── Corps de l'entrée (jusqu'au prochain ** ou * niveau 1) ──────
+        // Capture optionnellement une ligne "Corpus : ..." (référence au
+        // fichier source) et le(s) sous-tableau(x) org à 2 colonnes
+        // (Section/Règle corpus → Règles générées, ou → Raison selon kind).
+        // Les en-têtes de colonnes varient librement selon les sandboxes —
+        // on les lit tels quels depuis la 1re ligne du tableau plutôt que
+        // de les figer par kind.
+        let corpusRef = null;
+        const detailRows = [];
+        let detailHeaders = null;
+        let j = i + 1;
+        for (; j < lines.length; j++) {
+          const bl = lines[j];
+          if (/^\*{2}\s+[\u2705\u23ed\u26d4✅⏭⛔]/.test(bl)) break; // prochaine entrée Coverage
+          if (/^\*\s+\S/.test(bl) && !/^\*\*/.test(bl)) break;      // section * niveau 1 suivante
+          const bt = bl.trim();
+          if (!bt) continue;
+          if (!corpusRef) {
+            const cm = bt.match(/^Corpus\s*:\s*(.+)/i);
+            if (cm) { corpusRef = cm[1].trim(); continue; }
+          }
+          if (!bt.startsWith('|')) continue;
+          if (/^\|[-+]+\|?$/.test(bt)) continue; // ligne séparatrice |---+---|
+          const cells = bt.split('|').slice(1, -1).map(c => c.trim());
+          if (!detailHeaders) { detailHeaders = cells; continue; } // 1re ligne = en-têtes
+          detailRows.push(cells);
+        }
+
+        coverageEntries.push({
+          status: statusIcon, kind, label, detail,
+          corpusRef,
+          detailHeaders: detailHeaders || null,
+          detailRows,
+        });
       }
     }
   }
@@ -270,6 +304,7 @@ function parseSandboxReadme(sbPath) {
   let enrichmentCount  = 0;
   let enrichmentLastDate = null;
   let bugsFixed        = 0;
+  let bugsTable        = null; // { headers, rows } — détail accordéon, cf. plus bas
   let finalValidation  = null;
   {
     const notesText = extractOrgSection(content, /^\*\s+Session notes/i, 0);
@@ -290,9 +325,33 @@ function parseSandboxReadme(sbPath) {
         const dates = dateMatches.map(m => m[1]).sort();
         enrichmentLastDate = dates[dates.length - 1];
       }
-      // Bugs résolus
-      const bugsMatch = notesText.match(/\*{2}\s+🐛\s+(\d+)\s+bugs?\s+bloquants/i);
-      if (bugsMatch) bugsFixed = parseInt(bugsMatch[1]);
+      // Bugs résolus — le heading "** 🐛 N bugs bloquants ..." est
+      // généralement suivi d'un tableau org détaillé (colonnes variables,
+      // ex. "# | Fichier | Bug | Correctif"). On capture ce tableau pour
+      // permettre un affichage accordéon (détail replié par défaut) côté
+      // webapp, sans alourdir le panneau "Vue d'ensemble".
+      const bugsMatch = notesText.match(/\*{2}\s+🐛\s+(\d+)\s+bugs?\s+bloquants[^\n]*/i);
+      if (bugsMatch) {
+        bugsFixed = parseInt(bugsMatch[1]);
+        const bugsHeadingIdx = notesText.indexOf(bugsMatch[0]);
+        const afterHeading = notesText.slice(bugsHeadingIdx + bugsMatch[0].length);
+        const bugsLines = afterHeading.split('\n');
+        const bugsTableHeaders = [];
+        const bugsTableRows = [];
+        for (const bl of bugsLines) {
+          const bt = bl.trim();
+          if (/^\*{2}\s+\S/.test(bt)) break; // heading suivant
+          if (!bt) { if (bugsTableRows.length) break; continue; } // table terminée
+          if (!bt.startsWith('|')) continue;
+          if (/^\|[-+]+\|?$/.test(bt)) continue; // ligne séparatrice
+          const cells = bt.split('|').slice(1, -1).map(c => c.trim());
+          if (!bugsTableHeaders.length) { bugsTableHeaders.push(...cells); continue; }
+          bugsTableRows.push(cells);
+        }
+        if (bugsTableRows.length) {
+          bugsTable = { headers: bugsTableHeaders, rows: bugsTableRows };
+        }
+      }
       // Résultat final
       const finalSection = (notesText.match(/\*{2}\s+Résultat final[\s\S]*?(?=\n\s*\*{2}\s|\n\s*\*\s[^*]|$)/) || [])[0] || '';
       const mSolved   = finalSection.match(/Pipeline\s*[:\-]\s*(SOLVED|FAILED)\s*(✅|❌)?/i);
@@ -311,7 +370,7 @@ function parseSandboxReadme(sbPath) {
     title, date, status, corpusTable,
     coverageEntries, coverageLastUpdate,
     agentStatusTable,
-    enrichmentCount, enrichmentLastDate, bugsFixed, finalValidation,
+    enrichmentCount, enrichmentLastDate, bugsFixed, bugsTable, finalValidation,
   };
 }
 
