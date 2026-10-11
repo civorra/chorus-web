@@ -809,6 +809,42 @@ app.post('/api/sandboxes/:sbId/terminal/stop', (req, res) => {
   }
 });
 
+// ═════════════════════════════════════════════════════════════
+// ROUTE 5quinquies — DELETE /api/sandboxes/:sbId/terminal
+//
+// Ferme définitivement le chat ECA d'une session de terminal — appelée
+// systématiquement par le frontend à la fermeture du panneau terminal
+// (closeLevelTerminal()), pour éviter l'accumulation de chats ECA jamais
+// clos côté eca-server (observé : des chats restaient en status "idle"/
+// "running" indéfiniment après fermeture du panneau, l'UI ne faisait que
+// masquer l'overlay sans jamais notifier le serveur).
+//
+// Body : { sessionId }
+// Réponse : { ok, deleted }
+//
+// Best-effort : si la suppression échoue (chat déjà absent, eca-server
+// indisponible), on répond quand même ok=true — fermer le panneau ne doit
+// jamais être bloqué par un échec de nettoyage côté serveur ECA.
+// ═════════════════════════════════════════════════════════════
+
+app.delete('/api/sandboxes/:sbId/terminal', async (req, res) => {
+  const { sbId } = req.params;
+  const { sessionId } = req.body || {};
+  if (!sessionId) return res.json({ ok: true, deleted: false });
+  const chatId = `eca-term-${sbId}-${sessionId}`;
+  // Annuler d'abord toute génération en cours pour cette session (même
+  // logique que ROUTE 5quater), sinon la suppression du chat pourrait
+  // intervenir pendant un stream encore ouvert côté eca-server.
+  const t = activeTerminals.get(sessionId);
+  if (t) t.finish('session terminal fermée par l\'utilisateur');
+  try {
+    await eca.ecaRequest(`/api/v1/chats/${encodeURIComponent(chatId)}`, 'DELETE');
+    res.json({ ok: true, deleted: true });
+  } catch (err) {
+    res.json({ ok: true, deleted: false, error: err.message });
+  }
+});
+
 // ── Lecture du run-report structuré (JSON natif produit par run.pl) ──────
 //
 // Donne accès aux données réelles par élément (verdict, motif, _rule_trace)

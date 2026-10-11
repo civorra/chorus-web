@@ -2979,6 +2979,30 @@ function sortReportsByDateDesc(reports) {
   });
 }
 
+// Génère les 2 icônes "mini-rapport" 📄 (summary) / 🔍 (explain) associées à
+// un run-report, cliquables si le fichier correspondant existe (r.synthese_file
+// / r.explain_file), grisées sinon avec un tooltip explicite. Pattern de
+// référence — initialement introduit dans renderReportsList (panneau pipeline),
+// généralisé ici pour être réutilisé par toutes les listes de rapports de la
+// webapp (page projet, historique, panneau pipeline).
+function reportMiniIcons(r, sbId, entityId, projId) {
+  const synBtn = r.synthese_file
+    ? `<button class="btn btn-ghost btn-sm" title="${r.synthese_file}"
+         onclick="openMdView('${sbId}','${entityId}','${projId}','${r.synthese_file}')"
+         style="font-size:13px;padding:2px 6px">📄</button>`
+    : `<span style="font-size:13px;opacity:.25;padding:2px 6px;cursor:default"
+         title="Pas de rapport --summary pour ce run">📄</span>`;
+
+  const expBtn = r.explain_file
+    ? `<button class="btn btn-ghost btn-sm" title="${r.explain_file}"
+         onclick="openMdView('${sbId}','${entityId}','${projId}','${r.explain_file}')"
+         style="font-size:13px;padding:2px 6px">🔍</button>`
+    : `<span style="font-size:13px;opacity:.25;padding:2px 6px;cursor:default"
+         title="Pas de rapport --explain pour ce run">🔍</span>`;
+
+  return `<div style="display:flex;gap:2px;align-items:center">${synBtn}${expBtn}</div>`;
+}
+
 const SANDBOX_ICONS = ['🔐','📜','🏗️','♿','🏥','☁️','⚖️','🌍','📋'];
 
 // Construit l'entrée { sandbox, entities, projects } attendue par
@@ -3256,9 +3280,14 @@ function pvReportButtons(r, proj, sbId) {
 
   const termBtn = `<button class="btn btn-ghost btn-sm" style="padding:2px 7px;font-size:10px;flex-shrink:0"
     title="Terminal ECA — ${r.label}"
-    onclick="openLevelTerminal('report',{sbId:'${sbId}',entityId:'${proj.entity}',projId:'${proj.id}',projName:'${safeProj}',reportFile:'${r.label}'})">🖥️</button>`;
+    onclick="openLevelTerminal('report',{sbId:'${sbId}',entityId:'${proj.entity}',projId:'${proj.id}',projName:'${safeProj}',reportFile:'${r.label}',explainFile:${r.explain_file ? `'${r.explain_file}'` : 'null'},syntheseFile:${r.synthese_file ? `'${r.synthese_file}'` : 'null'}})">🖥️</button>`;
 
-  return viewBtn + termBtn;
+  // Icônes 📄 summary / 🔍 explain — uniquement pertinentes sur une ligne de
+  // run-report (le fichier summary/explain lui-même n'a pas besoin de se
+  // référencer lui-même).
+  const miniIcons = isJson ? reportMiniIcons(r, sbId, proj.entity, proj.id) : '';
+
+  return miniIcons + viewBtn + termBtn;
 }
 
 // Génère le HTML d'une ligne rapport complète avec les mêmes boutons que le history modal.
@@ -4522,21 +4551,8 @@ function renderReportsList(reports) {
     // Index dans le tableau complet (pour openReportView)
     const fullIdx = reports.indexOf(r);
 
-    // Icône 📄 synthese — cliquable si fichier présent, grisée sinon
-    const synBtn = r.synthese_file
-      ? `<button class="btn btn-ghost btn-sm" title="${r.synthese_file}"
-           onclick="openMdView('${sbId}','${entityId}','${projId}','${r.synthese_file}')"
-           style="font-size:13px;padding:2px 6px">📄</button>`
-      : `<span style="font-size:13px;opacity:.25;padding:2px 6px;cursor:default"
-           title="Pas de rapport --summary pour ce run">📄</span>`;
-
-    // Icône 🔍 explain — cliquable si fichier présent, grisée sinon
-    const expBtn = r.explain_file
-      ? `<button class="btn btn-ghost btn-sm" title="${r.explain_file}"
-           onclick="openMdView('${sbId}','${entityId}','${projId}','${r.explain_file}')"
-           style="font-size:13px;padding:2px 6px">🔍</button>`
-      : `<span style="font-size:13px;opacity:.25;padding:2px 6px;cursor:default"
-           title="Pas de rapport --explain pour ce run">🔍</span>`;
+    // Icônes 📄 summary / 🔍 explain — cliquables si fichier présent, grisées sinon
+    const miniIcons = reportMiniIcons(r, sbId, entityId, projId);
 
     return `
     <div style="display:flex;align-items:center;gap:8px;padding:8px 12px;background:var(--bg-surface);border:1px solid var(--border);border-radius:6px">
@@ -4549,7 +4565,7 @@ function renderReportsList(reports) {
           ${r.date ? `&nbsp;·&nbsp;<span style="color:var(--text-muted)">${r.date}</span>` : ''}
         </div>
       </div>
-      <div style="display:flex;gap:2px;align-items:center">${synBtn}${expBtn}</div>
+      ${miniIcons}
       <button class="btn btn-ghost btn-sm" onclick="openReportView(_lastReports[${fullIdx}])">📊 View</button>
     </div>`;
   }).join('');
@@ -5259,15 +5275,32 @@ function closeLevelTerminal() {
   if (_lvlTermAbortCtrl) {
     const ok = confirm(
       'Une session ECA est en cours dans ce terminal.\n\n' +
-      'Fermer le panneau n\'interrompt PAS le traitement côté serveur — ' +
-      'il continue en arrière-plan, mais vous ne pourrez plus suivre sa progression ' +
-      'ni récupérer ce panneau.\n\n' +
+      'Fermer ce panneau interrompt la génération en cours et clôt ' +
+      'définitivement cette session ECA (son historique de conversation ' +
+      'sera perdu) — contrairement à avant, le traitement ne continue plus ' +
+      'en arrière-plan.\n\n' +
       'Fermer quand même ?'
     );
     if (!ok) return;
+    // Interrompre le stream en cours avant la suppression du chat, sinon la
+    // génération continuerait d'écrire sur un chat qui vient d'être supprimé
+    // côté eca-server (même séquence que levelTerminalStop()).
+    levelTerminalStop();
+  }
+  // Fermer définitivement le chat ECA de cette session — sans cet appel, le
+  // chat restait indéfiniment ouvert côté eca-server (observé en pratique :
+  // des chats en status "idle"/"running" jamais nettoyés), malgré la
+  // fermeture du panneau côté UI. Best-effort : la fermeture du panneau
+  // n'est jamais bloquée par cet appel (fire-and-forget).
+  if (_lvlTermCtx && _lvlTermCtx.sbId && _lvlTermSessionId) {
+    fetch(`${API}/api/sandboxes/${_lvlTermCtx.sbId}/terminal`, {
+      method: 'DELETE', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sessionId: _lvlTermSessionId }),
+    }).catch(() => {});
   }
   document.getElementById('level-terminal-overlay').hidden = true;
   _lvlTermCtx = null;
+  _lvlTermSessionId = null;
 }
 
 function levelTerminalStop() {
@@ -6083,6 +6116,9 @@ function openHistoryModal(projId) {
         } else if (isJson) {
           viewBtn = `<button class="btn btn-ghost btn-sm" style="padding:2px 7px;font-size:10px;flex-shrink:0" title="Voir ${r.label} (rapport structuré run.pl)" onclick="openReportView({label:'${r.label}', kind:'run', run:'run.pl'}, {sbId:'${sbId}', sbName:'${(currentSandbox&&currentSandbox.name)||sbId}', entityId:'${proj.entity}', projId:'${projId}', projName:'${proj.name}'})">👁️</button>`;
         }
+        // Icônes 📄 summary / 🔍 explain — uniquement sur les run-reports (.json)
+        const miniIcons = isJson ? reportMiniIcons(r, sbId, proj.entity, projId) : '';
+
         html += `<div class="hm-report-row">
           <div class="hm-report-icon">${r.icon||'📋'}</div>
           <div class="hm-report-info">
@@ -6090,8 +6126,9 @@ function openHistoryModal(projId) {
             <div class="hm-report-desc">${r.desc||''}</div>
           </div>
           <div class="hm-report-path" title="${r.path||''}">${r.path||''}</div>
+          ${miniIcons}
           ${viewBtn}
-          <button class="btn btn-ghost btn-sm" style="padding:2px 7px;font-size:10px;flex-shrink:0" title="Terminal ECA — rapport ${r.label}" onclick="openLevelTerminal('report', {sbId:'${sbId}', entityId:'${proj.entity}', projId:'${projId}', projName:'${(proj.name||'').replace(/'/g,"\\'")}', reportFile:'${r.label}'})">🖥️</button>
+          <button class="btn btn-ghost btn-sm" style="padding:2px 7px;font-size:10px;flex-shrink:0" title="Terminal ECA — rapport ${r.label}" onclick="openLevelTerminal('report', {sbId:'${sbId}', entityId:'${proj.entity}', projId:'${projId}', projName:'${(proj.name||'').replace(/'/g,"\\'")}', reportFile:'${r.label}', explainFile:${r.explain_file ? `'${r.explain_file}'` : 'null'}, syntheseFile:${r.synthese_file ? `'${r.synthese_file}'` : 'null'}})">🖥️</button>
         </div>`;
       }
       html += '</div>';
@@ -6121,7 +6158,7 @@ function openHistoryModal(projId) {
             onclick="openMdView('${sbId}', '${proj.entity}', '${projId}', '${r.label}')">👁️ ${label}</button>
           <button class="btn btn-ghost btn-sm" style="padding:2px 7px;font-size:10px;flex-shrink:0"
             title="Terminal ECA — ${r.label}"
-            onclick="openLevelTerminal('report', {sbId:'${sbId}', entityId:'${proj.entity}', projId:'${projId}', projName:'${(proj.name||'').replace(/'/g,"\\'")}', reportFile:'${r.label}'})">🖥️</button>
+            onclick="openLevelTerminal('report', {sbId:'${sbId}', entityId:'${proj.entity}', projId:'${projId}', projName:'${(proj.name||'').replace(/'/g,"\\'")}', reportFile:'${r.label}', explainFile:${r.kind === 'explain' ? `'${r.label}'` : 'null'}, syntheseFile:${r.kind === 'summary' ? `'${r.label}'` : 'null'}})">🖥️</button>
         </div>`;
       }
       html += `</div>`;
@@ -6240,6 +6277,20 @@ function openMdvCrossCheckTerminal() {
   // Slug timestamp : dernière occurrence de YYYYMMDD-HHMMSS avant .md
   const slug = (filename.match(/(\d{8}-\d{6})\.md$/) || [])[1] || null;
 
+  // Résoudre le fichier synthese-*.md lié au même run (même slug) — sans
+  // cela, le terminal 'report' affichait systématiquement "⚠ absent" pour
+  // la synthèse même quand elle existait bel et bien sur le disque : cette
+  // fonction ne transmettait jamais syntheseFile à openLevelTerminal(),
+  // seulement explainFile (voir même logique de résolution dans
+  // openRvTerminal() ci-dessus, réappliquée ici pour ce point d'entrée
+  // distinct — ouvert depuis le viewer Markdown simple 👁️, pas depuis la
+  // modale report-view).
+  const proj = (PROJECTS[sbId] || []).find(p => p.id === projId);
+  const matchRun = slug
+    ? (proj?.reports || []).find(r => r.kind === 'run' && (r.label || '').includes(slug))
+    : null;
+  const syntheseFile = matchRun?.synthese_file || null;
+
   const cmd = slug
     ? `chorus-complete-report ${sbId} ${entityId} --slug ${slug}`
     : `chorus-complete-report ${sbId} ${entityId}`;
@@ -6253,6 +6304,7 @@ function openMdvCrossCheckTerminal() {
     projName: projId,
     reportFile: slug ? `run-report-${slug}.json` : filename,
     explainFile: filename,
+    syntheseFile,
   }, cmd);
 }
 
