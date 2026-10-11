@@ -422,31 +422,54 @@ function parseSandboxReadme(sbPath) {
         const dates = dateMatches.map(m => m[1]).sort();
         enrichmentLastDate = dates[dates.length - 1];
       }
-      // Bugs résolus — le heading "** 🐛 N bugs bloquants ..." est
-      // généralement suivi d'un tableau org détaillé (colonnes variables,
-      // ex. "# | Fichier | Bug | Correctif"). On capture ce tableau pour
-      // permettre un affichage accordéon (détail replié par défaut) côté
-      // webapp, sans alourdir le panneau "Vue d'ensemble".
-      const bugsMatch = notesText.match(/\*{2}\s+🐛\s+(\d+)\s+bugs?\s+bloquants[^\n]*/i);
-      if (bugsMatch) {
-        bugsFixed = parseInt(bugsMatch[1]);
-        const bugsHeadingIdx = notesText.indexOf(bugsMatch[0]);
-        const afterHeading = notesText.slice(bugsHeadingIdx + bugsMatch[0].length);
-        const bugsLines = afterHeading.split('\n');
-        const bugsTableHeaders = [];
-        const bugsTableRows = [];
-        for (const bl of bugsLines) {
-          const bt = bl.trim();
-          if (/^\*{2}\s+\S/.test(bt)) break; // heading suivant
-          if (!bt) { if (bugsTableRows.length) break; continue; } // table terminée
-          if (!bt.startsWith('|')) continue;
-          if (/^\|[-+]+\|?$/.test(bt)) continue; // ligne séparatrice
-          const cells = bt.split('|').slice(1, -1).map(c => c.trim());
-          if (!bugsTableHeaders.length) { bugsTableHeaders.push(...cells); continue; }
-          bugsTableRows.push(cells);
-        }
-        if (bugsTableRows.length) {
-          bugsTable = { headers: bugsTableHeaders, rows: bugsTableRows };
+      // Bugs résolus — un ou plusieurs headings "** 🐛 N bugs
+      // bloquants/résolus ..." peuvent coexister (une session de debugging
+      // ultérieure peut ajouter sa propre section sans écraser l'historique
+      // précédent). Chacun est généralement suivi d'un tableau org détaillé
+      // (colonnes variables, ex. "# | Fichier | Bug | Correctif"). On agrège
+      // tous les headings trouvés : somme des compteurs, concaténation des
+      // tableaux (avec une colonne "Session" ajoutée si plusieurs sections
+      // sont présentes, pour distinguer leur origine) — affichage accordéon
+      // (détail replié par défaut) côté webapp, sans alourdir le panneau
+      // "Vue d'ensemble".
+      const bugsHeadingRe = /\*{2}\s+🐛\s+(\d+)\s+bugs?\s+(?:bloquants|résolus)[^\n]*/gi;
+      const bugsMatches = [...notesText.matchAll(bugsHeadingRe)];
+      if (bugsMatches.length) {
+        bugsFixed = bugsMatches.reduce((sum, m) => sum + parseInt(m[1]), 0);
+        const multiSection = bugsMatches.length > 1;
+        let combinedHeaders = null;
+        const combinedRows = [];
+        bugsMatches.forEach((m, idx) => {
+          const headingIdx = notesText.indexOf(m[0]);
+          const afterHeading = notesText.slice(headingIdx + m[0].length);
+          const lines = afterHeading.split('\n');
+          const headers = [];
+          const rows = [];
+          for (const bl of lines) {
+            const bt = bl.trim();
+            if (/^\*{2}\s+\S/.test(bt)) break; // heading suivant
+            if (!bt) { if (rows.length) break; continue; } // table terminée
+            if (!bt.startsWith('|')) continue;
+            if (/^\|[-+]+\|?$/.test(bt)) continue; // ligne séparatrice
+            const cells = bt.split('|').slice(1, -1).map(c => c.trim());
+            if (!headers.length) { headers.push(...cells); continue; }
+            rows.push(cells);
+          }
+          if (rows.length) {
+            if (!combinedHeaders) combinedHeaders = multiSection ? ['Session', ...headers] : headers;
+            // Libellé de session court — date trouvée dans le heading
+            // (format YYYY-MM-DD, entre parenthèses typiquement) sinon un
+            // numéro d'ordre générique. Le texte libre complet du heading
+            // (souvent long : "trouvés et corrigés", "— chorus-strengthen sur
+            // ...") n'est volontairement pas repris ici, il resterait lisible
+            // dans le README.org source mais alourdirait la colonne.
+            const dateMatch = m[0].match(/\d{4}-\d{2}-\d{2}/);
+            const sessionLabel = dateMatch ? dateMatch[0] : `Session ${idx + 1}`;
+            rows.forEach(r => combinedRows.push(multiSection ? [sessionLabel, ...r] : r));
+          }
+        });
+        if (combinedRows.length) {
+          bugsTable = { headers: combinedHeaders, rows: combinedRows };
         }
       }
       // Résultat final
@@ -1204,7 +1227,42 @@ function scanSandbox(sbId) {
   const entityIds     = listDirs(workspacePath);
   const entities      = entityIds.map(eId => scanEntity(sbPath, eId, runReportIndex));
 
-  return { id: sbId, name, norm, standard, desc, path: sbPath, entities };
+  // ── Onglet "Tests" — fichiers project-*.json générés par
+  // chorus-create-project --strategy <slug> à la racine du sandbox (et non
+  // dans workspace/, contrairement aux vrais projets). Un slug = un fichier
+  // fixe (cf. chorus-create-project.md § ID prefix and strategy reference) ;
+  // `lastRun` réutilise le même runReportIndex (déjà généralisé sur
+  // basename(project_file) par buildRunReportIndex, qui indexe aussi
+  // <sandbox>/reports/ en legacy — voir indexRunReportsDir).
+  const TESTING_STRATEGIES = {
+    iso:   'project-rules-iso.json',
+    edges: 'project-edges.json',
+    cross: 'project-cross.json',
+    scale: 'project-scale.json',
+  };
+  const testing = {};
+  for (const [slug, filename] of Object.entries(TESTING_STRATEGIES)) {
+    const exists = fileExists(path.join(sbPath, filename));
+    if (!exists) { testing[slug] = null; continue; }
+    const entries = runReportIndex.get(filename) || [];
+    const latest  = entries[entries.length - 1] || null;
+    testing[slug] = {
+      file: filename,
+      lastRun: latest ? {
+        verdict:     latest.data.pipeline_solved ? 'SOLVED' : 'FAILED',
+        totalFrames: latest.data.n_total ?? 0,
+        conformes:   latest.data.n_conforme ?? 0,
+        date:        (latest.data.generated_at || '').slice(0, 10) || null,
+      } : null,
+    };
+  }
+
+  // KB modélisée ? — pré-requis documenté pour chorus-create-project
+  // (critère simple et déjà utilisé ailleurs : présence de l'index KB
+  // généré par chorus-feed — cf. scanSandboxCorpus).
+  const kbModeled = fileExists(path.join(sbPath, 'agent', 'chorus', 'index.org'));
+
+  return { id: sbId, name, norm, standard, desc, path: sbPath, entities, testing, kbModeled };
 }
 
 // ── Scan global ───────────────────────────────────────────────

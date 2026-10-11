@@ -1977,6 +1977,7 @@ input, select, textarea { font-family: inherit; }
         <!-- Tabs -->
         <div class="tabs">
           <button class="tab-btn active" onclick="switchTab('projects')">Projects</button>
+          <button class="tab-btn" onclick="switchTab('tests')">Tests</button>
         </div>
 
         <!-- Tab: Projects -->
@@ -2007,6 +2008,12 @@ input, select, textarea { font-family: inherit; }
             <div id="available-list"></div>
           </div>
         </div>
+
+        <!-- Tab: Tests (project-rules-iso.json / project-edges.json /
+             project-cross.json / project-scale.json — générés par
+             chorus-create-project --strategy <slug> à la racine du
+             sandbox, cf. renderTestingTab()) -->
+        <div class="tab-panel" id="tab-tests"></div>
 
       </div>
 
@@ -3067,6 +3074,8 @@ function buildSandboxEntry(sb, iconIndex) {
     compliance_avg:   complianceAvg,
     last_run_entity:  lastRunEntity,
     last_run_project: lastRunProject,
+    testing:    sb.testing || { iso: null, edges: null, cross: null, scale: null },
+    kbModeled:  !!sb.kbModeled,
   };
 
   const entities = entityList.map(e => ({
@@ -4284,11 +4293,14 @@ function projRow(p) {
 // ─── TABS ─────────────────────────────────────────────────────
 function switchTab(name) {
   document.querySelectorAll('.tab-btn').forEach((b, i) => {
-    const names = ['projects'];
+    const names = ['projects', 'tests'];
     b.classList.toggle('active', names[i] === name);
   });
   document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
   document.getElementById('tab-' + name).classList.add('active');
+  // Chargement paresseux — pas besoin de fetch, les données testing/kbModeled
+  // sont déjà portées par currentSandbox (cf. buildSandboxEntry).
+  if (name === 'tests') renderTestingTab();
 }
 
 function toggleEntityGroup(key) {
@@ -4298,6 +4310,166 @@ function toggleEntityGroup(key) {
   const id = 'entityg-' + key.replace(/[^a-z0-9]/gi, '_');
   const el = document.getElementById(id);
   if (el) el.classList.toggle('collapsed', expanded); // if was expanded → collapse
+}
+
+// ─── TAB: TESTS (project-rules-iso/edges/cross/scale — racine sandbox) ──
+//
+// 4 stratégies fixes générées par chorus-create-project --strategy <slug>
+// (cf. chorus-create-project.md § ID prefix and strategy reference) :
+//   iso   → project-rules-iso.json  — chaque règle testée isolément
+//   edges → project-edges.json     — valeurs aux seuils (threshold ± ε)
+//   cross → project-cross.json     — interactions multi-règles
+//   scale → project-scale.json     — stress volumétrique (≥100 éléments)
+//
+// Exécution TOUJOURS via chorus-check (jamais run.pl direct) — chorus-check
+// déclenche la boucle de diagnostic/renforcement si le run ne donne pas le
+// résultat attendu (cf. chorus-check.md), ce que ferait manquer un run.pl nu.
+// Le lancement passe donc systématiquement par un terminal ECA niveau
+// sandbox avec une commande chorus-check pré-remplie et auto-exécutée.
+const TESTING_META = {
+  iso:   { label: 'Rules (iso)',  icon: '🧩', desc: 'Chaque règle testée isolément — 1 cas conforme + 1 cas non-conforme par règle.' },
+  edges: { label: 'Edges',        icon: '📐', desc: 'Valeurs aux limites — seuil exact et seuil ± ε pour chaque slot continu.' },
+  cross: { label: 'Cross-rules',  icon: '🔀', desc: 'Interactions entre règles — éléments déclenchant plusieurs règles simultanément.' },
+  scale: { label: 'Scale',        icon: '📊', desc: 'Stress volumétrique — ≥ 100 éléments, tous types/classes, calibrage _MAX_CYCLES.' },
+};
+let _testsSelected = new Set();
+
+function renderTestingTab() {
+  const sb = currentSandbox;
+  const panel = document.getElementById('tab-tests');
+  if (!sb || !panel) return;
+
+  const testing   = sb.testing || {};
+  const kbModeled = !!sb.kbModeled;
+
+  const cards = Object.keys(TESTING_META).map(slug => {
+    const meta  = TESTING_META[slug];
+    const entry = testing[slug]; // null si fichier absent, sinon {file, lastRun}
+    const exists = !!entry;
+    const checked = _testsSelected.has(slug);
+
+    let statusHtml;
+    if (!exists) {
+      statusHtml = `<div class="pv-empty" style="margin:8px 0">Pas encore généré.</div>`;
+    } else if (!entry.lastRun) {
+      statusHtml = `<div style="font-size:11px;color:var(--text-muted);margin:8px 0">Jamais exécuté.</div>`;
+    } else {
+      const r = entry.lastRun;
+      const isSolved = r.verdict === 'SOLVED';
+      statusHtml = `<div style="font-size:11px;margin:8px 0;display:flex;flex-direction:column;gap:2px">
+        <div><span style="color:${isSolved ? 'var(--success)' : 'var(--error)'};font-weight:700">${r.verdict}</span>
+          <span style="color:var(--text-muted)"> · ${r.conformes ?? 0}/${r.totalFrames ?? 0} CONFORMES</span></div>
+        <div style="color:var(--text-muted)">${r.date || '—'}</div>
+      </div>`;
+    }
+
+    const actionsHtml = exists
+      ? `<button class="btn btn-ghost btn-sm" style="font-size:11px" onclick="runTestingStrategy('${slug}')">🖥️ Lancer via ECA</button>`
+      : (kbModeled
+          ? `<button class="btn btn-ghost btn-sm" style="font-size:11px" onclick="generateTestingStrategy('${slug}')">+ Générer ce test</button>`
+          : `<button class="btn btn-ghost btn-sm" style="font-size:11px" disabled title="La KB doit être modélisée (chorus-feed) avant de générer des tests">+ Générer ce test</button>`);
+
+    return `
+      <div class="pv-panel" style="display:flex;flex-direction:column;gap:4px">
+        <div style="display:flex;align-items:center;gap:8px">
+          ${exists ? `<input type="checkbox" ${checked ? 'checked' : ''} onchange="toggleTestSelection('${slug}', this.checked)">` : `<span style="width:13px;display:inline-block"></span>`}
+          <span style="font-size:15px">${meta.icon}</span>
+          <span style="font-weight:600;font-size:13px">${meta.label}</span>
+          <span style="margin-left:auto;font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--text-muted)">${entry ? entry.file : TESTING_FILES[slug]}</span>
+        </div>
+        <div style="font-size:11px;color:var(--text-muted)">${meta.desc}</div>
+        ${statusHtml}
+        <div>${actionsHtml}</div>
+      </div>`;
+  }).join('');
+
+  const nExisting = Object.values(testing).filter(Boolean).length;
+  const existingSlugsAll = Object.keys(TESTING_META).filter(s => testing[s]);
+  const allSelected = nExisting > 0 && existingSlugsAll.every(s => _testsSelected.has(s));
+  const kbWarning = kbModeled ? '' : `<div class="pv-empty" style="margin-bottom:12px">⚠️ La KB de ce sandbox n'est pas encore modélisée (<code>agent/chorus/index.org</code> absent) — lancez <code>chorus-feed</code> avant de générer des tests.</div>`;
+
+  panel.innerHTML = `
+    ${kbWarning}
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;flex-wrap:wrap">
+      <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text-secondary);cursor:${nExisting ? 'pointer' : 'default'}">
+        <input type="checkbox" ${allSelected ? 'checked' : ''} ${nExisting === 0 ? 'disabled' : ''} onchange="toggleSelectAllTests(this.checked)">
+        Tout sélectionner
+      </label>
+      <button class="btn btn-primary btn-sm" ${_testsSelected.size === 0 ? 'disabled' : ''} onclick="runTestingSelection()">🖥️ Lancer la sélection via ECA (${_testsSelected.size})</button>
+      ${nExisting > 1 ? `<span style="font-size:11px;color:var(--text-muted)">${nExisting} test(s) générés sur 4</span>` : ''}
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:12px">
+      ${cards}
+    </div>
+  `;
+}
+
+const TESTING_FILES = {
+  iso: 'project-rules-iso.json', edges: 'project-edges.json',
+  cross: 'project-cross.json', scale: 'project-scale.json',
+};
+
+function toggleTestSelection(slug, checked) {
+  if (checked) _testsSelected.add(slug); else _testsSelected.delete(slug);
+  renderTestingTab();
+}
+
+// "Tout sélectionner" — ne porte que sur les tests déjà générés (un test
+// absent ne peut pas être "sélectionné" pour exécution, seul le bouton
+// "+ Générer ce test" propre à sa carte s'applique dans ce cas).
+function toggleSelectAllTests(checked) {
+  const sb = currentSandbox;
+  if (!sb) return;
+  const existingSlugs = Object.keys(TESTING_META).filter(s => (sb.testing || {})[s]);
+  if (checked) existingSlugs.forEach(s => _testsSelected.add(s));
+  else existingSlugs.forEach(s => _testsSelected.delete(s));
+  renderTestingTab();
+}
+
+// Génère un fichier de test manquant — ouvre le terminal ECA niveau sandbox
+// avec chorus-create-project --strategy <slug> en auto-exécution. La liste
+// sandbox/testing sera rafraîchie manuellement (refreshSandboxQuiet ou
+// reload) une fois la génération terminée côté agent.
+function generateTestingStrategy(slug) {
+  if (!currentSandbox) return;
+  openLevelTerminal('sandbox', { sbId: currentSandbox.id },
+    `chorus-create-project ${currentSandbox.id} --strategy ${slug}`);
+}
+
+// Lance un seul test existant via chorus-check (jamais run.pl direct — cf.
+// commentaire § TAB: TESTS en tête de fichier).
+function runTestingStrategy(slug) {
+  if (!currentSandbox) return;
+  const file = TESTING_FILES[slug];
+  openLevelTerminal('sandbox', { sbId: currentSandbox.id },
+    `chorus-check ${currentSandbox.id} ${file}`);
+}
+
+// Lance la sélection courante. Si tous les tests présents sont sélectionnés
+// → chorus-check --all (mode batch natif, plus efficace). Sinon, une seule
+// commande en langage naturel énumérant chaque chorus-check à exécuter
+// séquentiellement — laissé à l'agent ECA plutôt que scripté côté serveur,
+// précisément pour que chaque fichier puisse déclencher sa propre boucle de
+// diagnostic/renforcement si besoin (cf. chorus-check.md).
+function runTestingSelection() {
+  if (!currentSandbox || _testsSelected.size === 0) return;
+  const sb = currentSandbox;
+  const testing = sb.testing || {};
+  const existingSlugs = Object.keys(TESTING_META).filter(s => testing[s]);
+  const selected = [..._testsSelected].filter(s => testing[s]);
+
+  let cmd;
+  if (selected.length === existingSlugs.length && existingSlugs.length > 1) {
+    cmd = `chorus-check ${sb.id} --all`;
+  } else if (selected.length === 1) {
+    cmd = `chorus-check ${sb.id} ${TESTING_FILES[selected[0]]}`;
+  } else {
+    const files = selected.map(s => TESTING_FILES[s]);
+    cmd = `Lance successivement chorus-check ${sb.id} sur chacun des fichiers suivants, dans cet ordre : `
+      + files.map(f => `"${f}"`).join(', ')
+      + `. Pour chaque fichier, exécute chorus-check ${sb.id} <fichier> (jamais run.pl directement) et résume le verdict avant de passer au suivant.`;
+  }
+  openLevelTerminal('sandbox', { sbId: sb.id }, cmd);
 }
 
 // ─── THESAURUS RENDERER ───────────────────────────────────────
@@ -8160,21 +8332,17 @@ initFromServer(); // surcharge avec les données réelles si le serveur MVP0 ré
           <input class="sd-input mono" id="sd-m-provider-ro" type="text" value="—" readonly>
         </div>
         <div class="sd-divider"></div>
-        <div class="sd-row">
-          <div class="sd-field">
-            <div class="sd-label">Architect <span class="sd-badge-info">lecture seule</span></div>
-            <input class="sd-input mono" id="sd-m-architect-ro" type="text" value="—" readonly>
-          </div>
-          <div class="sd-field">
-            <div class="sd-label">Code <span class="sd-badge-info">lecture seule</span></div>
-            <input class="sd-input mono" id="sd-m-code-ro" type="text" value="—" readonly>
-          </div>
+        <div class="sd-field">
+          <div class="sd-label">Architect <span class="sd-badge-info">lecture seule</span></div>
+          <input class="sd-input mono" id="sd-m-architect-ro" type="text" value="—" readonly>
         </div>
-        <div class="sd-row">
-          <div class="sd-field">
-            <div class="sd-label">Fast <span class="sd-badge-info">lecture seule</span></div>
-            <input class="sd-input mono" id="sd-m-fast-ro" type="text" value="—" readonly>
-          </div>
+        <div class="sd-field">
+          <div class="sd-label">Code <span class="sd-badge-info">lecture seule</span></div>
+          <input class="sd-input mono" id="sd-m-code-ro" type="text" value="—" readonly>
+        </div>
+        <div class="sd-field">
+          <div class="sd-label">Fast <span class="sd-badge-info">lecture seule</span></div>
+          <input class="sd-input mono" id="sd-m-fast-ro" type="text" value="—" readonly>
         </div>
       </div>
 
