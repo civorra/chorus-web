@@ -5,7 +5,7 @@
 # for the export to ANTHROPIC_API_KEY.
 secrets:
   anthropic_api_key:
-    file: /home/civ/.config/anthropic/api_key
+    file: /home/civorra/.config/anthropic/api_key
 
 services:
   eca-server:
@@ -77,6 +77,14 @@ services:
       # Nom du conteneur eca-server (pour docker restart via socket).
       # Par défaut : <project>-eca-server-1 (nommage Compose automatique).
       - ECA_CONTAINER_NAME=${ECA_CONTAINER_NAME:-chorus-web-eca-server-1}
+      # Dupliqué depuis le service eca-server — uniquement pour affichage
+      # dans le panneau "Services" (GET /api/eca/info), lecture seule,
+      # aucun impact sur le provider réellement utilisé par eca-server.
+      - ECA_DEFAULT_MODEL=${ECA_DEFAULT_MODEL:-anthropic/claude-sonnet-4-6}
+      - ANTHROPIC_PROVIDER_TYPE=${ANTHROPIC_PROVIDER_TYPE:-max}
+      - ECA_MODEL_ARCHITECT=${ECA_MODEL_ARCHITECT:-anthropic/claude-sonnet-5}
+      - ECA_MODEL_CODE=${ECA_MODEL_CODE:-anthropic/claude-sonnet-4-6}
+      - ECA_MODEL_FAST=${ECA_MODEL_FAST:-anthropic/claude-haiku-4-5-20251001}
       # Chemin du socket Docker dans le conteneur (ne pas modifier sauf proxy)
       - DOCKER_SOCKET=/var/run/docker.sock
       # OAuth client IDs — défauts = client_ids ECA ; surcharger si OAuth App dédiée

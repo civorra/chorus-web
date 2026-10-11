@@ -86,7 +86,15 @@ send_message() {
   printf 'Content-Length: %s\r\n\r\n%s' "$len" "$payload"
 }
 
-INIT_REQUEST='{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"processId":null,"clientInfo":{"name":"eca-bootstrap","version":"1.0.0"},"capabilities":{},"workspaceFolders":[{"uri":"file:///chorus","name":"chorus"}]}}'
+# Deux workspace folders :
+# - "chorus-engine" (/chorus/Engine) en premier, pour que ECA auto-charge
+#   Engine/AGENTS.md (skills Chorus) au démarrage de chaque session
+#   (sinon seul le skill intégré "eca-info" apparaît à la commande "skills").
+# - "chorus" (/chorus, racine) en second, pour garder l'accès complet aux
+#   outils fichiers sur /chorus/sandboxes/, /chorus/chorus-web/, etc.
+#   (sandboxes/ est un sibling de Engine/, pas un sous-dossier — voir
+#   arborescence réelle du dépôt).
+INIT_REQUEST='{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"processId":null,"clientInfo":{"name":"eca-bootstrap","version":"1.0.0"},"capabilities":{},"workspaceFolders":[{"uri":"file:///chorus/Engine","name":"chorus-engine"},{"uri":"file:///chorus","name":"chorus"}]}}'
 INITIALIZED_NOTIF='{"jsonrpc":"2.0","method":"initialized","params":{}}'
 
 {

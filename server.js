@@ -145,10 +145,51 @@ app.get('/api/eca/health', async (req, res) => {
   const start = Date.now();
   try {
     await eca.ecaRequest('/api/v1/chats', 'GET');
-    res.json({ ok: true, latencyMs: Date.now() - start });
+    const latencyMs = Date.now() - start;
+    recordLatency(latencyMs);
+    res.json({ ok: true, latencyMs, history: latencyHistory.slice() });
   } catch (err) {
-    res.json({ ok: false, error: err.message, latencyMs: Date.now() - start });
+    const latencyMs = Date.now() - start;
+    res.json({ ok: false, error: err.message, latencyMs, history: latencyHistory.slice() });
   }
+});
+
+// ═════════════════════════════════════════════════════════════
+// ROUTE 0b — GET /api/eca/info
+//
+// Expose la configuration réelle du eca-server piloté par chorus-web
+// (remplace le bloc YAML/architecture statique et fictif du panneau
+// "Services" — cf. chorus-web.html § services-modal-overlay). Aucune
+// valeur sensible (pas de token, pas de mot de passe) n'est renvoyée ici.
+// ═════════════════════════════════════════════════════════════
+
+const latencyHistory = [];
+const LATENCY_HISTORY_MAX = 30;
+function recordLatency(ms) {
+  latencyHistory.push(ms);
+  if (latencyHistory.length > LATENCY_HISTORY_MAX) latencyHistory.shift();
+}
+
+app.get('/api/eca/info', async (req, res) => {
+  let chatCount = null;
+  try {
+    const list = await eca.ecaRequest('/api/v1/chats', 'GET');
+    chatCount = Array.isArray(list) ? list.length : null;
+  } catch { /* chatCount reste null si eca-server injoignable */ }
+
+  res.json({
+    protocol: 'https (JSON-RPC/LSP-inspired) + SSE',
+    serverUrl: process.env.ECA_SERVER_URL || 'https://eca-server:7777',
+    binary: 'eca (GraalVM native static binary)',
+    defaultModel: process.env.ECA_DEFAULT_MODEL || null,
+    providerType: process.env.ANTHROPIC_PROVIDER_TYPE || null,
+    modelArchitect: process.env.ECA_MODEL_ARCHITECT || null,
+    modelCode: process.env.ECA_MODEL_CODE || null,
+    modelFast: process.env.ECA_MODEL_FAST || null,
+    workspaceFolders: ['/chorus/Engine (chorus-engine)', '/chorus (chorus)'],
+    activeChatCount: chatCount,
+    containerName: process.env.ECA_CONTAINER_NAME || null,
+  });
 });
 
 // ═════════════════════════════════════════════════════════════

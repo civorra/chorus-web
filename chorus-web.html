@@ -2230,7 +2230,7 @@ input, select, textarea { font-family: inherit; }
 <div id="services-modal-overlay" hidden>
   <div class="svc-modal">
     <div class="svc-modal-header">
-      <h2>🛠 Services — chorus-web supervisor</h2>
+      <h2>🛠 Services — chorus-web</h2>
       <button class="isp-close" onclick="closeServicesModal()">✕</button>
     </div>
     <div class="svc-modal-body">
@@ -2239,56 +2239,27 @@ input, select, textarea { font-family: inherit; }
         <div class="svc-row-icon">🔌</div>
         <div class="svc-row-info">
           <div class="svc-row-name">ECA Server</div>
-          <div class="svc-row-detail">ws://localhost:7777 · Clojure · LSP-inspired · multi-LLM</div>
+          <div class="svc-row-detail" id="svc-eca-detail">https://eca-server:7777 · GraalVM native · JSON-RPC (LSP-inspired) + SSE</div>
         </div>
         <div class="svc-row-badge"><span class="svc-pill online" id="svc-modal-eca"><div class="svc-dot"></div>online</span></div>
       </div>
-      <div class="svc-row" style="opacity:.5">
-        <div class="svc-row-icon">🌐</div>
-        <div class="svc-row-info">
-          <div class="svc-row-name">eca-web Remote UI</div>
-          <div class="svc-row-detail">web.eca.dev iframe · observe &amp; control ECA sessions</div>
-        </div>
-        <div class="svc-row-badge"><span class="svc-pill online" style="font-size:9px"><div class="svc-dot"></div>via ECA</span></div>
+
+      <div class="svc-section-title" style="margin-top:20px">Latence health-check <span style="font-weight:400;color:var(--text-muted);font-size:10px" id="svc-latency-label"></span></div>
+      <div style="background:var(--bg-elevated);border:1px solid var(--border);border-radius:8px;padding:10px 14px">
+        <canvas id="svc-latency-sparkline" width="460" height="48" style="width:100%;height:48px;display:block"></canvas>
       </div>
 
-      <div class="svc-section-title" style="margin-top:20px">chorus-web.yml</div>
-      <div class="yml-block">
-<span class="yml-head">server:</span>
-  <span class="yml-key">host</span>: <span class="yml-val">0.0.0.0</span>
-  <span class="yml-key">port</span>: <span class="yml-val">5000</span>
-  <span class="yml-key">workers</span>: <span class="yml-val">4</span>
-  <span class="yml-key">plack_env</span>: <span class="yml-val">production</span>
-
-<span class="yml-head">eca:</span>
-  <span class="yml-key">enabled</span>: <span class="yml-val">true</span>
-  <span class="yml-key">host</span>: <span class="yml-val">127.0.0.1</span>
-  <span class="yml-key">port</span>: <span class="yml-val">7777</span>
-  <span class="yml-key">jar</span>: <span class="yml-val">lib/eca-server.jar</span>  <span class="yml-cmt"># ECA Server (Clojure uberjar)</span>
-  <span class="yml-key">heartbeat_ms</span>: <span class="yml-val">5000</span>
-  <span class="yml-key">skill_timeout_s</span>: <span class="yml-val">120</span>
-
-<span class="yml-head">llm:</span>
-  <span class="yml-key">default</span>: <span class="yml-val">claude-opus-4</span>
-  <span class="yml-key">providers</span>:
-    <span class="yml-key">anthropic</span>: <span class="yml-val">${ANTHROPIC_API_KEY}</span>
-    <span class="yml-key">openai</span>:    <span class="yml-val">${OPENAI_API_KEY}</span>
-    <span class="yml-key">copilot</span>:   <span class="yml-val">oauth</span>   <span class="yml-cmt"># VS Code Copilot auth</span>
-    <span class="yml-key">ollama</span>:    <span class="yml-val">http://localhost:11434</span>
-
-<span class="yml-head">chorus:</span>
-  <span class="yml-key">sandbox_root</span>: <span class="yml-val">sandboxes/</span>
-  <span class="yml-key">kb_root</span>:      <span class="yml-val">kb/</span>
-  <span class="yml-key">run_pl</span>:       <span class="yml-val">bin/run.pl</span>
+      <div class="svc-section-title" style="margin-top:20px">Configuration réelle (eca-server)</div>
+      <div class="yml-block" id="svc-real-config">
+<span class="yml-cmt"># chargement…</span>
       </div>
 
-      <div class="svc-section-title" style="margin-top:20px">Architecture</div>
+      <div class="svc-section-title" style="margin-top:20px">Architecture réelle</div>
       <div style="background:var(--bg-elevated);border:1px solid var(--border);border-radius:8px;padding:14px 16px;font-family:'JetBrains Mono',monospace;font-size:11px;line-height:2;color:var(--text-secondary)">
-        <span style="color:var(--accent)">Browser</span> → <span style="color:var(--text-muted)">HTTP</span> → <span style="color:var(--accent)">Node :3000</span> → <span style="color:var(--text-muted)">HTTPS</span> → <span style="color:var(--success)">ECA Server :7777</span><br>
-        &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;├─ <span style="color:var(--info)">run.pl</span> (Perl, fork)<br>
-        &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;├─ <span style="color:var(--info)">chorus-check</span> (skill)<br>
-        &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;└─ <span style="color:var(--info)">chorus-import-project</span> (skill)<br>
-        <span style="color:var(--text-muted);font-size:10px">supervisor: Chorus::Web::Supervisor — <code>chorus-web start</code></span>
+        <span style="color:var(--accent)">Browser</span> → <span style="color:var(--text-muted)">HTTP</span> → <span style="color:var(--accent)">Node/Express :3000</span> (<code>server.js</code>) → <span style="color:var(--text-muted)">HTTPS+SSE</span> → <span style="color:var(--success)">eca-server :7777</span> (binaire GraalVM, protocole JSON-RPC inspiré LSP)<br>
+        &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;├─ workspace: <span style="color:var(--info)" id="svc-arch-ws1">/chorus/Engine</span> (skills Chorus + AGENTS.md)<br>
+        &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;└─ workspace: <span style="color:var(--info)" id="svc-arch-ws2">/chorus</span> (sandboxes/, accès fichiers complet)<br>
+        <span style="color:var(--text-muted);font-size:10px">chats ECA actifs : <span id="svc-arch-chats">—</span> · conteneur : <span id="svc-arch-container">—</span></span>
       </div>
     </div>
   </div>
@@ -6873,9 +6844,77 @@ async function refreshEcaStatus() {
 // ─── SERVICES MODAL ───────────────────────────────────────────
 function openServicesModal() {
   document.getElementById('services-modal-overlay').hidden = false;
+  refreshServicesModalData();
 }
 function closeServicesModal() {
   document.getElementById('services-modal-overlay').hidden = true;
+}
+
+// ─── Services modal — données réelles (config + latence) ──────
+async function refreshServicesModalData() {
+  try {
+    const r = await fetch(`${API}/api/eca/info`);
+    const info = await r.json();
+    const cfgEl = document.getElementById('svc-real-config');
+    if (cfgEl) {
+      cfgEl.innerHTML =
+        `<span class="yml-head">provider:</span>\n` +
+        `  <span class="yml-key">type</span>: <span class="yml-val">${info.providerType || '—'}</span>\n\n` +
+        `<span class="yml-head">models:</span>\n` +
+        `  <span class="yml-key">default</span>: <span class="yml-val">${info.defaultModel || '—'}</span>\n` +
+        `  <span class="yml-key">architect</span>: <span class="yml-val">${info.modelArchitect || '—'}</span>\n` +
+        `  <span class="yml-key">code</span>: <span class="yml-val">${info.modelCode || '—'}</span>\n` +
+        `  <span class="yml-key">fast</span>: <span class="yml-val">${info.modelFast || '—'}</span>\n\n` +
+        `<span class="yml-head">server:</span>\n` +
+        `  <span class="yml-key">url</span>: <span class="yml-val">${info.serverUrl}</span>\n` +
+        `  <span class="yml-key">binary</span>: <span class="yml-val">${info.binary}</span>  <span class="yml-cmt"># pas de JVM, pas de JAR</span>`;
+    }
+    const ws1 = document.getElementById('svc-arch-ws1');
+    const ws2 = document.getElementById('svc-arch-ws2');
+    if (ws1 && info.workspaceFolders && info.workspaceFolders[0]) ws1.textContent = info.workspaceFolders[0];
+    if (ws2 && info.workspaceFolders && info.workspaceFolders[1]) ws2.textContent = info.workspaceFolders[1];
+    const chatsEl = document.getElementById('svc-arch-chats');
+    if (chatsEl) chatsEl.textContent = info.activeChatCount != null ? info.activeChatCount : '—';
+    const containerEl = document.getElementById('svc-arch-container');
+    if (containerEl) containerEl.textContent = info.containerName || '—';
+  } catch (e) {
+    const cfgEl = document.getElementById('svc-real-config');
+    if (cfgEl) cfgEl.innerHTML = `<span class="yml-cmt"># indisponible : ${e.message}</span>`;
+  }
+
+  try {
+    const r2 = await fetch(`${API}/api/eca/health`);
+    const h  = await r2.json();
+    drawLatencySparkline(h.history || []);
+    const label = document.getElementById('svc-latency-label');
+    if (label) label.textContent = h.history && h.history.length ? `(dernière : ${h.latencyMs}ms, ${h.history.length} mesures)` : '';
+  } catch { /* sparkline laissée vide si health-check indisponible */ }
+}
+
+function drawLatencySparkline(history) {
+  const canvas = document.getElementById('svc-latency-sparkline');
+  if (!canvas || !history || !history.length) return;
+  const ctx = canvas.getContext('2d');
+  const w = canvas.width, h = canvas.height;
+  ctx.clearRect(0, 0, w, h);
+  const max = Math.max(...history, 1);
+  const step = w / Math.max(history.length - 1, 1);
+  ctx.strokeStyle = '#4E9BF5';
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  history.forEach((v, i) => {
+    const x = i * step;
+    const y = h - (v / max) * (h - 6) - 3;
+    if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+  });
+  ctx.stroke();
+  // Dernier point
+  const lastX = (history.length - 1) * step;
+  const lastY = h - (history[history.length - 1] / max) * (h - 6) - 3;
+  ctx.fillStyle = '#4E9BF5';
+  ctx.beginPath();
+  ctx.arc(lastX, lastY, 2.5, 0, Math.PI * 2);
+  ctx.fill();
 }
 document.getElementById('services-modal-overlay').addEventListener('click', function(e) {
   if (e.target === this) closeServicesModal();
