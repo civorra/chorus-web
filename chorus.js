@@ -148,7 +148,7 @@ function extractOrgTable(content, headingRegex) {
       if (/^\*+\s+\S/.test(trimmed)) break; // nouvelle section sans table
       continue;
     }
-    if (/^\|[-+]+\|?$/.test(trimmed)) continue; // ligne séparatrice |---+---|
+    if (/^\|[-+|]+\|?$/.test(trimmed)) continue; // ligne séparatrice — formes |---+---| et |---|---|---|
     const cells = trimmed.split('|').slice(1, -1).map(c => c.trim());
     rows.push(cells);
   }
