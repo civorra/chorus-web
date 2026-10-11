@@ -3631,7 +3631,7 @@ async function renderPvThesaurusTab() {
         <tr style="border-bottom:1px solid var(--border-light)">
           <td style="padding:4px 8px;color:var(--text-secondary)">${p.term}</td>
           <td style="padding:4px 8px;color:var(--warn);font-family:'JetBrains Mono',monospace;font-size:11px">${p.proposed || ''}</td>
-          <td style="padding:4px 8px;color:var(--text-muted);font-size:11px">${p.flag || ''}</td>
+          <td style="padding:4px 8px;color:var(--text-muted);font-size:11px">${(p.flag || '').replace(/_a_confirmer/gi, '').trim()}</td>
           <td style="padding:4px 8px;white-space:nowrap">
             <button class="btn btn-ghost" style="font-size:11px;padding:2px 8px;color:var(--success)" onclick="pvThesToggleConfirm(${i})" id="pv-thes-confirm-btn-${i}">✅ Confirmer</button>
             <button class="btn btn-ghost" style="font-size:11px;padding:2px 8px;color:var(--error)" onclick="pvThesReject(${i})">❌ Rejeter</button>
