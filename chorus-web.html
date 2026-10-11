@@ -2033,7 +2033,6 @@ input, select, textarea { font-family: inherit; }
                 <span id="pv-meta-id" style="font-family:'JetBrains Mono',monospace;font-size:11px"></span>
               </div>
             </div>
-            <span class="badge" id="pv-state-badge" style="flex-shrink:0;align-self:flex-start;margin-top:3px"></span>
           </div>
           <div class="pv-actions">
             <button class="btn btn-ghost btn-sm" onclick="bcGoSandbox()">← Sandbox</button>
@@ -3345,15 +3344,9 @@ function renderProjectPage(proj, entLabel) {
   document.getElementById('pv-meta-entity').textContent  = entLabel || '—';
   document.getElementById('pv-meta-id').textContent      = proj.id;
 
-  const badge = document.getElementById('pv-state-badge');
-  if (proj.state === 'imported') {
-    badge.className = 'badge imported'; badge.textContent = '✓ Importé';
-  } else if (proj.state === 'importing') {
-    badge.className = 'badge importing'; badge.textContent = '⏳ En cours';
-  } else {
-    badge.className = 'badge pending'; badge.textContent = 'Non importé';
-  }
-
+  // Badge d'état retiré du header (redondant — l'info "Importé"/"Non importé"
+  // est déjà visible via les boutons Pipeline/Ré-importer eux-mêmes masqués
+  // selon proj.state, cf. ci-dessous).
   const btnPipeline = document.getElementById('pv-btn-pipeline');
   const btnReimport = document.getElementById('pv-btn-reimport');
   btnPipeline.style.display = proj.state === 'imported'  ? '' : 'none';
