@@ -4862,6 +4862,25 @@ function runPipeline() {
 }
 
 function finishPipeline(proj, workspace, btnId, reportData, reportFile) {
+  try {
+    _finishPipelineImpl(proj, workspace, btnId, reportData, reportFile);
+  } catch (err) {
+    console.error('finishPipeline a échoué — la vue ne sera pas à jour sans reload :', err);
+  }
+  // Re-fetch systématique depuis le serveur, en complément (pas en
+  // remplacement) du patch mémoire fait dans _finishPipelineImpl ci-dessus —
+  // celui-ci peut échouer silencieusement si `proj`/`currentProject` ne
+  // correspond plus exactement à l'objet vivant dans PROJECTS[] (ex. objet
+  // reconstruit entre-temps par un refresh concurrent), auquel cas la vue
+  // restait figée jusqu'à un F5 complet malgré le rapport déjà écrit sur
+  // disque (confirmé : run-report-*.json présent, mais aucune des structures
+  // en mémoire mises à jour). Ce fallback est idempotent et peu coûteux (un
+  // seul GET /api/sandboxes/:sbId) — il corrige la vue même si le patch
+  // optimiste ci-dessus n'a pas pu s'appliquer.
+  if (currentSandbox?.id) refreshSandboxReports(currentSandbox.id);
+}
+
+function _finishPipelineImpl(proj, workspace, btnId, reportData, reportFile) {
   pipelineRunning = false;
   const btn = document.getElementById(btnId || 'pipeline-run-btn');
   btn.disabled = false;
