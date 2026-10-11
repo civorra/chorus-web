@@ -2487,6 +2487,7 @@ input, select, textarea { font-family: inherit; }
     </div>
     <div class="mdv-footer">
       <div id="mdv-cross-area"></div>
+      <span id="mdv-terminal-area"></span>
       <button class="btn btn-ghost btn-sm" onclick="exportMdReport('html')" title="Convertit le Markdown en HTML autonome via scripts/md2html.py">💾 Save as HTML</button>
       <button class="btn btn-ghost btn-sm" onclick="exportMdReport('pdf')" title="Convertit le Markdown en PDF via scripts/md2pdf.py">💾 Save as PDF</button>
       <button class="btn btn-ghost btn-sm" onclick="closeMdView()">Fermer</button>
@@ -6649,6 +6650,7 @@ async function openMdView(sbId, entityId, projId, filename) {
   document.getElementById('mdv-content').innerHTML = 'Chargement…';
   const crossArea = document.getElementById('mdv-cross-area');
   if (crossArea) crossArea.innerHTML = '';
+  updateMdvTerminalArea(sbId, entityId, projId, filename);
   document.getElementById('md-view-overlay').hidden = false;
 
   try {
@@ -6698,6 +6700,27 @@ async function exportMdReport(format) {
   } catch (e) {
     alert(`Export ${format.toUpperCase()} échoué : ${e.message}`);
   }
+}
+
+// Bouton "🖥️ Terminal ECA" du footer du viewer Markdown — visible uniquement
+// pour les rapports explain-*.md (demande explicite ; les autres kinds —
+// synthese-/compliance-report- — ont déjà leur propre bouton terminal sur
+// leur ligne dans les listes de rapports, cf. pvReportButtons/openHistoryModal).
+// Ouvre le terminal ECA niveau 'report', même convention de paramètres que
+// les autres points d'entrée (explainFile renseigné, syntheseFile null).
+function updateMdvTerminalArea(sbId, entityId, projId, filename) {
+  const area = document.getElementById('mdv-terminal-area');
+  if (!area) return;
+
+  const isExplain = filename && filename.startsWith('explain-') && filename.endsWith('.md');
+  if (!isExplain) { area.innerHTML = ''; return; }
+
+  const proj = (PROJECTS[sbId] || []).find(p => p.id === projId);
+  const projName = (proj?.name || '').replace(/'/g, "\\'");
+
+  area.innerHTML = `<button class="btn btn-ghost btn-sm"
+    title="Terminal ECA — ${filename}"
+    onclick="openLevelTerminal('report', {sbId:'${sbId}', entityId:'${entityId}', projId:'${projId}', projName:'${projName}', reportFile:'${filename}', explainFile:'${filename}', syntheseFile:null})">🖥️ Terminal ECA</button>`;
 }
 
 // ─── CROSS-CHECK STATUS (explain-*.md viewer) ─────────────────────────────
