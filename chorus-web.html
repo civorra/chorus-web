@@ -3000,7 +3000,11 @@ function reportMiniIcons(r, sbId, entityId, projId) {
     : `<span style="font-size:13px;opacity:.25;padding:2px 6px;cursor:default"
          title="Pas de rapport --explain pour ce run">🔍</span>`;
 
-  return `<div style="display:flex;gap:2px;align-items:center">${synBtn}${expBtn}</div>`;
+  // Retourne les boutons bruts (sans wrapper) — c'est à l'appelant de les
+  // regrouper avec les autres icônes (View/Terminal) dans un même conteneur
+  // flex à espacement minimal uniforme (gap:2px), pour un alignement visuel
+  // cohérent des 4 icônes.
+  return synBtn + expBtn;
 }
 
 const SANDBOX_ICONS = ['🔐','📜','🏗️','♿','🏥','☁️','⚖️','🌍','📋'];
@@ -3287,7 +3291,7 @@ function pvReportButtons(r, proj, sbId) {
   // référencer lui-même).
   const miniIcons = isJson ? reportMiniIcons(r, sbId, proj.entity, proj.id) : '';
 
-  return miniIcons + viewBtn + termBtn;
+  return `<div style="display:flex;align-items:center;gap:2px">${miniIcons}${viewBtn}${termBtn}</div>`;
 }
 
 // Génère le HTML d'une ligne rapport complète avec les mêmes boutons que le history modal.
@@ -3300,7 +3304,7 @@ function pvReportRow(r, proj, sbId) {
         <div class="pv-report-desc">${r.desc || ''}</div>
       </div>
       <span class="pv-report-date">${r.date || ''}</span>
-      <div style="display:flex;gap:4px;flex-shrink:0">${pvReportButtons(r, proj, sbId)}</div>
+      <div style="display:flex;gap:2px;flex-shrink:0">${pvReportButtons(r, proj, sbId)}</div>
     </div>`;
 }
 
@@ -3417,7 +3421,7 @@ function renderProjectPage(proj, entLabel) {
       ${lastRunReport ? `<div class="pv-li-row" style="margin-top:4px;gap:6px;flex-wrap:wrap">
         <span class="pv-li-key">Rapport</span>
         <span style="font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--text-secondary);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${lastRunReport.label}</span>
-        <div style="display:flex;gap:4px;flex-shrink:0">${pvReportButtons(lastRunReport, proj, sb.id)}</div>
+        <div style="display:flex;gap:2px;flex-shrink:0">${pvReportButtons(lastRunReport, proj, sb.id)}</div>
       </div>` : ''}
     </div>`;
   } else {
@@ -4565,8 +4569,10 @@ function renderReportsList(reports) {
           ${r.date ? `&nbsp;·&nbsp;<span style="color:var(--text-muted)">${r.date}</span>` : ''}
         </div>
       </div>
-      ${miniIcons}
-      <button class="btn btn-ghost btn-sm" onclick="openReportView(_lastReports[${fullIdx}])">📊 View</button>
+      <div style="display:flex;align-items:center;gap:2px">
+        ${miniIcons}
+        <button class="btn btn-ghost btn-sm" onclick="openReportView(_lastReports[${fullIdx}])">📊 View</button>
+      </div>
     </div>`;
   }).join('');
 
@@ -6126,9 +6132,11 @@ function openHistoryModal(projId) {
             <div class="hm-report-desc">${r.desc||''}</div>
           </div>
           <div class="hm-report-path" title="${r.path||''}">${r.path||''}</div>
-          ${miniIcons}
-          ${viewBtn}
-          <button class="btn btn-ghost btn-sm" style="padding:2px 7px;font-size:10px;flex-shrink:0" title="Terminal ECA — rapport ${r.label}" onclick="openLevelTerminal('report', {sbId:'${sbId}', entityId:'${proj.entity}', projId:'${projId}', projName:'${(proj.name||'').replace(/'/g,"\\'")}', reportFile:'${r.label}', explainFile:${r.explain_file ? `'${r.explain_file}'` : 'null'}, syntheseFile:${r.synthese_file ? `'${r.synthese_file}'` : 'null'}})">🖥️</button>
+          <div style="display:flex;align-items:center;gap:2px;flex-shrink:0">
+            ${miniIcons}
+            ${viewBtn}
+            <button class="btn btn-ghost btn-sm" style="padding:2px 7px;font-size:10px;flex-shrink:0" title="Terminal ECA — rapport ${r.label}" onclick="openLevelTerminal('report', {sbId:'${sbId}', entityId:'${proj.entity}', projId:'${projId}', projName:'${(proj.name||'').replace(/'/g,"\\'")}', reportFile:'${r.label}', explainFile:${r.explain_file ? `'${r.explain_file}'` : 'null'}, syntheseFile:${r.synthese_file ? `'${r.synthese_file}'` : 'null'}})">🖥️</button>
+          </div>
         </div>`;
       }
       html += '</div>';
