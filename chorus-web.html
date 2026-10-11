@@ -3601,6 +3601,13 @@ async function renderPvThesaurusTab() {
   html += `</div>`;
 
   // ── Non-résolus (⚠️ Pending) ────────────────────────────────────
+  // Résolution inline : chaque ligne porte ✅ Confirmer / ❌ Rejeter —
+  // cf. pvThesToggleConfirm/pvThesConfirm/pvThesReject ci-dessous.
+  // _pvPendingRows mémorise les lignes dans l'ordre de rendu pour que les
+  // handlers (appelés par index, cf. onclick inline) retrouvent shard/term/
+  // sourceImport sans ré-échapper ces valeurs dans le HTML.
+  _pvPendingRows = pending;
+
   html += `<div style="margin-bottom:16px">
     <div style="font-size:11px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px">⚠️ En attente de confirmation (${nPending})</div>`;
   if (nPending) {
@@ -3609,12 +3616,37 @@ async function renderPvThesaurusTab() {
         <th style="text-align:left;padding:4px 8px;color:var(--text-muted);font-weight:600">Terme projet</th>
         <th style="text-align:left;padding:4px 8px;color:var(--text-muted);font-weight:600">Mapping proposé</th>
         <th style="text-align:left;padding:4px 8px;color:var(--text-muted);font-weight:600">Flag</th>
+        <th style="text-align:left;padding:4px 8px;color:var(--text-muted);font-weight:600">Action</th>
       </tr></thead>
-      <tbody>${pending.map(p => `
+      <tbody>${pending.map((p, i) => `
         <tr style="border-bottom:1px solid var(--border-light)">
           <td style="padding:4px 8px;color:var(--text-secondary)">${p.term}</td>
           <td style="padding:4px 8px;color:var(--warn);font-family:'JetBrains Mono',monospace;font-size:11px">${p.proposed || ''}</td>
           <td style="padding:4px 8px;color:var(--text-muted);font-size:11px">${p.flag || ''}</td>
+          <td style="padding:4px 8px;white-space:nowrap">
+            <button class="btn btn-ghost" style="font-size:11px;padding:2px 8px;color:var(--success)" onclick="pvThesToggleConfirm(${i})" id="pv-thes-confirm-btn-${i}">✅ Confirmer</button>
+            <button class="btn btn-ghost" style="font-size:11px;padding:2px 8px;color:var(--error)" onclick="pvThesReject(${i})">❌ Rejeter</button>
+          </td>
+        </tr>
+        <tr id="pv-thes-confirm-row-${i}" hidden style="border-bottom:1px solid var(--border-light)">
+          <td colspan="4" style="padding:8px;background:var(--bg-elevated)">
+            <div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap">
+              <div>
+                <label style="display:block;font-size:10px;color:var(--text-muted);margin-bottom:2px">type_element *</label>
+                <input class="form-input" style="font-size:12px;padding:4px 8px;width:220px" id="pv-thes-te-${i}" value="${_pvGuessTypeElement(p.proposed)}">
+              </div>
+              <div>
+                <label style="display:block;font-size:10px;color:var(--text-muted);margin-bottom:2px">slot (optionnel)</label>
+                <input class="form-input" style="font-size:12px;padding:4px 8px;width:160px" id="pv-thes-slot-${i}" value="${_pvGuessSlotHint(p.proposed).slot}">
+              </div>
+              <div>
+                <label style="display:block;font-size:10px;color:var(--text-muted);margin-bottom:2px">value (optionnel)</label>
+                <input class="form-input" style="font-size:12px;padding:4px 8px;width:160px" id="pv-thes-val-${i}" value="${_pvGuessSlotHint(p.proposed).value}">
+              </div>
+              <button class="btn btn-primary" style="font-size:11px;padding:4px 10px" onclick="pvThesConfirm(${i})">Valider</button>
+              <button class="btn btn-ghost" style="font-size:11px;padding:4px 10px" onclick="pvThesToggleConfirm(${i})">Annuler</button>
+            </div>
+          </td>
         </tr>`).join('')}
       </tbody>
     </table></div>`;
@@ -3624,6 +3656,73 @@ async function renderPvThesaurusTab() {
   html += `</div>`;
 
   panel.innerHTML = html;
+}
+
+// ── Résolution inline des lignes Pending (onglet Thesaurus, vue Projet) ──
+let _pvPendingRows = [];
+
+// Extrait un type_element candidat du texte "Proposed KB mapping"
+// (ex: "type_element: chiffrement_authentifie ? (nom_mecanisme: GCM-SIV)"
+// → "chiffrement_authentifie") — pré-remplissage uniquement, l'ingénieur
+// reste libre de corriger avant validation.
+function _pvGuessTypeElement(proposed) {
+  if (!proposed) return '';
+  const m = proposed.match(/type_element:\s*([a-zA-Z_][\w]*)/i);
+  return m ? m[1] : '';
+}
+
+// Extrait un couple slot/value candidat du premier groupe parenthésé
+// "(slot: value)" rencontré dans le texte proposé — sert à pré-remplir la
+// ligne optionnelle "Aliases — slot values" quand le mapping proposé en
+// suggère déjà un (cas fréquent : "(nom_mecanisme: GCM-SIV)").
+function _pvGuessSlotHint(proposed) {
+  if (!proposed) return { slot: '', value: '' };
+  const m = proposed.match(/\(([a-zA-Z_][\w]*)\s*:\s*([^)?]+?)\s*\)/);
+  return m ? { slot: m[1], value: m[2].trim() } : { slot: '', value: '' };
+}
+
+function pvThesToggleConfirm(i) {
+  const row = document.getElementById(`pv-thes-confirm-row-${i}`);
+  if (row) row.hidden = !row.hidden;
+}
+
+async function pvThesReject(i) {
+  const p = _pvPendingRows[i];
+  if (!p || !currentSandbox) return;
+  if (!confirm(`Classer "${p.term}" en hors-périmètre (Out-of-scope) ?`)) return;
+  await _pvThesSubmitResolve({ shard: p.shard, term: p.term, sourceImport: p.sourceImport, action: 'reject' });
+}
+
+async function pvThesConfirm(i) {
+  const p = _pvPendingRows[i];
+  if (!p || !currentSandbox) return;
+  const typeElement = document.getElementById(`pv-thes-te-${i}`)?.value.trim();
+  if (!typeElement) { alert('type_element requis pour confirmer.'); return; }
+  const slot  = document.getElementById(`pv-thes-slot-${i}`)?.value.trim();
+  const value = document.getElementById(`pv-thes-val-${i}`)?.value.trim();
+  await _pvThesSubmitResolve({
+    shard: p.shard, term: p.term, sourceImport: p.sourceImport, action: 'confirm',
+    typeElement, slot: slot || undefined, value: value || undefined,
+  });
+}
+
+async function _pvThesSubmitResolve(body) {
+  try {
+    const r = await fetch(`${API}/api/sandboxes/${currentSandbox.id}/thesaurus/resolve`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+    });
+    const data = await r.json();
+    if (!r.ok || !data.ok) throw new Error(data.error || 'Échec de la résolution');
+    // Invalider le cache de l'onglet pour ce projet et re-rendre depuis le
+    // fichier org fraîchement écrit (pas de mise à jour optimiste en
+    // mémoire — on relit la source de vérité pour rester fiable y compris
+    // en cas de lignes multiples pointant sur le même terme).
+    const cacheKey = `${currentSandbox.id}/${currentProject.entity}/${currentProject.id}`;
+    delete _pvThesaurusCache[cacheKey];
+    renderPvThesaurusTab();
+  } catch (err) {
+    alert(`Erreur : ${err.message}`);
+  }
 }
 
 

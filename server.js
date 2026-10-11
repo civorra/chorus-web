@@ -239,6 +239,31 @@ app.get('/api/sandboxes/:sbId/agents/:slug/org', (req, res) => {
   }
 });
 
+// Résolution d'une ligne "Pending" du thesaurus (onglet Thesaurus — vue
+// Projet) : confirme (→ Aliases type_element [+ slot values optionnel])
+// ou rejette (→ Out-of-scope) un alignement terminologique en attente.
+//
+// Body JSON :
+//   { shard, term, sourceImport, action: 'confirm'|'reject',
+//     typeElement?, slot?, value? }
+//
+// `typeElement` requis si action=confirm ; `slot`+`value` optionnels pour
+// ajouter en plus une ligne "Aliases — slot values" dans le même geste.
+app.post('/api/sandboxes/:sbId/thesaurus/resolve', (req, res) => {
+  const { shard, term, sourceImport, action, typeElement, slot, value } = req.body || {};
+  if (!shard || !term || !sourceImport || !action) {
+    return res.status(400).json({ ok: false, error: 'shard, term, sourceImport, action requis' });
+  }
+  try {
+    const result = chorus.resolveThesaurusPending(
+      req.params.sbId, shard, term, sourceImport, action, { typeElement, slot, value }
+    );
+    res.json(result);
+  } catch (err) {
+    res.status(400).json({ ok: false, error: err.message });
+  }
+});
+
 // ═════════════════════════════════════════════════════════════
 // ROUTE 2 — POST /api/sandboxes/:sbId/entities/:entityId/projects/import
 //
