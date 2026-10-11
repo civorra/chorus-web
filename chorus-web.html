@@ -1210,6 +1210,7 @@ input, select, textarea { font-family: inherit; }
   animation: lvlSpin 0.8s linear infinite; flex-shrink: 0;
 }
 @keyframes lvlSpin { to { transform: rotate(360deg); } }
+@keyframes lvlTermPulse { 0%,100%{opacity:1} 50%{opacity:.35} }
 .lvl-term-elapsed {
   font-size: 10px; color: #2A4A6A;
 }
@@ -2612,7 +2613,12 @@ input, select, textarea { font-family: inherit; }
           style="background:none;border:none;color:#4E6A8A;cursor:pointer;font-size:12px;line-height:1;padding:0 6px">
           🗑
         </button>
-        <button onclick="closeLevelTerminal()" style="background:none;border:none;color:#8B949E;cursor:pointer;font-size:14px;line-height:1;padding:0 2px">✕</button>
+        <button onclick="minimizeLevelTerminal()"
+          title="Réduire (le traitement en cours continue en arrière-plan — réouvrable à l'identique)"
+          style="background:none;border:none;color:#8B949E;cursor:pointer;font-size:14px;line-height:1;padding:0 4px">
+          ➖
+        </button>
+        <button onclick="closeLevelTerminal()" style="background:none;border:none;color:#8B949E;cursor:pointer;font-size:14px;line-height:1;padding:0 2px" title="Fermer définitivement (annule le traitement en cours)">✕</button>
       </div>
       <div class="eca-session-output" id="lvl-term-output" style="flex:1;min-height:0;overflow-y:auto"></div>
       <div class="eca-session-input-row">
@@ -3330,11 +3336,17 @@ async function refreshSandboxReports(sbId) {
     } else {
       renderProjectsTab();
     }
-    // Panneau pipeline, si ouvert sur ce projet — rafraîchit la liste des
-    // run-reports affichée (y compris les icônes 📋/💡 désormais liées).
+    // Panneau pipeline, si ouvert sur ce projet — rafraîchit UNIQUEMENT le
+    // rapport le plus récent (celui produit par le run en cours/venant de
+    // se terminer), pas tout l'historique des run-reports du projet. Le
+    // panneau d'exécution du pipeline doit montrer "le rapport généré",
+    // pas une liste — l'historique complet reste consultable via l'onglet
+    // Rapports de la page projet.
     if (!document.getElementById('pipeline-modal-overlay')?.hidden && currentProject) {
-      const runReports = (currentProject.reports || []).filter(r => r.kind === 'run');
-      if (runReports.length) renderReportsList(runReports);
+      const runReports = sortReportsByDateDesc(
+        (currentProject.reports || []).filter(r => r.kind === 'run')
+      );
+      if (runReports.length) renderReportsList([runReports[0]]);
     }
   } catch (e) {
     console.warn('refreshSandboxReports: scan impossible —', e.message);
@@ -4028,21 +4040,24 @@ function goToLastRun(sbId) {
   const proj = (PROJECTS[sbId] || []).find(p => p.id === sb.last_run_project);
   if (!proj) return;
 
-  // Pré-charger _lastReports avec les rapports run.pl du projet (si disponibles)
-  const runReports = (proj.reports || []).filter(r => r.kind === 'run');
-  if (runReports.length) {
-    window._lastReports = runReports;
+  // Pré-charger _lastReports avec le rapport run.pl le plus récent du projet
+  // (le panneau d'exécution du pipeline affiche le rapport généré, pas
+  // l'historique complet — celui-ci reste disponible via l'onglet Rapports).
+  const runReports = sortReportsByDateDesc((proj.reports || []).filter(r => r.kind === 'run'));
+  const latestRunReport = runReports.length ? [runReports[0]] : [];
+  if (latestRunReport.length) {
+    window._lastReports = latestRunReport;
   }
 
   // 4. Ouvrir le pipeline modal pour ce projet
   selectProjectPipeline(sb.last_run_project);
 
-  // 5. Afficher immédiatement le panneau rapports avec les runs existants
-  if (runReports.length) {
+  // 5. Afficher immédiatement le panneau rapports avec le dernier run existant
+  if (latestRunReport.length) {
     const reportsPanel = document.getElementById('pipeline-reports');
     if (reportsPanel) {
       reportsPanel.style.display = 'block';
-      renderReportsList(runReports);
+      renderReportsList(latestRunReport);
     }
   }
 }
@@ -4431,6 +4446,31 @@ const TESTING_META = {
 };
 let _testsSelected = new Set();
 
+// Cache léger des données README (bugs résolus) par sandbox — réutilise le
+// même endpoint que le panneau Corpus (/api/sandboxes/:sbId/corpus), pour
+// éviter de dupliquer le parsing déjà fait côté chorus.js § parseSandboxReadme.
+// Si _sbcData est déjà chargé pour ce sandbox (panneau Corpus ouvert dans la
+// même session), on le réutilise directement sans re-fetch.
+const _testingBugsCache = {};
+
+async function fetchTestingBugs(sbId) {
+  if (_testingBugsCache[sbId] !== undefined) return _testingBugsCache[sbId];
+  // Réutilisation immédiate si le panneau Corpus a déjà chargé ce sandbox.
+  if (_sbcData && currentSandbox?.id === sbId && _sbcData.readme) {
+    _testingBugsCache[sbId] = _sbcData.readme;
+    return _sbcData.readme;
+  }
+  try {
+    const r = await fetch(`${API}/api/sandboxes/${sbId}/corpus`);
+    if (!r.ok) { _testingBugsCache[sbId] = null; return null; }
+    const { corpus } = await r.json();
+    _testingBugsCache[sbId] = corpus?.readme || null;
+  } catch {
+    _testingBugsCache[sbId] = null;
+  }
+  return _testingBugsCache[sbId];
+}
+
 function renderTestingTab() {
   const sb = currentSandbox;
   const panel = document.getElementById('tab-tests');
@@ -4493,12 +4533,114 @@ function renderTestingTab() {
         Tout sélectionner
       </label>
       <button class="btn btn-primary btn-sm" ${_testsSelected.size === 0 ? 'disabled' : ''} onclick="runTestingSelection()">🖥️ Lancer la sélection via ECA (${_testsSelected.size})</button>
+      ${kbModeled ? `<button class="btn btn-ghost btn-sm" onclick="generateAllTests()" title="${nExisting > 0 ? 'Sauvegarde les tests existants puis relance chorus-create-project --batch' : 'Lance chorus-create-project --batch pour générer les 4 tests'}">🔄 ${nExisting > 0 ? 'Re-générer tous les tests' : 'Générer tous les tests'}</button>` : ''}
       ${nExisting > 1 ? `<span style="font-size:11px;color:var(--text-muted)">${nExisting} test(s) générés sur 4</span>` : ''}
     </div>
     <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:12px">
       ${cards}
     </div>
+    <div id="testing-bugs-section" style="margin-top:18px"></div>
   `;
+
+  // Chargement paresseux (+ cache) des bugs résolus trouvés dans
+  // README.org § Session notes — réutilisé depuis le panneau Corpus /
+  // Knowledge Base si déjà chargé, sinon fetch dédié. Rendu asynchrone pour
+  // ne pas bloquer l'affichage des cartes de tests ci-dessus.
+  fetchTestingBugs(sb.id).then(readme => {
+    // L'utilisateur a pu changer de sandbox/onglet entre-temps.
+    if (currentSandbox?.id !== sb.id) return;
+    const section = document.getElementById('testing-bugs-section');
+    if (section) section.innerHTML = renderTestingBugsSection(readme, sb.id);
+  });
+}
+
+// ─── BUGS RÉSOLUS — carte résumé + accordéon (cartes, groupées par session) ──
+// Réutilise readme.bugsFixed / readme.bugsTable (parsés par chorus.js §
+// parseSandboxReadme depuis README.org § Session notes). Le tableau brut
+// (headers/rows génériques, 1ère colonne = "Session" si multi-sessions) est
+// reconstruit ici en petites cartes plus lisibles qu'un tableau `|`-separated,
+// groupées par session pour donner un vrai historique de debugging.
+let _testingBugsOpen = false;
+
+function renderTestingBugsSection(readme, sbId) {
+  const n = readme?.bugsFixed || 0;
+  if (!n) return ''; // rien à afficher — aucun bug résolu trouvé dans README.org
+
+  const tbl = readme.bugsTable;
+  const hasSessionCol = tbl && tbl.headers[0] === 'Session';
+
+  // Regroupe les lignes par session (si colonne "Session" présente), sinon
+  // une seule section "Session unique".
+  const groups = new Map();
+  if (tbl) {
+    tbl.rows.forEach(r => {
+      const key   = hasSessionCol ? r[0] : '—';
+      const cells = hasSessionCol ? r.slice(1) : r;
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(cells);
+    });
+  }
+  const headers = tbl ? (hasSessionCol ? tbl.headers.slice(1) : tbl.headers) : [];
+
+  const cardsHtml = [...groups.entries()].map(([session, rows]) => `
+    <div style="margin-bottom:10px">
+      ${hasSessionCol ? `<div style="font-size:11px;font-weight:600;color:var(--text-muted);margin:8px 0 6px;display:flex;align-items:center;gap:6px">
+        <span style="width:6px;height:6px;border-radius:50%;background:var(--accent);display:inline-block"></span>
+        ${session}
+      </div>` : ''}
+      <div style="display:flex;flex-direction:column;gap:6px">
+        ${rows.map(cells => `
+          <div style="background:var(--bg-surface);border:1px solid var(--border);border-left:3px solid var(--error,#EF4444);border-radius:6px;padding:8px 10px;font-size:12px">
+            ${cells.map((c, i) => headers[i]
+              ? `<div style="margin-bottom:${i < cells.length - 1 ? '3' : '0'}px">
+                   <span style="color:var(--text-muted);font-size:10px;text-transform:uppercase;letter-spacing:.03em">${headers[i]}</span>
+                   <span style="color:var(--text-secondary);margin-left:4px">${c}</span>
+                 </div>`
+              : ''
+            ).join('')}
+          </div>
+        `).join('')}
+      </div>
+    </div>
+  `).join('');
+
+  return `
+    <div class="pv-panel">
+      <div style="display:flex;align-items:center;gap:10px;cursor:pointer" onclick="toggleTestingBugsSection()">
+        <span style="font-size:15px">🐛</span>
+        <span style="font-weight:600;font-size:13px">${n} bug${n > 1 ? 's' : ''} corrigé${n > 1 ? 's' : ''} durant les tests</span>
+        <span style="font-size:11px;color:var(--text-muted)">découverts via chorus-strengthen / chorus-stress</span>
+        <span id="testing-bugs-chevron" class="cov-chevron${_testingBugsOpen ? ' open' : ''}" style="margin-left:auto">▸</span>
+      </div>
+      <div id="testing-bugs-detail" class="${_testingBugsOpen ? '' : 'hidden'}" style="margin-top:10px">
+        ${cardsHtml || '<div class="pv-empty">Détail indisponible — voir README.org § Session notes.</div>'}
+        <div style="margin-top:4px">
+          <button class="btn btn-ghost btn-sm" style="font-size:11px" onclick="openSandboxCorpusToKb('${sbId}')">
+            📚 Voir dans Knowledge Base
+          </button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function toggleTestingBugsSection() {
+  _testingBugsOpen = !_testingBugsOpen;
+  document.getElementById('testing-bugs-detail')?.classList.toggle('hidden', !_testingBugsOpen);
+  document.getElementById('testing-bugs-chevron')?.classList.toggle('open', _testingBugsOpen);
+}
+
+// Lien croisé "📚 Voir dans Knowledge Base" — ouvre le panneau Corpus du
+// sandbox et bascule directement sur l'onglet Knowledge Base, où le détail
+// complet (+ Santé KB, enrichissements, validation finale) est déjà rendu
+// par openSandboxCorpus() (cf. § SESSION — enrichissements + validation).
+async function openSandboxCorpusToKb(sbId) {
+  if (currentSandbox?.id !== sbId) {
+    const sb = SANDBOXES.find(s => s.id === sbId);
+    if (sb) currentSandbox = sb;
+  }
+  await openSandboxCorpus();
+  switchSbcTab('overview');
 }
 
 const TESTING_FILES = {
@@ -4531,6 +4673,33 @@ function generateTestingStrategy(slug) {
   if (!currentSandbox) return;
   openLevelTerminal('sandbox', { sbId: currentSandbox.id },
     `chorus-create-project ${currentSandbox.id} --strategy ${slug}`);
+}
+
+// Génère/re-génère TOUS les tests d'un coup via chorus-create-project
+// --batch (4 strategies : iso/edges/cross/scale). Si des fichiers de test
+// existent déjà, on demande explicitement à l'agent de les sauvegarder
+// (copie horodatée) avant tout remplacement — jamais d'écrasement silencieux
+// d'un test potentiellement déjà exécuté/validé. Laissé en langage naturel
+// (plutôt que scripté côté serveur) pour que l'agent confirme chaque backup
+// effectué avant de lancer la génération, cf. convention des autres commandes
+// multi-étapes de cet onglet (runTestingSelection).
+function generateAllTests() {
+  if (!currentSandbox) return;
+  const sb = currentSandbox;
+  const testing = sb.testing || {};
+  const existingFiles = Object.keys(TESTING_FILES)
+    .filter(s => testing[s])
+    .map(s => TESTING_FILES[s]);
+
+  const cmd = existingFiles.length > 0
+    ? `Avant toute chose, sauvegarde les fichiers de test existants suivants dans ${sb.id} `
+      + `en les copiant avec un suffixe horodaté (ex: project-rules-iso.json.bak-AAAAMMJJ-HHMMSS) `
+      + `dans le même dossier : ` + existingFiles.map(f => `"${f}"`).join(', ') + `. `
+      + `Confirme chaque backup effectué, puis lance chorus-create-project ${sb.id} --batch `
+      + `pour re-générer les 4 tests (iso/edges/cross/scale).`
+    : `chorus-create-project ${sb.id} --batch`;
+
+  openLevelTerminal('sandbox', { sbId: sb.id }, cmd);
 }
 
 // Lance un seul test existant via chorus-check (jamais run.pl direct — cf.
@@ -5719,6 +5888,7 @@ let _lvlTermHistIdx = -1;
 let _lvlTermSessionId = null;
 let _lvlTermAbortCtrl = null;  // AbortController de la requête SSE courante
 let _lvlTermLastCmd   = null;  // dernière commande exécutée (pour Retry)
+let _lvlTermMinimized = false; // true si le terminal est réduit (overlay masqué, stream/session toujours vivants)
 
 function levelPromptLabel(ctx) {
   const { level, sbId, entityId, projId, reportFile } = ctx;
@@ -5813,8 +5983,45 @@ function lvlTermClearHistoryConfirm() {
   });
 }
 
+function lvlTermSameCtx(a, b) {
+  if (!a || !b) return false;
+  return a.level === b.level && a.sbId === b.sbId && (a.entityId||null) === (b.entityId||null)
+    && (a.projId||null) === (b.projId||null) && (a.reportFile||null) === (b.reportFile||null);
+}
+
 function openLevelTerminal(level, ctx, autoCmd = null) {
-  _lvlTermCtx = { level, ...ctx };
+  const requestedCtx = { level, ...ctx };
+
+  // Réouverture d'un terminal réduit sur EXACTEMENT le même contexte : ne
+  // rien réinitialiser (session/stream en cours, sortie déjà affichée) —
+  // on se contente de réafficher l'overlay tel quel, restitué à l'identique.
+  if (_lvlTermMinimized && lvlTermSameCtx(_lvlTermCtx, requestedCtx)) {
+    hideMinimizedTerminalIndicator();
+    _lvlTermMinimized = false;
+    document.getElementById('level-terminal-overlay').hidden = false;
+    const out = document.getElementById('lvl-term-output');
+    if (out) out.scrollTop = out.scrollHeight;
+    const input = document.getElementById('lvl-term-input');
+    if (input && !input.disabled) input.focus();
+    return;
+  }
+
+  // Un autre terminal réduit était actif : le fermer proprement (stop +
+  // suppression du chat ECA) avant d'en ouvrir un nouveau — on ne garde
+  // jamais plus d'un terminal/session vivant en arrière-plan à la fois.
+  if (_lvlTermMinimized) {
+    hideMinimizedTerminalIndicator();
+    levelTerminalStop();
+    if (_lvlTermCtx && _lvlTermCtx.sbId && _lvlTermSessionId) {
+      fetch(`${API}/api/sandboxes/${_lvlTermCtx.sbId}/terminal`, {
+        method: 'DELETE', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sessionId: _lvlTermSessionId }),
+      }).catch(() => {});
+    }
+    _lvlTermMinimized = false;
+  }
+
+  _lvlTermCtx = requestedCtx;
   _lvlTermHistory = [];
   _lvlTermHistIdx = -1;
   // Un seul chat ECA par ouverture de terminal — garde l'historique entre
@@ -5928,11 +6135,11 @@ function closeLevelTerminal() {
   if (_lvlTermAbortCtrl) {
     const ok = confirm(
       'Une session ECA est en cours dans ce terminal.\n\n' +
-      'Fermer ce panneau interrompt la génération en cours et clôt ' +
+      'Fermer ce panneau (✕) interrompt la génération en cours et clôt ' +
       'définitivement cette session ECA (son historique de conversation ' +
-      'sera perdu) — contrairement à avant, le traitement ne continue plus ' +
-      'en arrière-plan.\n\n' +
-      'Fermer quand même ?'
+      'sera perdu). Pour laisser le traitement continuer en arrière-plan ' +
+      'et le retrouver tel quel plus tard, utilisez plutôt « ➖ Réduire ».\n\n' +
+      'Fermer définitivement quand même ?'
     );
     if (!ok) return;
     // Interrompre le stream en cours avant la suppression du chat, sinon la
@@ -5954,6 +6161,51 @@ function closeLevelTerminal() {
   document.getElementById('level-terminal-overlay').hidden = true;
   _lvlTermCtx = null;
   _lvlTermSessionId = null;
+  _lvlTermMinimized = false;
+  hideMinimizedTerminalIndicator();
+}
+
+/** Réduit le terminal sans rien interrompre : masque simplement l'overlay,
+ * le fetch SSE en cours (le cas échéant) continue de recevoir les chunks et
+ * d'alimenter l'historique en arrière-plan (le navigateur garde le flux
+ * HTTP ouvert tant que l'onglet reste chargé — contrairement à une fermeture
+ * qui annule le stream et supprime le chat ECA côté serveur). Affiche un
+ * indicateur flottant permettant de rouvrir le terminal à l'identique via
+ * openLevelTerminal() sur le même contexte (cf. lvlTermSameCtx). */
+function minimizeLevelTerminal() {
+  if (!_lvlTermCtx) return;
+  _lvlTermMinimized = true;
+  document.getElementById('level-terminal-overlay').hidden = true;
+  showMinimizedTerminalIndicator();
+}
+
+function showMinimizedTerminalIndicator() {
+  let el = document.getElementById('lvl-term-minimized-indicator');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'lvl-term-minimized-indicator';
+    el.style.cssText =
+      'position:fixed;bottom:18px;right:18px;z-index:850;display:flex;align-items:center;gap:8px;' +
+      'background:var(--bg-surface,#161B22);border:1px solid var(--accent,#3B82F6);border-radius:24px;' +
+      'padding:8px 14px 8px 12px;cursor:pointer;box-shadow:0 4px 16px rgba(0,0,0,.4);' +
+      'font-family:\'JetBrains Mono\',monospace;font-size:12px;color:var(--text-primary,#E6EDF3)';
+    el.onclick = () => {
+      if (_lvlTermCtx) openLevelTerminal(_lvlTermCtx.level, _lvlTermCtx);
+    };
+    document.body.appendChild(el);
+  }
+  const label = _lvlTermCtx ? levelPromptLabel(_lvlTermCtx).replace(' ?>', '') : '?';
+  const busy = !!_lvlTermAbortCtrl;
+  el.innerHTML =
+    `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${busy ? '#F5A623' : '#10B981'};${busy ? 'animation:lvlTermPulse 1.2s infinite' : ''}"></span>` +
+    `<span>🖥️ ECA — ${escapeHtml(label)}</span>` +
+    `<span style="color:var(--text-muted,#8B949E)">${busy ? '· en cours…' : '· réduit'}</span>`;
+  el.hidden = false;
+}
+
+function hideMinimizedTerminalIndicator() {
+  const el = document.getElementById('lvl-term-minimized-indicator');
+  if (el) el.hidden = true;
 }
 
 function levelTerminalStop() {
@@ -5971,12 +6223,48 @@ function levelTerminalStop() {
   }
 }
 
+// ─── RING BUFFER DOM — cap du nombre de nœuds live affichés ──────────────
+// Une session lourde (chorus-feed, chorus-create-project --batch…) peut
+// produire des centaines de tool-calls. Sans limite, le DOM de
+// #lvl-term-output croît indéfiniment pendant la session active (distinct
+// du cap sur l'historique persisté LVL_TERM_HIST_MAXCHAR, qui ne s'applique
+// qu'à la sauvegarde localStorage une fois l'échange figé). On purge donc
+// les plus anciens nœuds du DOM au-delà de LVL_TERM_MAX_LINES — l'agent ECA
+// et le sandbox ne sont jamais affectés, seul l'affichage live est élagué.
+const LVL_TERM_MAX_LINES = 2000;
+
+function lvlTermPruneOldLines() {
+  const out = document.getElementById('lvl-term-output');
+  if (!out) return;
+  const excess = out.children.length - LVL_TERM_MAX_LINES;
+  if (excess <= 0) return;
+  // Insère (une seule fois, de façon idempotente) un marqueur juste avant
+  // la coupe pour signaler visuellement la troncature, puis retire les
+  // nœuds les plus anciens en tête du buffer.
+  let marker = out.querySelector('.eca-term-pruned-marker');
+  if (!marker) {
+    marker = document.createElement('div');
+    marker.className = 'eca-session-line dim eca-term-pruned-marker';
+    marker.textContent = `… lignes plus anciennes retirées de l'affichage (limite ${LVL_TERM_MAX_LINES} lignes — l'historique complet reste disponible côté sandbox) …`;
+    out.insertBefore(marker, out.firstChild);
+  }
+  // Supprime depuis le début, en sautant le marqueur lui-même.
+  let removed = 0;
+  let node = out.firstChild;
+  while (node && removed < excess) {
+    const next = node.nextSibling;
+    if (node !== marker) { out.removeChild(node); removed++; }
+    node = next;
+  }
+}
+
 function lvlTermAppend(text, cls = 'resp') {
   const out  = document.getElementById('lvl-term-output');
   const line = document.createElement('div');
   line.className = `eca-session-line ${cls}`;
   line.textContent = text;
   out.appendChild(line);
+  lvlTermPruneOldLines();
   out.scrollTop = out.scrollHeight;
   return line;
 }
@@ -6058,6 +6346,7 @@ function lvlTermAppendTool(toolInfo) {
   }
 
   out.appendChild(line);
+  lvlTermPruneOldLines();
   out.scrollTop = out.scrollHeight;
   return line;
 }
@@ -6127,6 +6416,7 @@ async function levelTerminalExec(cmd) {
   cmdLine.className = 'eca-session-line cmd';
   cmdLine.innerHTML = `<span class="eca-ps">${escapeHtml(prompt)}</span> ${escapeHtml(cmd)}`;
   out.appendChild(cmdLine);
+  lvlTermPruneOldLines();
   out.scrollTop = out.scrollHeight;
 
   if (cmd.toLowerCase() === 'clear') { out.innerHTML = ''; return; }
@@ -6312,8 +6602,12 @@ async function levelTerminalExec(cmd) {
     _lvlTermAbortCtrl = null;
     const stopBtn = document.getElementById('lvl-term-stop-btn');
     if (stopBtn) stopBtn.hidden = true;
-    if (input) { input.disabled = false; input.focus(); }
+    if (input) { input.disabled = false; if (!_lvlTermMinimized) input.focus(); }
     out.scrollTop = out.scrollHeight;
+    // Si le terminal a été réduit pendant la génération, mettre à jour
+    // l'indicateur flottant (pastille "en cours…" → "terminé") plutôt que
+    // de laisser un état figé jusqu'à la réouverture.
+    if (_lvlTermMinimized) showMinimizedTerminalIndicator();
   }
 }
 
@@ -8321,12 +8615,13 @@ function fmtElapsed(ms) {
 }
 
 /**
- * Rend la liste des sessions ECA actives. Chaque entrée navigue vers le
- * sandbox concerné au clic (selectSandbox) — on ne peut PAS rouvrir/
- * rattacher le flux SSE déjà en cours ailleurs (c'est une requête HTTP
- * streamée propre à l'onglet/fenêtre qui l'a ouverte, pas un canal pub/sub
- * indépendant) : ce badge est informatif + navigation contextuelle, pas une
- * vraie reprise de connexion sur un flux existant.
+ * Rend la liste des sessions ECA actives. Chaque entrée ouvre, au clic,
+ * un terminal ECA au niveau/contexte exact de la session (sandbox / entity /
+ * project / report) via goToActiveTerminal() — on ne peut PAS rattacher le
+ * flux SSE déjà en cours ailleurs (c'est une requête HTTP streamée propre à
+ * l'onglet/fenêtre qui l'a ouverte, pas un canal pub/sub indépendant) : un
+ * nouveau terminal/session est donc ouvert sur ce même contexte, plutôt que
+ * de simplement naviguer vers la page projet.
  */
 function renderActiveTerminalsPanel() {
   const panel = document.getElementById('eca-active-terminals-panel');
@@ -8339,10 +8634,10 @@ function renderActiveTerminalsPanel() {
   }
 
   const levelLabel = { sandbox: 'sandbox', entity: 'entity', project: 'projet', report: 'rapport' };
-  const items = sessions.map(s => {
+  const items = sessions.map((s, i) => {
     const target = s.entityId ? `${s.sbId}/${s.entityId}${s.projId ? '/' + s.projId : ''}` : s.sbId;
     return `
-      <div class="eat-item" onclick="goToActiveTerminal('${s.sbId}')">
+      <div class="eat-item" onclick="goToActiveTerminal(${i})">
         <div class="eat-item-top">
           <span class="eat-item-level">${levelLabel[s.level] || s.level}</span>
           <span class="eat-item-sb">${target}</span>
@@ -8355,12 +8650,43 @@ function renderActiveTerminalsPanel() {
   panel.innerHTML = `<div class="eat-header">Sessions ECA actives (${sessions.length})</div>${items}`;
 }
 
-/** Navigue vers le sandbox d'une session active — ne rouvre pas le terminal
- * lui-même (voir note dans renderActiveTerminalsPanel) mais place l'utilisateur
- * au bon endroit pour en ouvrir un nouveau ou attendre la fin de l'actuel. */
-function goToActiveTerminal(sbId) {
+/** Ouvre le terminal ECA au niveau/contexte exact de la session active
+ * cliquée (sandbox / entity / project / report), plutôt que de simplement
+ * naviguer vers la page projet. On ne peut pas "rattacher" le flux SSE déjà
+ * en cours côté serveur (requête HTTP streamée propre à l'onglet/fenêtre qui
+ * l'a ouverte — voir note dans renderActiveTerminalsPanel) : un nouveau
+ * terminal est ouvert pour ce même contexte, avec sa propre session, mais
+ * affiché directement dans la bonne fenêtre terminal plutôt que de rediriger
+ * vers la liste/fiche projet. */
+function goToActiveTerminal(sessionIndex) {
   document.getElementById('eca-active-terminals-panel').hidden = true;
-  selectSandbox(sbId);
+  const s = _activeTerminalsCache[sessionIndex];
+  if (!s) return;
+
+  // S'assurer que le sandbox (et donc PROJECTS/ENTITIES) est bien chargé
+  // avant d'ouvrir le terminal, pour que le message d'accueil du niveau
+  // project/entity dispose des bonnes données (noms, frames, etc.).
+  if (currentSandbox?.id !== s.sbId) selectSandbox(s.sbId);
+
+  const level = s.level || 'sandbox';
+  if (level === 'sandbox') {
+    openLevelTerminal('sandbox', { sbId: s.sbId });
+  } else if (level === 'entity') {
+    openLevelTerminal('entity', { sbId: s.sbId, entityId: s.entityId });
+  } else if (level === 'project') {
+    const proj = (PROJECTS[s.sbId] || []).find(p => p.id === s.projId);
+    openLevelTerminal('project', {
+      sbId: s.sbId, entityId: s.entityId, projId: s.projId,
+      projName: proj ? proj.name : s.projId,
+    });
+  } else if (level === 'report') {
+    openLevelTerminal('report', {
+      sbId: s.sbId, entityId: s.entityId, projId: s.projId,
+      reportFile: s.reportFile,
+    });
+  } else {
+    selectSandbox(s.sbId);
+  }
 }
 
 async function refreshEcaStatus() {
