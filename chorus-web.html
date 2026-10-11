@@ -779,6 +779,47 @@ input, select, textarea { font-family: inherit; }
 .pipeline-step.done .ps-arrow { color: var(--success); }
 .pipeline-step.active .ps-arrow { color: var(--accent); }
 
+/* ── Moteur d'inférence (panneau pipeline) ──────────────────
+   Toutes les valeurs affichées ici proviennent du parsing en direct des
+   lignes réellement imprimées par run.pl (Chorus::Expert/Engine) pendant
+   le streaming SSE — cf. parseEngineLogLine(). Rien n'est simulé : si
+   run.pl n'imprime pas une donnée (ex. KB hash absent sur certains
+   sandboxes), l'élément correspondant reste simplement masqué. */
+.engine-panel {
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px 14px;
+}
+.engine-panel-title {
+  font-size: 11px; font-weight: 700; color: var(--accent);
+  text-transform: uppercase; letter-spacing: .06em;
+  margin-bottom: 10px;
+}
+.engine-panel-stats {
+  display: flex; gap: 18px; flex-wrap: wrap;
+  font-family: 'JetBrains Mono', monospace; font-size: 11px;
+  color: var(--text-secondary); margin-bottom: 8px;
+}
+.engine-panel-stats .eng-stat-val {
+  color: var(--text-primary); font-weight: 700;
+}
+.engine-agents-table {
+  width: 100%; border-collapse: collapse;
+  font-family: 'JetBrains Mono', monospace; font-size: 11px;
+}
+.engine-agents-table th {
+  text-align: left; color: var(--text-muted); font-weight: 600;
+  padding: 4px 8px; border-bottom: 1px solid var(--border);
+}
+.engine-agents-table td {
+  padding: 4px 8px; color: var(--text-secondary);
+  border-bottom: 1px solid var(--border);
+}
+.engine-agents-table tr:last-child td { border-bottom: none; }
+.engine-agents-table td.eng-ok  { color: var(--success); font-weight: 600; }
+.engine-agents-table td.eng-ko  { color: var(--error);   font-weight: 600; }
+
 /* ── Import Session ───────────────────────────── */
 #import-session-overlay {
   position: fixed; inset: 0; background: rgba(5,13,26,.72);
@@ -2170,6 +2211,20 @@ input, select, textarea { font-family: inherit; }
           <div style="width:42px"></div>
         </div>
         <div class="eca-body" id="pipeline-log"></div>
+      </div>
+      <!-- Moteur d'inférence — construit en live à partir des lignes réelles
+           imprimées par run.pl (Chorus::Expert/Engine), parsées dans
+           parseEngineLogLine() au fil du streaming SSE. Aucune valeur
+           simulée : tout disparaît si run.pl ne l'imprime pas. -->
+      <div class="engine-panel" id="engine-panel" style="display:none;flex-shrink:0">
+        <div class="engine-panel-title">⚙️ Moteur d'inférence — Chorus::Expert</div>
+        <div class="engine-panel-stats" id="engine-panel-stats"></div>
+        <div id="engine-panel-agents" style="display:none">
+          <table class="engine-agents-table">
+            <thead><tr><th>Agent</th><th>Ciblés</th><th>OK</th><th>KO</th><th>NA</th></tr></thead>
+            <tbody id="engine-agents-tbody"></tbody>
+          </table>
+        </div>
       </div>
       <div id="pipeline-reports" style="display:none;margin-top:4px;flex-shrink:0">
         <div style="font-size:11px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px">Rapports générés</div>
@@ -3955,6 +4010,7 @@ function selectProjectPipeline(projId) {
   const btn = document.getElementById('pipeline-run-btn');
   btn.disabled = false; btn.textContent = '▶ Lancer run.pl';
   pipelineRunning = false;
+  resetEnginePanel();
 
   updateCmdPreview();
   document.getElementById('pipeline-modal-overlay').hidden = false;
@@ -4011,6 +4067,110 @@ function renderPipelineSteps(activeId) {
   document.getElementById('pipeline-steps').innerHTML = html;
 }
 
+// ─── MOTEUR D'INFÉRENCE (panneau pipeline) ────────────────────
+// Parse en direct les lignes réellement imprimées par run.pl
+// (Chorus::Expert/Chorus::Engine) au fil du streaming SSE — AUCUNE donnée
+// simulée : chaque champ affiché correspond à une ligne effectivement
+// produite par le process Perl pour CE run précis. Si une ligne n'apparaît
+// pas (variante de run.pl qui ne l'imprime pas), l'élément correspondant du
+// panneau reste simplement masqué.
+//
+// Lignes reconnues (communes à tous les run.pl des sandboxes Chorus) :
+//   "Feed: N element(s) loaded"                  → nombre d'éléments chargés
+//   "  KB hash  : <sha256 ou n/a>"                → empreinte figée des règles YAML
+//   "  Pipeline       : SOLVED ✅ | FAILED/TIMEOUT ❌"
+//   "  %-16s  %7s  %6s  %6s  %5s" (tableau agent)  → ligne "Agent  Ciblés  OK  KO  NA"
+let _enginePanelState = null;
+
+function resetEnginePanel() {
+  _enginePanelState = { feedCount: null, kbHash: null, agents: [] };
+  const panel = document.getElementById('engine-panel');
+  if (panel) panel.style.display = 'none';
+  const agentsWrap = document.getElementById('engine-panel-agents');
+  if (agentsWrap) agentsWrap.style.display = 'none';
+}
+
+function renderEnginePanel() {
+  const st = _enginePanelState;
+  if (!st) return;
+  const panel = document.getElementById('engine-panel');
+  if (!panel) return;
+
+  const hasAnything = st.feedCount !== null || st.kbHash !== null || st.agents.length > 0;
+  if (!hasAnything) { panel.style.display = 'none'; return; }
+  panel.style.display = 'block';
+
+  const stats = [];
+  if (st.feedCount !== null) {
+    stats.push(`Feed : <span class="eng-stat-val">${st.feedCount}</span> élément${st.feedCount !== 1 ? 's' : ''} chargé${st.feedCount !== 1 ? 's' : ''} en Frames`);
+  }
+  if (st.kbHash !== null) {
+    const short = st.kbHash.length > 16 ? st.kbHash.slice(0, 12) + '…' : st.kbHash;
+    stats.push(`KB fingerprint : <span class="eng-stat-val" title="${st.kbHash}">${short}</span>`);
+  }
+  if (st.agents.length > 0) {
+    stats.push(`Agents tracés : <span class="eng-stat-val">${st.agents.length}</span>`);
+  }
+  document.getElementById('engine-panel-stats').innerHTML = stats.join(' &nbsp;·&nbsp; ');
+
+  const agentsWrap = document.getElementById('engine-panel-agents');
+  if (st.agents.length > 0) {
+    agentsWrap.style.display = 'block';
+    document.getElementById('engine-agents-tbody').innerHTML = st.agents.map(a => `
+      <tr>
+        <td>${a.label}</td>
+        <td>${a.targeted}</td>
+        <td class="eng-ok">${a.ok !== '-' ? a.ok : '–'}</td>
+        <td class="eng-ko">${a.ko !== '-' ? a.ko : '–'}</td>
+        <td>${a.na !== '-' ? a.na : '–'}</td>
+      </tr>`).join('');
+  } else {
+    agentsWrap.style.display = 'none';
+  }
+}
+
+// Regex pour la ligne de tableau agent — gère les deux formats réellement
+// imprimés par les run.pl du parc (avec ou sans colonne NA) :
+//   "  %-16s  %7d  %6s  %6s  %5s\n"  (CC/ETSI/ANSSI — avec NA)
+//   "  %-16s  %7d  %6s  %6s\n"       (TimberFrame demo — sans NA)
+const RE_AGENT_ROW = /^\s*([A-Za-zÀ-ÿ][\w À-ÿ]*?)\s{2,}(\d+)\s{2,}(-|\d+)\s{2,}(-|\d+)(?:\s{2,}(-|\d+))?\s*$/;
+
+function parseEngineLogLine(line) {
+  if (!_enginePanelState) return;
+  let m;
+
+  if ((m = line.match(/^Feed:\s*(\d+)\s+element/))) {
+    _enginePanelState.feedCount = parseInt(m[1], 10);
+    renderEnginePanel();
+    return;
+  }
+  if ((m = line.match(/^\s*KB hash\s*:\s*(\S.*)$/))) {
+    const val = m[1].trim();
+    if (val && !val.startsWith('n/a')) _enginePanelState.kbHash = val;
+    renderEnginePanel();
+    return;
+  }
+  // Ligne de tableau "Validation process — traversal by agent" — on ignore
+  // explicitement l'en-tête ('Agent  Targeted  OK  KO  NA') en exigeant un
+  // nombre dans le 2e groupe.
+  if ((m = line.match(RE_AGENT_ROW)) && m[1].trim() !== 'Agent') {
+    const [, label, targeted, ok, ko, na] = m;
+    // Évite les doublons si la même ligne est reparsée (ne devrait pas
+    // arriver avec le flux SSE, mais défensif)
+    if (!_enginePanelState.agents.some(a => a.label === label.trim())) {
+      _enginePanelState.agents.push({
+        label: label.trim(),
+        targeted: targeted.trim(),
+        ok: (ok || '-').trim(),
+        ko: (ko || '-').trim(),
+        na: (na || '-').trim(),
+      });
+      renderEnginePanel();
+    }
+    return;
+  }
+}
+
 function ecaTs() {
   return new Date().toTimeString().slice(0,8);
 }
@@ -4064,6 +4224,7 @@ function runPipeline() {
 
   const log = document.getElementById('pipeline-log');
   log.innerHTML = '';
+  resetEnginePanel();
   const ecaWrap = document.getElementById('eca-wrap');
   ecaWrap.style.display = 'block';
   document.getElementById('eca-title').textContent = `chorus — run.pl — ${sbId}/${entityId}`;
@@ -4106,6 +4267,7 @@ function runPipeline() {
         if (eMatch[1] === 'log') {
           if (first) { ecaRemoveCursor(); first = false; }
           addLog(data.line, data.level === 'warn' ? 'warn' : 'info');
+          parseEngineLogLine(data.line);
         } else if (eMatch[1] === 'done') {
           const exitLine = document.createElement('div');
           exitLine.className = 'eca-line eca-exit';
