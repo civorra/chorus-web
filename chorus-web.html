@@ -2063,6 +2063,7 @@ input, select, textarea { font-family: inherit; }
           <button class="pv-tab-btn active" onclick="pvSwitchTab('apercu')">Aperçu</button>
           <button class="pv-tab-btn" onclick="pvSwitchTab('imports')">Imports</button>
           <button class="pv-tab-btn" onclick="pvSwitchTab('rapports')">Rapports</button>
+          <button class="pv-tab-btn" onclick="pvSwitchTab('thesaurus')">Thesaurus</button>
         </div>
         <!-- Tab: Aperçu -->
         <div class="pv-tab-panel active" id="pv-tab-apercu"></div>
@@ -2070,6 +2071,8 @@ input, select, textarea { font-family: inherit; }
         <div class="pv-tab-panel" id="pv-tab-imports"></div>
         <!-- Tab: Rapports -->
         <div class="pv-tab-panel" id="pv-tab-rapports"></div>
+        <!-- Tab: Thesaurus (lecture seule — alignements résolus/non-résolus pour CE projet) -->
+        <div class="pv-tab-panel" id="pv-tab-thesaurus"></div>
       </div>
 
     </main>
@@ -3268,10 +3271,15 @@ function selectProject(projId) {
 
 function pvSwitchTab(name) {
   document.querySelectorAll('.pv-tab-btn').forEach(b => {
-    b.classList.toggle('active', b.textContent.toLowerCase().startsWith(name === 'apercu' ? 'ap' : name === 'imports' ? 'im' : 'ra'));
+    const prefixMap = { apercu: 'ap', imports: 'im', rapports: 'ra', thesaurus: 'th' };
+    b.classList.toggle('active', b.textContent.toLowerCase().startsWith(prefixMap[name] || name));
   });
   document.querySelectorAll('.pv-tab-panel').forEach(p => p.classList.remove('active'));
   document.getElementById('pv-tab-' + name)?.classList.add('active');
+  // Chargement paresseux — le panneau Thesaurus fetch /api/sandboxes/:sbId/corpus
+  // (data.thesaurus, même endpoint que le modal Corpus niveau sandbox) seulement
+  // au premier clic sur l'onglet, pas à l'ouverture du projet.
+  if (name === 'thesaurus') renderPvThesaurusTab();
 }
 
 // Retourne uniquement les boutons d'action pour un rapport (👁️ + 🖥️).
@@ -3485,6 +3493,147 @@ function renderProjectPage(proj, entLabel) {
   }
   document.getElementById('pv-tab-rapports').innerHTML = rapportsHtml;
 }
+
+// ── Tab Thesaurus (vue Projet) ────────────────────────────────
+//
+// Affiche, pour le projet sélectionné uniquement, les alignements thesaurus
+// résolus (✅) et non-résolus (⚠️ Pending) qui le concernent, via
+// corrélation par nom de fichier source (proj.sourceBasename, dérivé côté
+// serveur de project.json._import._source_fichier — cf. scanFlatProject())
+// contre la colonne "Source import" de chaque ligne du thesaurus sharded
+// (agent/thesaurus/*.org, déjà exposé par /api/sandboxes/:sbId/corpus →
+// data.thesaurus). Complète les ⚠️ Pending du thesaurus par les éléments
+// `_a_confirmer` du run-report lui-même (incertitude déjà détectée côté
+// pipeline, pas seulement côté import).
+//
+// Chargement paresseux (déclenché par pvSwitchTab au premier clic), caché
+// par projet. Aucune navigation vers un panneau Agents — tout le contenu
+// utile est affiché directement ici, en lecture seule ; seul un lien de
+// secours en bas ouvre le thesaurus complet du sandbox (non filtré) pour
+// les cas où le filtrage par projet ne suffit pas.
+let _pvThesaurusCache = {}; // "sbId/entity/projId" → { matched, hasFilter }
+
+function _basenameNoExt(p) {
+  if (!p) return null;
+  const base = p.split('/').pop();
+  return base.replace(/\.[^.]+$/, '');
+}
+
+async function renderPvThesaurusTab() {
+  const proj = currentProject, sb = currentSandbox;
+  if (!proj || !sb) return;
+  const panel = document.getElementById('pv-tab-thesaurus');
+  if (!panel) return;
+
+  const cacheKey = `${sb.id}/${proj.entity}/${proj.id}`;
+  let cached = _pvThesaurusCache[cacheKey];
+
+  if (!cached) {
+    panel.innerHTML = '<div class="pv-empty">Chargement…</div>';
+    let thesaurus = [];
+    try {
+      const r = await fetch(`${API}/api/sandboxes/${sb.id}/corpus`);
+      if (r.ok) thesaurus = (await r.json()).corpus?.thesaurus || [];
+    } catch { /* backend indisponible — tableau vide, message ci-dessous */ }
+
+    const target = proj.sourceBasename; // ex: "project-simul-01" — null si _import absent/illisible
+    const hasFilter = !!target;
+
+    // Fusionne tous les shards (global.org + client shards éventuels) — le
+    // filtrage par projet n'a pas besoin de distinguer les Scopes, seule la
+    // colonne Source import compte ici.
+    const allTypeElement = thesaurus.flatMap(s => s.aliasesTypeElement.map(a => ({ ...a, shard: s.shard })));
+    const allSlotValues  = thesaurus.flatMap(s => s.aliasesSlotValues.map(a => ({ ...a, shard: s.shard })));
+    const allPending     = thesaurus.flatMap(s => s.pending.map(a => ({ ...a, shard: s.shard })));
+
+    const matches = (row) => hasFilter && _basenameNoExt(row.sourceImport) === target;
+
+    cached = {
+      hasFilter,
+      hasAnyThesaurus: thesaurus.length > 0,
+      resolvedTypeElement: hasFilter ? allTypeElement.filter(matches) : allTypeElement,
+      resolvedSlotValues:  hasFilter ? allSlotValues.filter(matches)  : allSlotValues,
+      pending:             hasFilter ? allPending.filter(matches)     : allPending,
+    };
+    _pvThesaurusCache[cacheKey] = cached;
+  }
+
+  const { hasFilter, hasAnyThesaurus, resolvedTypeElement, resolvedSlotValues, pending } = cached;
+
+  if (!hasAnyThesaurus) {
+    panel.innerHTML = '<div class="pv-empty">Aucun thesaurus trouvé pour ce sandbox — aucun import avec alignement terminologique n\'a encore été effectué.</div>';
+    return;
+  }
+
+  const nResolved = resolvedTypeElement.length + resolvedSlotValues.length;
+  const nPending  = pending.length;
+
+  let html = '';
+
+  if (!hasFilter) {
+    html += `<div class="pv-empty" style="margin-bottom:12px">Origine du projet non résolue (<code>_import</code> absent ou illisible dans le fichier source) — filtrage par pertinence impossible, thesaurus complet du sandbox affiché ci-dessous.</div>`;
+  }
+
+  // ── Résolus (✅) ────────────────────────────────────────────────
+  html += `<div style="margin-bottom:16px">
+    <div style="font-size:11px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px">✅ Alignements résolus (${nResolved})</div>`;
+  if (nResolved) {
+    html += `<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:12px">
+      <thead><tr style="border-bottom:1px solid var(--border)">
+        <th style="text-align:left;padding:4px 8px;color:var(--text-muted);font-weight:600">Terme projet</th>
+        <th style="text-align:left;padding:4px 8px;color:var(--text-muted);font-weight:600">→ KB</th>
+        <th style="text-align:left;padding:4px 8px;color:var(--text-muted);font-weight:600">Confiance</th>
+      </tr></thead>
+      <tbody>
+        ${resolvedTypeElement.map(a => `
+        <tr style="border-bottom:1px solid var(--border-light)">
+          <td style="padding:4px 8px;color:var(--text-secondary)">${a.term}</td>
+          <td style="padding:4px 8px;color:var(--accent);font-family:'JetBrains Mono',monospace">type_element = ${a.target}</td>
+          <td style="padding:4px 8px;color:var(--success);font-size:11px">${a.confidence || ''}</td>
+        </tr>`).join('')}
+        ${resolvedSlotValues.map(a => `
+        <tr style="border-bottom:1px solid var(--border-light)">
+          <td style="padding:4px 8px;color:var(--text-secondary)">${a.term}</td>
+          <td style="padding:4px 8px;color:var(--accent);font-family:'JetBrains Mono',monospace">${a.slot} = ${a.value}</td>
+          <td style="padding:4px 8px;color:var(--success);font-size:11px">${a.confidence || ''}</td>
+        </tr>`).join('')}
+      </tbody>
+    </table></div>`;
+  } else {
+    html += `<div class="pv-empty">Aucun alignement résolu trouvé pour ce projet.</div>`;
+  }
+  html += `</div>`;
+
+  // ── Non-résolus (⚠️ Pending) ────────────────────────────────────
+  html += `<div style="margin-bottom:16px">
+    <div style="font-size:11px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px">⚠️ En attente de confirmation (${nPending})</div>`;
+  if (nPending) {
+    html += `<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:12px">
+      <thead><tr style="border-bottom:1px solid var(--border)">
+        <th style="text-align:left;padding:4px 8px;color:var(--text-muted);font-weight:600">Terme projet</th>
+        <th style="text-align:left;padding:4px 8px;color:var(--text-muted);font-weight:600">Mapping proposé</th>
+        <th style="text-align:left;padding:4px 8px;color:var(--text-muted);font-weight:600">Flag</th>
+      </tr></thead>
+      <tbody>${pending.map(p => `
+        <tr style="border-bottom:1px solid var(--border-light)">
+          <td style="padding:4px 8px;color:var(--text-secondary)">${p.term}</td>
+          <td style="padding:4px 8px;color:var(--warn);font-family:'JetBrains Mono',monospace;font-size:11px">${p.proposed || ''}</td>
+          <td style="padding:4px 8px;color:var(--text-muted);font-size:11px">${p.flag || ''}</td>
+        </tr>`).join('')}
+      </tbody>
+    </table></div>`;
+  } else {
+    html += `<div class="pv-empty">Aucun terme en attente de confirmation pour ce projet.</div>`;
+  }
+  html += `</div>`;
+
+  html += `<div style="text-align:right">
+    <button class="btn btn-ghost btn-sm" onclick="openSandboxCorpus()">📚 Voir le thesaurus complet du sandbox</button>
+  </div>`;
+
+  panel.innerHTML = html;
+}
+
 
 // ── Actions depuis la page projet ────────────────────────────
 function pvRunPipeline() {

@@ -426,11 +426,11 @@ function scanSandboxThesaurus(sbPath) {
     if (!content) return { shard, aliasesTypeElement: [], aliasesSlotValues: [], pending: [], outOfScope: [] };
 
     const aliasesTypeElement = extractOrgTable(content, /^\*\s+Aliases\s*(—|-)\s*type_element/i)
-      .slice(1).map(r => ({ term: r[0], target: r[1], confidence: r[2] }));
+      .slice(1).map(r => ({ term: r[0], target: r[1], confidence: r[2], sourceImport: r[3] || null }));
     const aliasesSlotValues = extractOrgTable(content, /^\*\s+Aliases\s*(—|-)\s*slot values/i)
-      .slice(1).map(r => ({ term: r[0], slot: r[1], value: r[2], confidence: r[3] }));
+      .slice(1).map(r => ({ term: r[0], slot: r[1], value: r[2], confidence: r[3], sourceImport: r[4] || null }));
     const pending = extractOrgTable(content, /^\*\s+Pending/i)
-      .slice(1).map(r => ({ term: r[0], proposed: r[1], flag: r[2] }));
+      .slice(1).map(r => ({ term: r[0], proposed: r[1], flag: r[2], sourceImport: r[3] || null }));
     const outOfScope = extractOrgTable(content, /^\*\s+Out-of-scope/i)
       .slice(1).map(r => ({ term: r[0], reason: r[1] }));
 
@@ -736,10 +736,34 @@ function scanFlatProject(entityPath, slug, jsonFile, runReportIndex) {
 
   const name = slug.replace(/[-_]/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
 
+  // ── Origine du document source (_import) — pour corréler ce projet aux
+  // entrées du thesaurus (colonne "Source import", cf. chorus-import-project.md
+  // § Thesaurus storage layout). Le project JSON expose cette info sous des
+  // noms de clé variables selon la version de chorus-import-project ayant
+  // produit le fichier (_source_fichier le plus courant, _source/sources en
+  // fallback) — on tente toutes les variantes connues plutôt que d'en figer
+  // une seule. sourceBasename = nom de fichier sans extension ni chemin,
+  // seule forme stable pour matcher contre le thesaurus (qui référence tantôt
+  // le .json final, tantôt le .md/.docx d'origine — jamais le chemin complet).
+  let sourceFile = null;
+  try {
+    const projJson = JSON.parse(readFileSafe(jsonFile) || '{}');
+    const imp = projJson._import || {};
+    sourceFile = imp._source_fichier || imp.source || imp._source
+      || (Array.isArray(imp.sources) ? imp.sources[0] : null)
+      || (Array.isArray(imp._sources) ? imp._sources[0] : null)
+      || null;
+  } catch { /* JSON invalide ou _import absent — sourceFile reste null */ }
+  const sourceBasename = sourceFile
+    ? path.basename(sourceFile).replace(/\.[^.]+$/, '')
+    : null;
+
   return {
     id:         slug,
     name,
     sourcePath: jsonFile,
+    sourceFile,         // chemin tel que déclaré dans _import (peut être relatif/incomplet)
+    sourceBasename,      // nom nu, sans extension — clé de corrélation thesaurus
     reportPath: reportsDir,
     state:      'imported',
     frames:     reportData?.totalFrames || 0,
