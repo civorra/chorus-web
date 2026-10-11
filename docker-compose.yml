@@ -5,7 +5,7 @@
 # for the export to ANTHROPIC_API_KEY.
 secrets:
   anthropic_api_key:
-    file: /home/civorra/.config/anthropic/api_key
+    file: ${ANTHROPIC_API_KEY_FILE:-$HOME/.config/anthropic/api_key}
 
 services:
   eca-server:
@@ -63,7 +63,7 @@ services:
       - CHORUS_HOME=/chorus
       # Sandbox root — separate from CHORUS_HOME to allow mounting the full
       # repo. Points to $CHORUS/sandboxes/cyber-sec (host path
-      # /home/civ/Documents/DEV/Chorus/sandboxes/cyber-sec, seen from the
+      # $HOME/Documents/Chorus/sandboxes, seen from the
       # container via the ${CHORUS_HOME}:/chorus volume below).
       - SANDBOXES=${SANDBOXES:-/chorus/Engine/sandboxes}
       # No PERL5LIB: Chorus::* modules are installed natively in the image
