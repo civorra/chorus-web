@@ -2304,8 +2304,8 @@ input, select, textarea { font-family: inherit; }
     <div class="rv-footer">
       <span style="font-size:11px;color:var(--text-muted)" id="rv-footer-stats"></span>
       <span style="flex:1"></span>
-      <button id="rv-summary-btn" class="btn btn-ghost btn-sm" style="display:none">📄 Summary</button>
-      <button id="rv-explain-btn" class="btn btn-ghost btn-sm" style="display:none">🔍 Explain</button>
+      <button id="rv-summary-btn" class="btn btn-ghost btn-sm" style="display:none">📋 Summary</button>
+      <button id="rv-explain-btn" class="btn btn-ghost btn-sm" style="display:none">💡 Explain</button>
       <button id="rv-complete-btn" class="btn btn-ghost btn-sm" style="border-color:var(--info);color:var(--info);display:none" onclick="runCompleteReportFromModal()">📝 Complete</button>
       <button class="btn btn-sm" style="background:var(--accent);color:#fff;font-weight:600;gap:6px" onclick="openRvTerminal()" title="Terminal ECA contextualisé sur ce rapport">🖥️ Terminal ECA</button>
       <button class="btn btn-ghost btn-sm" onclick="closeReportView()">Fermer</button>
@@ -2430,37 +2430,31 @@ input, select, textarea { font-family: inherit; }
 <div id="modal-overlay" hidden>
   <div class="modal" id="modal-content">
     <h2>Import project</h2>
-    <div class="form-group">
-      <label class="form-label">Project name</label>
-      <input class="form-input" id="import-name" type="text" placeholder="e.g. ID-CA v3.2 EAL4 dossier">
+    <div class="form-group" id="import-name-group">
+      <label class="form-label" id="import-name-label">Project name</label>
+      <input class="form-input" id="import-name" type="text" placeholder="e.g. ID-CA v3.2 EAL4 dossier" oninput="validateImportName()">
+      <div id="import-name-hint" style="font-size:11px;margin-top:4px;min-height:14px"></div>
     </div>
-    <div class="form-group">
+    <div class="form-group" id="import-source-group">
       <label class="form-label">Source type</label>
       <select class="form-select" id="import-source">
-        <option value="pdf">PDF dossier</option>
-        <option value="docx">Word document</option>
+        <option value="pdf">PDF</option>
+        <option value="docx">Word (.docx)</option>
         <option value="zip">Zip archive</option>
         <option value="url">Remote URL</option>
       </select>
     </div>
-    <div class="form-group">
+    <div class="form-group" id="import-path-group">
       <label class="form-label">Source path / URL</label>
       <input class="form-input" id="import-path" type="text" placeholder="/path/to/dossier.pdf">
     </div>
-    <div class="form-group">
+    <div class="form-group" id="import-context-group">
       <label class="form-label">Entity (obligatoire)</label>
       <select class="form-select" id="import-context"></select>
     </div>
-    <div class="form-group">
-      <label class="form-label">Model (chorus-import-project)</label>
-      <select class="form-select" id="import-model">
-        <option value="opus">claude-opus-4 (recommended)</option>
-        <option value="sonnet">claude-sonnet-4</option>
-      </select>
-    </div>
     <div class="modal-footer">
       <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
-      <button class="btn btn-primary" onclick="startImport()">Start import</button>
+      <button class="btn btn-primary" id="import-start-btn" onclick="startImport()">Start import</button>
     </div>
   </div>
 </div>
@@ -2648,8 +2642,8 @@ const PROJECTS = {
       ],
       reports: [
         { icon:'📋', kind:'run', label:'compliance-report-idca-eal4.md', desc:'SOLVED · 41/42 CONFORMES', path:'sandboxes/cc31r4/workspace/compliance-report-idca-eal4.md', date:'2026-09-14', run:'run.pl' },
-        { icon:'📄', kind:'summary', label:'summary-idca-eal4-001.md', desc:'Synthèse 1 page · recommandation finale', path:'sandboxes/cc31r4/workspace/summary-idca-eal4-001.md', date:'2026-09-14', run:'chorus-check --summary' },
-        { icon:'🔍', kind:'explain', label:'explain-idca-eal4-001.md', desc:'Explications R07 NON_CONFORME', path:'sandboxes/cc31r4/workspace/explain-idca-eal4-001.md', date:'2026-09-14', run:'chorus-check --explain' },
+        { icon:'📋', kind:'summary', label:'summary-idca-eal4-001.md', desc:'Synthèse 1 page · recommandation finale', path:'sandboxes/cc31r4/workspace/summary-idca-eal4-001.md', date:'2026-09-14', run:'chorus-check --summary' },
+        { icon:'💡', kind:'explain', label:'explain-idca-eal4-001.md', desc:'Explications R07 NON_CONFORME', path:'sandboxes/cc31r4/workspace/explain-idca-eal4-001.md', date:'2026-09-14', run:'chorus-check --explain' },
         { icon:'📋', kind:'run', label:'compliance-report-idca-eal4-prev.md', desc:'SOLVED · 37/38 CONFORMES (v1)', path:'sandboxes/cc31r4/workspace/compliance-report-idca-eal4-prev.md', date:'2026-08-30', run:'run.pl' },
       ],
       corpus: [
@@ -2670,7 +2664,7 @@ const PROJECTS = {
       imports: [{date:'2026-09-20',version:'v1',frames:34,model:'claude-opus-4'}],
       reports: [
         { icon:'📋', kind:'run', label:'compliance-report-rgs-grade3.md', desc:'SOLVED · 28/34 CONFORMES', path:'sandboxes/cc31r4/workspace/compliance-report-rgs-grade3.md', date:'2026-09-20', run:'run.pl' },
-        { icon:'🔍', kind:'explain', label:'explain-rgs-grade3-001.md', desc:'6 NON_CONFORMES · HSM, journalisation', path:'sandboxes/cc31r4/workspace/explain-rgs-grade3-001.md', date:'2026-09-20', run:'chorus-check --explain' },
+        { icon:'💡', kind:'explain', label:'explain-rgs-grade3-001.md', desc:'6 NON_CONFORMES · HSM, journalisation', path:'sandboxes/cc31r4/workspace/explain-rgs-grade3-001.md', date:'2026-09-20', run:'chorus-check --explain' },
       ],
       corpus: [
         { id:'F001', section:'2.1', text:'Le produit doit implémenter une authentification forte reposant sur au moins deux facteurs indépendants.', tags:['AUTH'], status:'resolved', evidence:2 },
@@ -2683,7 +2677,7 @@ const PROJECTS = {
     },
     { id: 'tpm-eal4', name: 'TPM firmware EAL4+', type: 'zip', entity: 'acme-corp', frames: 55, evidence: 24, state: 'imported', compliance: 94, lastRun: '2026-08-22', imports: [{date:'2026-08-22',version:'v1',frames:55,model:'claude-opus-4'}], reports: [
       { icon:'📋', kind:'run', label:'compliance-report-tpm-eal4.md', desc:'SOLVED · 52/55 CONFORMES', path:'sandboxes/cc31r4/workspace/compliance-report-tpm-eal4.md', date:'2026-08-22', run:'run.pl' },
-      { icon:'📄', kind:'summary', label:'summary-tpm-eal4-001.md', desc:'Synthèse · 3 NON_CONFORMES à corriger', path:'sandboxes/cc31r4/workspace/summary-tpm-eal4-001.md', date:'2026-08-22', run:'chorus-check --summary' },
+      { icon:'📋', kind:'summary', label:'summary-tpm-eal4-001.md', desc:'Synthèse · 3 NON_CONFORMES à corriger', path:'sandboxes/cc31r4/workspace/summary-tpm-eal4-001.md', date:'2026-08-22', run:'chorus-check --summary' },
     ]},
     { id: 'hsmcc', name: 'HSM LiquidSecurity EAL4', type: 'pdf', entity: 'acme-corp', frames: 38, evidence: 16, state: 'imported', compliance: 91, lastRun: '2026-08-10', imports: [{date:'2026-08-10',version:'v1',frames:38,model:'claude-sonnet-4'}], reports: [
       { icon:'📋', kind:'run', label:'compliance-report-hsmcc.md', desc:'SOLVED · 35/38 CONFORMES', path:'sandboxes/cc31r4/workspace/compliance-report-hsmcc.md', date:'2026-08-10', run:'run.pl' },
@@ -2725,7 +2719,7 @@ const PROJECTS = {
     ]},
     { id: 'idnomic-cms-ui', name: 'IDnomic CMS Web UI', type: 'url', entity: 'idnomic', frames: 28, evidence: 11, state: 'imported', compliance: 77, lastRun: '2026-09-05', imports: [{date:'2026-09-05',version:'v1',frames:28,model:'claude-opus-4'}], reports: [
       { icon:'📋', kind:'run', label:'compliance-report-idnomic-cms-ui.md', desc:'SOLVED · 22/28 CONFORMES', path:'sandboxes/wcag21/workspace/compliance-report-idnomic-cms-ui.md', date:'2026-09-05', run:'run.pl' },
-      { icon:'🔍', kind:'explain', label:'explain-idnomic-cms-ui-001.md', desc:'6 NON_CONFORMES · critères images, navigation', path:'sandboxes/wcag21/workspace/explain-idnomic-cms-ui-001.md', date:'2026-09-05', run:'chorus-check --explain' },
+      { icon:'💡', kind:'explain', label:'explain-idnomic-cms-ui-001.md', desc:'6 NON_CONFORMES · critères images, navigation', path:'sandboxes/wcag21/workspace/explain-idnomic-cms-ui-001.md', date:'2026-09-05', run:'chorus-check --explain' },
     ]},
     { id: 'rgaa-mobile', name: 'Application mobile RGAA 4.1', type: 'zip', entity: 'public', frames: 18, evidence: 7, state: 'imported', compliance: 82, lastRun: '2026-08-20', imports: [{date:'2026-08-20',version:'v1',frames:18,model:'claude-sonnet-4'}], reports: [
       { icon:'📋', kind:'run', label:'compliance-report-rgaa-mobile.md', desc:'SOLVED · 15/18 CONFORMES', path:'sandboxes/wcag21/workspace/compliance-report-rgaa-mobile.md', date:'2026-08-20', run:'run.pl' },
@@ -2736,7 +2730,7 @@ const PROJECTS = {
   kdigo: [
     { id: 'ckd-g3-pilot', name: 'CKD G3a–G5 clinical pilot', type: 'pdf', entity: 'chu-grenoble', frames: 26, evidence: 11, state: 'imported', compliance: 91, lastRun: '2026-09-20', imports: [{date:'2026-09-20',version:'v1',frames:26,model:'claude-opus-4'}], reports: [
       { icon:'📋', kind:'run', label:'compliance-report-ckd-g3-pilot.md', desc:'SOLVED · 24/26 CONFORMES', path:'sandboxes/kdigo/workspace/compliance-report-ckd-g3-pilot.md', date:'2026-09-20', run:'run.pl' },
-      { icon:'📄', kind:'summary', label:'summary-ckd-g3-pilot-001.md', desc:'Synthèse protocole CKD G3–G5', path:'sandboxes/kdigo/workspace/summary-ckd-g3-pilot-001.md', date:'2026-09-20', run:'chorus-check --summary' },
+      { icon:'📋', kind:'summary', label:'summary-ckd-g3-pilot-001.md', desc:'Synthèse protocole CKD G3–G5', path:'sandboxes/kdigo/workspace/summary-ckd-g3-pilot-001.md', date:'2026-09-20', run:'chorus-check --summary' },
     ]},
     { id: 'dialysis-protocol', name: 'HD/PD protocol review', type: 'docx', entity: 'research', frames: 0, evidence: 0, state: 'available', imports: [], reports: [] },
   ],
@@ -2990,7 +2984,7 @@ function sortReportsByDateDesc(reports) {
   });
 }
 
-// Génère les 2 icônes "mini-rapport" 📄 (summary) / 🔍 (explain) associées à
+// Génère les 2 icônes "mini-rapport" 📋 (summary) / 💡 (explain) associées à
 // un run-report, cliquables si le fichier correspondant existe (r.synthese_file
 // / r.explain_file), grisées sinon avec un tooltip explicite. Pattern de
 // référence — initialement introduit dans renderReportsList (panneau pipeline),
@@ -3000,16 +2994,16 @@ function reportMiniIcons(r, sbId, entityId, projId) {
   const synBtn = r.synthese_file
     ? `<button class="btn btn-ghost btn-sm" title="${r.synthese_file}"
          onclick="openMdView('${sbId}','${entityId}','${projId}','${r.synthese_file}')"
-         style="font-size:13px;padding:2px 6px">📄</button>`
+         style="font-size:13px;padding:2px 6px">📋</button>`
     : `<span style="font-size:13px;opacity:.25;padding:2px 6px;cursor:default"
-         title="Pas de rapport --summary pour ce run">📄</span>`;
+         title="Pas de rapport --summary pour ce run">📋</span>`;
 
   const expBtn = r.explain_file
     ? `<button class="btn btn-ghost btn-sm" title="${r.explain_file}"
          onclick="openMdView('${sbId}','${entityId}','${projId}','${r.explain_file}')"
-         style="font-size:13px;padding:2px 6px">🔍</button>`
+         style="font-size:13px;padding:2px 6px">💡</button>`
     : `<span style="font-size:13px;opacity:.25;padding:2px 6px;cursor:default"
-         title="Pas de rapport --explain pour ce run">🔍</span>`;
+         title="Pas de rapport --explain pour ce run">💡</span>`;
 
   // Retourne les boutons bruts (sans wrapper) — c'est à l'appelant de les
   // regrouper avec les autres icônes (View/Terminal) dans un même conteneur
@@ -3105,7 +3099,7 @@ function buildSandboxEntry(sb, iconIndex) {
 
     // Rapports chorus-check (synthese-/explain-*.md) — uniquement ceux
     // qui NE SONT PAS déjà liés par timestamp à un run-report existant.
-    // Les fichiers liés sont déjà accessibles via les boutons 📄/🔍 sur
+    // Les fichiers liés sont déjà accessibles via les boutons 📋/💡 sur
     // leur ligne de run — les dupliquer ici créerait de la confusion.
     const linkedByRun = new Set(
       runReportEntry.flatMap(r => [r.explain_file, r.synthese_file]).filter(Boolean)
@@ -3133,7 +3127,7 @@ function buildSandboxEntry(sb, iconIndex) {
           ? `${tsMatch[1]}-${tsMatch[2]}-${tsMatch[3]}T${tsMatch[4]||'00'}:${tsMatch[5]||'00'}:${tsMatch[6]||'00'}`
           : null;
         return {
-          icon: filename.startsWith('explain-') ? '🔍' : '📄',
+          icon: filename.startsWith('explain-') ? '💡' : '📋',
           kind: filename.startsWith('explain-') ? 'explain' : 'summary',
           label: filename,
           desc: filename.startsWith('explain-')
@@ -3216,7 +3210,7 @@ async function refreshSandboxReports(sbId) {
       renderProjectsTab();
     }
     // Panneau pipeline, si ouvert sur ce projet — rafraîchit la liste des
-    // run-reports affichée (y compris les icônes 📄/🔍 désormais liées).
+    // run-reports affichée (y compris les icônes 📋/💡 désormais liées).
     if (!document.getElementById('pipeline-modal-overlay')?.hidden && currentProject) {
       const runReports = (currentProject.reports || []).filter(r => r.kind === 'run');
       if (runReports.length) renderReportsList(runReports);
@@ -3302,7 +3296,7 @@ function pvReportButtons(r, proj, sbId) {
     title="Terminal ECA — ${r.label}"
     onclick="openLevelTerminal('report',{sbId:'${sbId}',entityId:'${proj.entity}',projId:'${proj.id}',projName:'${safeProj}',reportFile:'${r.label}',explainFile:${r.explain_file ? `'${r.explain_file}'` : 'null'},syntheseFile:${r.synthese_file ? `'${r.synthese_file}'` : 'null'}})">🖥️</button>`;
 
-  // Icônes 📄 summary / 🔍 explain — uniquement pertinentes sur une ligne de
+  // Icônes 📋 summary / 💡 explain — uniquement pertinentes sur une ligne de
   // run-report (le fichier summary/explain lui-même n'a pas besoin de se
   // référencer lui-même).
   const miniIcons = isJson ? reportMiniIcons(r, sbId, proj.entity, proj.id) : '';
@@ -4708,7 +4702,7 @@ function renderReportsList(reports) {
     // Index dans le tableau complet (pour openReportView)
     const fullIdx = reports.indexOf(r);
 
-    // Icônes 📄 summary / 🔍 explain — cliquables si fichier présent, grisées sinon
+    // Icônes 📋 summary / 💡 explain — cliquables si fichier présent, grisées sinon
     const miniIcons = reportMiniIcons(r, sbId, entityId, projId);
 
     return `
@@ -5050,13 +5044,13 @@ function updateRvCheckButtons() {
     const fresh    = hasCurrentRun ? sessionReports.find(r => r.kind === kind) : null;
 
     if (existing) {
-      btn.innerHTML         = kind === 'summary' ? '📄 Summary' : '🔍 Explain';
+      btn.innerHTML         = kind === 'summary' ? '📋 Summary' : '💡 Explain';
       btn.style.borderColor = fresh ? 'var(--success)' : '';
       btn.style.color       = fresh ? 'var(--success)' : '';
       btn.title             = existing.label;
       btn.onclick           = () => openMdView(sbId, entityId, projId, existing.label);
     } else {
-      btn.innerHTML         = kind === 'summary' ? '📄 Summary' : '🔍 Explain';
+      btn.innerHTML         = kind === 'summary' ? '📋 Summary' : '💡 Explain';
       btn.style.borderColor = '';
       btn.style.color       = '';
       btn.title             = `chorus-check --${kind} — générer une nouvelle analyse`;
@@ -5240,7 +5234,7 @@ async function runChorusCheckAction(action) {
     }
 
     const reportEntry = {
-      icon: action === 'summary' ? '📄' : '🔍',
+      icon: action === 'summary' ? '📋' : '💡',
       kind: action,
       label: filename,
       desc: action === 'summary'
@@ -6283,7 +6277,7 @@ function openHistoryModal(projId) {
         } else if (isJson) {
           viewBtn = `<button class="btn btn-ghost btn-sm" style="padding:2px 7px;font-size:10px;flex-shrink:0" title="Voir ${r.label} (rapport structuré run.pl)" onclick="openReportView({label:'${r.label}', kind:'run', run:'run.pl'}, {sbId:'${sbId}', sbName:'${(currentSandbox&&currentSandbox.name)||sbId}', entityId:'${proj.entity}', projId:'${projId}', projName:'${proj.name}'})">👁️</button>`;
         }
-        // Icônes 📄 summary / 🔍 explain — uniquement sur les run-reports (.json)
+        // Icônes 📋 summary / 💡 explain — uniquement sur les run-reports (.json)
         const miniIcons = isJson ? reportMiniIcons(r, sbId, proj.entity, projId) : '';
 
         html += `<div class="hm-report-row">
@@ -6313,7 +6307,7 @@ function openHistoryModal(projId) {
           Analyses (${analyses.length}) — non liées à un run spécifique
         </div>`;
       for (const r of sortedAnalyses) {
-        const icon = r.kind === 'summary' ? '📄' : '🔍';
+        const icon = r.kind === 'summary' ? '📋' : '💡';
         const label = r.kind === 'summary' ? 'Summary' : 'Explain';
         html += `<div class="hm-report-row">
           <div class="hm-report-icon">${icon}</div>
@@ -7010,31 +7004,75 @@ function openImportModal(reimportProjId) {
   const modal = document.getElementById('modal-overlay');
   modal.hidden = false;
 
+  const nameGroup      = document.getElementById('import-name-group');
+  const nameLabel      = document.getElementById('import-name-label');
+  const sourceGroup    = document.getElementById('import-source-group');
+  const pathGroup      = document.getElementById('import-path-group');
+  const contextGroup   = document.getElementById('import-context-group');
+
   if (reimportProjId) {
-    // Re-import mode: pre-fill with existing project data
+    // Ré-import : la source (type + chemin) et l'entity ne changent pas —
+    // seul un NOUVEAU nom de projet (proposé par défaut, éditable) est
+    // demandé. Champs source/entity masqués (figés en interne).
     const sbId = currentSandbox ? currentSandbox.id : null;
     const proj = (PROJECTS[sbId]||[]).find(p=>p.id===reimportProjId);
     modal.dataset.reimportId = reimportProjId;
+    modal.dataset.reimportEntity = proj ? proj.entity : '';
+    modal.dataset.reimportSourceType = proj ? (proj.type || '') : '';
     const titleEl = modal.querySelector('h2');
     if (titleEl) titleEl.textContent = 'Ré-importer un projet';
-    if (proj) {
-      document.getElementById('import-name').value = proj.name || '';
-      document.getElementById('import-path').value = proj.path || '';
-    } else {
-      document.getElementById('import-name').value = '';
-      document.getElementById('import-path').value = '';
-    }
+
+    nameLabel.textContent = 'Nom du nouveau projet';
+    sourceGroup.hidden    = true;
+    pathGroup.hidden      = true;
+    contextGroup.hidden   = true;
+
+    const sourcePath = proj ? (proj.sourceFile || proj.sourcePath || proj.path || '—') : '—';
+
+    // Proposition de nom par défaut, déclinée du nom du projet courant
+    // (incrémente un suffixe "vN" existant, ou en ajoute un).
+    const baseName = proj ? (proj.name || '') : '';
+    const vMatch = baseName.match(/^(.*)\sv(\d+)$/);
+    const proposedName = vMatch
+      ? `${vMatch[1]} v${parseInt(vMatch[2], 10) + 1}`
+      : `${baseName} v2`;
+    document.getElementById('import-name').value = proposedName;
+    document.getElementById('import-name').select();
+
+    // Champs source figés en interne (non affichés) pour compat startImport().
+    document.getElementById('import-source').value = proj ? (proj.type || 'pdf') : 'pdf';
+    document.getElementById('import-path').value = sourcePath === '—' ? '' : sourcePath;
+
+    // Validation live immédiate — le bouton reflète l'état du nom proposé
+    // avant même la première frappe de l'utilisateur.
+    validateImportName();
   } else {
     delete modal.dataset.reimportId;
+    delete modal.dataset.reimportEntity;
+    delete modal.dataset.reimportSourceType;
     const titleEl = modal.querySelector('h2');
     if (titleEl) titleEl.textContent = 'Importer un projet';
+
+    nameLabel.textContent = 'Project name';
+    sourceGroup.hidden    = false;
+    pathGroup.hidden      = false;
+    contextGroup.hidden   = false;
+
     document.getElementById('import-name').value = '';
     document.getElementById('import-path').value = '';
+
+    // Flux import normal : pas de contrainte de nom particulière (le slug
+    // n'est calculé/validé que côté ré-import) — hint vide, bouton actif.
+    const hintEl = document.getElementById('import-name-hint');
+    if (hintEl) hintEl.textContent = '';
+    const btnEl = document.getElementById('import-start-btn');
+    if (btnEl) { btnEl.disabled = false; btnEl.title = ''; }
   }
 
   // Populate context dropdown for current sandbox — pré-sélectionne l'entity
   // actuellement scopée (le bouton Import n'est de toute façon visible que
-  // dans ce cas), ou celle du projet en cas de ré-import.
+  // dans ce cas). Inutile en ré-import (groupe masqué) mais on conserve la
+  // valeur interne pour compat startImport().
   const entitySel = document.getElementById('import-context');
   const entities = currentSandbox ? (ENTITIES[currentSandbox.id] || []) : [];
   const preselectId = reimportProjId
@@ -7082,14 +7120,157 @@ function quickImport(projId) {
   }, 600);
 }
 
+// ─── Validation du nom de projet (mode ré-import) ─────────────
+// Règles exigées côté panneau ré-import :
+//  1. Le nom ne peut pas être vide.
+//  2. Le nom doit différer du projet d'origine (sinon ambiguïté silencieuse
+//     côté serveur — cf. scanEntity qui indexe par slug).
+//  3. Le slug dérivé (convention project-<slug>.json, seule reconnue par
+//     chorus.js § scanEntity) ne doit pas entrer en collision avec un
+//     projet déjà existant dans ce sandbox.
+//  4. Le slug ne doit pas être vide après normalisation (ex: nom composé
+//     uniquement de caractères spéciaux) — sinon le fichier produit
+//     s'appellerait "project-.json", invalide/non ambigu à corriger avant
+//     même de lancer l'import.
+// Retourne { ok: true, slug, id } ou { ok: false, reason }.
+function computeReimportSlug(newName, sbId, existingProj) {
+  const trimmed = (newName || '').trim();
+  if (!trimmed) return { ok: false, reason: 'Le nom du nouveau projet est obligatoire.' };
+  if (existingProj && trimmed === existingProj.name) {
+    return { ok: false, reason: 'Le nouveau projet doit porter un nom différent du projet d\'origine.' };
+  }
+  let slug = trimmed.toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'');
+  // Le nom affiché provient souvent du slug de fichier d'origine dérivé via
+  // scanFlatProject() (ex: "Projet Import Cbom 005 KAFKA", cf. chorus.js —
+  // slug.replace(/[-_]/g,' ').replace(/\b\w/g, toUpperCase)), qui porte déjà
+  // le préfixe "Projet "/"Project ". Sans retrait, on obtiendrait un id
+  // doublé "project-projet-...json" une fois préfixé ci-dessous. On ne
+  // retire ce préfixe qu'une seule fois, en tête de slug.
+  slug = slug.replace(/^(projet|project)-/, '');
+  if (!slug) {
+    return { ok: false, reason: 'Ce nom ne produit aucun identifiant de fichier valide — utilisez au moins une lettre ou un chiffre.' };
+  }
+  const id = `project-${slug}`;
+  if ((PROJECTS[sbId]||[]).some(p => p.id === id)) {
+    return { ok: false, reason: `Un projet nommé "${trimmed}" existe déjà dans ce sandbox — choisissez un autre nom.` };
+  }
+  return { ok: true, slug, id };
+}
+
+// Validation live (appelée sur chaque frappe + à l'ouverture de la modale en
+// mode ré-import) : désactive "Start import" et affiche l'erreur inline tant
+// que le nom saisi n'est pas compatible avec la convention serveur — évite
+// qu'un ré-import "réussisse" en apparence côté UI tout en produisant un
+// fichier jamais détecté par le scan (cf. incident sandbox 08 / entity
+// Apache, fichier import-<ts>.json invisible — root cause documentée dans
+// la session de correction précédente).
+function validateImportName() {
+  const modal = document.getElementById('modal-overlay');
+  const reimportId = modal.dataset.reimportId || null;
+  const btn  = document.getElementById('import-start-btn');
+  const hint = document.getElementById('import-name-hint');
+  if (!btn || !hint) return;
+
+  if (!reimportId) { btn.disabled = false; btn.title = ''; hint.textContent = ''; return; }
+  if (!currentSandbox) return;
+
+  const sbId = currentSandbox.id;
+  const existingProj = (PROJECTS[sbId]||[]).find(p=>p.id===reimportId);
+  const newName = document.getElementById('import-name').value;
+  const result = computeReimportSlug(newName, sbId, existingProj);
+
+  if (result.ok) {
+    btn.disabled = false;
+    btn.title = '';
+    hint.style.color = 'var(--success, #10B981)';
+    hint.textContent = `✓ → ${result.id}.json`;
+  } else {
+    btn.disabled = true;
+    btn.title = result.reason;
+    hint.style.color = 'var(--error, #EF4444)';
+    hint.textContent = `✗ ${result.reason}`;
+  }
+}
+
 function startImport() {
+  const modal = document.getElementById('modal-overlay');
+  const reimportId = modal.dataset.reimportId || null;
+
+  // Mode ré-import : source et entity sont figées (groupes masqués côté
+  // openImportModal) — seul un NOUVEAU nom de projet est demandé, il crée
+  // un nouveau projet distinct (ne remplace pas l'existant).
+  if (reimportId) {
+    if (!currentSandbox) return;
+    const sbId = currentSandbox.id;
+    const existingProj = (PROJECTS[sbId]||[]).find(p=>p.id===reimportId);
+    if (!existingProj) return;
+
+    const newName = document.getElementById('import-name').value.trim();
+    // Même validation que validateImportName() — défense en profondeur :
+    // le bouton est déjà disabled si invalide, mais on revalide ici au cas
+    // où (soumission clavier, état DOM désynchronisé, etc.).
+    const result = computeReimportSlug(newName, sbId, existingProj);
+    if (!result.ok) {
+      alert(result.reason);
+      document.getElementById('import-name').focus();
+      validateImportName();
+      return;
+    }
+    const newId = result.id;
+
+    closeModal();
+
+    const entityId   = modal.dataset.reimportEntity || existingProj.entity;
+    const sourceType  = modal.dataset.reimportSourceType || existingProj.type;
+    const sourceFile  = existingProj.sourceFile || existingProj.sourcePath || existingProj.path || '';
+    // ⚠️ Le serveur (chorus.js § scanEntity) ne détecte comme projet que les
+    // fichiers respectant la convention `project-*.json` / `projet-*.json` à
+    // la racine de l'entity — tout autre préfixe (ex: "import-<ts>.json")
+    // est silencieusement ignoré par le scan, et le projet n'apparaît jamais
+    // dans l'UI même après un ré-import réussi. slug/newId déjà calculés et
+    // validés (anti-collision) par computeReimportSlug() ci-dessus.
+    const outFile     = `${newId}.json`;
+
+    // Nouveau projet distinct — entity et source héritées de l'original,
+    // jamais redemandées.
+    const newProj = {
+      id: newId, name: newName,
+      type: sourceType,
+      entity: entityId,
+      sourceFile,
+      frames: 0, evidence: 0,
+      state: 'importing',
+      progress: 2,
+      imports: [{
+        date: new Date().toISOString().slice(0,10),
+        version: 'v1',
+        frames: 0,
+      }],
+      reports: [],
+    };
+    PROJECTS[sbId] = PROJECTS[sbId] || [];
+    PROJECTS[sbId].push(newProj);
+    renderProjectsTab();
+
+    // Terminal ECA pré-contextualisé — sandbox, entity, source originale
+    // (jamais redemandée), et nom du nouveau projet.
+    const cmd = `chorus-import-project ${sbId} ${sourceFile} --context ${entityId} --out ${outFile}\n`
+      + `ℹ️ Ré-import de "${existingProj.name}" sous un nouveau nom : "${newName}" · source inchangée (${sourceFile})\n`
+      + `⚠️ Ne pas redemander la source : réutilise le document ci-dessus.`;
+
+    openLevelTerminal('project', {
+      sbId,
+      entityId,
+      projId:   newId,
+      projName: newName,
+    }, cmd);
+    return;
+  }
+
   const name = document.getElementById('import-name').value.trim();
   const path = document.getElementById('import-path').value.trim();
   const source = document.getElementById('import-source').value;
   const context = document.getElementById('import-context').value;
-  const selectedModel = document.getElementById('import-model').value;
-  const modal = document.getElementById('modal-overlay');
-  const reimportId = modal.dataset.reimportId || null;
   if (!name) {
     document.getElementById('import-name').focus();
     return;
@@ -7100,25 +7281,6 @@ function startImport() {
   }
   closeModal();
   if (!currentSandbox) return;
-
-  if (reimportId) {
-    // Re-import: update existing project
-    const existingProj = (PROJECTS[currentSandbox.id]||[]).find(p=>p.id===reimportId);
-    if (existingProj) {
-      if (!existingProj.imports) existingProj.imports = [];
-      existingProj.imports.push({
-        date: new Date().toISOString().slice(0,10),
-        version: `v${existingProj.imports.length+1}`,
-        frames: existingProj.frames,
-        model: selectedModel
-      });
-      existingProj.state = 'importing';
-      existingProj.progress = 2;
-      renderProjectsTab();
-      openImportSession(existingProj, currentSandbox.id, source, selectedModel);
-      return;
-    }
-  }
 
   const id = 'import-' + Date.now();
   const newProj = {
@@ -7136,7 +7298,7 @@ function startImport() {
   renderProjectsTab();
 
   // Open interactive import session instead of silent quickImport
-  openImportSession(newProj, currentSandbox.id, source, selectedModel);
+  openImportSession(newProj, currentSandbox.id, source, 'opus');
 }
 
 function openNewSandboxModal() {
