@@ -623,6 +623,16 @@ const activeTerminals = new Map();
 //
 // Timeout côté serveur : 10 minutes (skills lourds comme chorus-create-project).
 //
+// ⚠️ sessionId isole le chat ECA (chatId = `eca-term-${sbId}-${sessionId}`)
+// et l'entrée activeTerminals par OUVERTURE de terminal (généré côté
+// frontend à chaque openLevelTerminal(), cf. chorus-web.html). Sans lui, deux
+// terminaux ouverts sur le même sandbox — niveaux ou cibles différents
+// (entity/projet/rapport), ou simplement deux onglets concurrents — se
+// partageaient le même chat ECA `eca-term-${sbId}` : l'historique de
+// conversation d'un contexte contaminait l'autre, et /terminal/stop pouvait
+// annuler le mauvais terminal (clé activeTerminals auparavant indexée sur
+// sbId seul).
+//
 // Body JSON : { level, entityId?, projId?, reportFile?, sessionId, message }
 // ═════════════════════════════════════════════════════════════
 
@@ -658,7 +668,17 @@ app.post('/api/sandboxes/:sbId/terminal', (req, res) => {
     } catch (e) { contextBlock = `(contexte indisponible : ${e.message})`; }
 
     // ── chatId + bootstrap ─────────────────────────────────────────────
-    const chatId = `eca-term-${sbId}`;
+    // ⚠️ chatId dépend de sessionId (identifiant généré par le frontend à
+    // CHAQUE ouverture de openLevelTerminal(), quel que soit le niveau),
+    // et non du seul sbId. Sans cela, tous les terminaux ouverts sur un même
+    // sandbox — qu'ils portent sur des entities, projets ou rapports
+    // différents, ou soient ouverts dans des onglets/fenêtres concurrents —
+    // partageaient le même chat ECA `eca-term-${sbId}` : contamination de
+    // l'historique de conversation entre contextes sans rapport, et risque
+    // de concurrence sur activeTerminals (clé sbId) où un second terminal
+    // ouvert sur le même sandbox écrasait l'entrée du premier, cassant
+    // /terminal/stop pour celui-ci.
+    const chatId = `eca-term-${sbId}-${sessionId}`;
     let agentsPrefix = '';
     try {
       const list = await eca.ecaRequest('/api/v1/chats', 'GET');
@@ -698,7 +718,7 @@ app.post('/api/sandboxes/:sbId/terminal', (req, res) => {
     const finish = (errMsg) => {
       if (finished) return;
       finished = true;
-      activeTerminals.delete(sbId);
+      activeTerminals.delete(sessionId);
       clearInterval(heartbeat);
       if (subReq) { try { subReq.destroy(); } catch {} }
       if (errMsg) sseError(res, errMsg);
@@ -718,7 +738,7 @@ app.post('/api/sandboxes/:sbId/terminal', (req, res) => {
       onError:   (err) => { clearTimeout(timeoutHandle); finish(`ECA events: ${err.message}`); },
     });
     subReq = sReq;
-    activeTerminals.set(sbId, { finish });
+    activeTerminals.set(sessionId, { finish, chatId });
 
     // ── Send the prompt ────────────────────────────────────────────────
     try {
@@ -742,14 +762,22 @@ app.post('/api/sandboxes/:sbId/terminal', (req, res) => {
 // ROUTE 5ter — POST /api/sandboxes/:sbId/terminal/respond
 //
 // Soumet la réponse de l'utilisateur à un ask_user d'ECA.
-// Body JSON : { message }
+// Body JSON : { message, sessionId }
+//
+// ⚠️ sessionId requis — doit identifier la même session que celle qui a
+// posé la question (ROUTE 5bis). Sans lui on ne peut pas reconstruire le
+// chatId exact (eca-term-<sbId>-<sessionId>) et on retomberait, comme avant
+// ce correctif, sur un chat partagé par tout le sandbox — répondre à un
+// ask_user risquerait alors d'atterrir dans la mauvaise conversation ECA
+// si un autre terminal est ouvert en parallèle sur le même sandbox.
 // ═════════════════════════════════════════════════════════════
 
 app.post('/api/sandboxes/:sbId/terminal/respond', async (req, res) => {
   const { sbId } = req.params;
-  const { message } = req.body;
-  if (!message) return res.status(400).json({ ok: false, error: 'message manquant' });
-  const chatId = `eca-term-${sbId}`;
+  const { message, sessionId } = req.body;
+  if (!message)   return res.status(400).json({ ok: false, error: 'message manquant' });
+  if (!sessionId) return res.status(400).json({ ok: false, error: 'sessionId manquant' });
+  const chatId = `eca-term-${sbId}-${sessionId}`;
   try {
     await eca.ecaRequest(
       `/api/v1/chats/${encodeURIComponent(chatId)}/prompt`, 'POST', { message }
@@ -763,14 +791,16 @@ app.post('/api/sandboxes/:sbId/terminal/respond', async (req, res) => {
 // ═════════════════════════════════════════════════════════════
 // ROUTE 5quater — POST /api/sandboxes/:sbId/terminal/stop
 //
-// Annule la génération ECA en cours pour ce sandbox.
-// Body : {} (vide)
+// Annule la génération ECA en cours pour CETTE session de terminal
+// (identifiée par sessionId — voir ROUTE 5bis pour le rationale).
+// Body : { sessionId }
 // Réponse : { ok, cancelled }
 // ═════════════════════════════════════════════════════════════
 
 app.post('/api/sandboxes/:sbId/terminal/stop', (req, res) => {
-  const { sbId } = req.params;
-  const t = activeTerminals.get(sbId);
+  const { sessionId } = req.body || {};
+  if (!sessionId) return res.json({ ok: true, cancelled: false });
+  const t = activeTerminals.get(sessionId);
   if (t) {
     t.finish('annulé par l\'utilisateur');
     res.json({ ok: true, cancelled: true });

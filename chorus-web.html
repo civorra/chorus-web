@@ -2940,123 +2940,14 @@ async function initFromServer() {
     Object.keys(PROJECTS).forEach(k => delete PROJECTS[k]);
     Object.keys(ENTITIES).forEach(k => delete ENTITIES[k]);
 
-    const ICONS = ['🔐','📜','🏗️','♿','🏥','☁️','⚖️','🌍','📋'];
-
     // Convention backend : sb.entities[] (1er niveau de workspace/, pas de 'default')
     //   chaque entity a .projects[] — projet = workspace/<entity>/<projId>.json (flat)
     //   rapports  = workspace/<entity>/reports/ (flat, filtré par sous-chaîne projId)
     sandboxes.forEach((sb, i) => {
-      const entityList = sb.entities || [];
-      const allProjects = entityList.flatMap(e => e.projects || []);
-      const imported = allProjects.filter(p => p.state === 'imported').length;
-      const runs     = allProjects.filter(p => p.reportFile).length;
-      const dates    = allProjects.map(p => p.reportData?.date).filter(Boolean).sort();
-
-      // Conformité moyenne — moyenne des % de conformité sur tous les projets
-      // ayant un rapport (évite de diluer avec les projets non encore exécutés).
-      const runProjects = allProjects.filter(p => p.reportData && p.compliance != null);
-      const complianceAvg = runProjects.length > 0
-        ? Math.round(runProjects.reduce((s, p) => s + p.compliance, 0) / runProjects.length)
-        : null;
-
-      // Dernier run : entity + projet ayant la date de rapport la plus récente.
-      let lastRunEntity = null, lastRunProject = null, lastRunDate = null;
-      for (const e of entityList) {
-        for (const p of (e.projects || [])) {
-          const d = p.reportData?.date || null;
-          if (d && (!lastRunDate || d > lastRunDate)) {
-            lastRunDate = d; lastRunEntity = e.id; lastRunProject = p.id;
-          }
-        }
-      }
-
-      SANDBOXES.push({
-        id: sb.id,
-        name: sb.name,
-        icon: ICONS[i % ICONS.length],
-        color: '#64748B',
-        desc: sb.desc || '',
-        standard: sb.standard || sb.norm || '—',
-        projects_total: allProjects.length,
-        projects_imported: imported,
-        runs,
-        last_run: dates.length ? dates[dates.length - 1] : null,
-        compliance_avg:   complianceAvg,
-        last_run_entity:  lastRunEntity,
-        last_run_project: lastRunProject,
-      });
-
-      ENTITIES[sb.id] = entityList.map(e => ({
-        id:    e.id,
-        label: e.label || e.id,
-        path:  `workspace/${e.id}`,
-      }));
-
-      PROJECTS[sb.id] = entityList.flatMap(e => (e.projects || []).map(p => {
-        // Rapport du pipeline run.pl (verdict + comptage) — au plus un, le
-        // plus récent connu pour ce projet.
-        // p.reportFile est déjà relatif à workspace/<entity>/ — soit
-        // "reports/xxx.json" (convention actuelle), soit "../../reports/xxx.json"
-        // (legacy racine sandbox), soit un simple nom de fichier markdown
-        // ("compliance-report-xxx.md", implicitement dans reports/).
-        // All run-reports (most recent first for display)
-        const runReportEntry = (p.runEntries && p.runEntries.length
-          ? [...p.runEntries].reverse()   // most recent first
-          : p.reportFile ? [{ file: p.reportFile, dir: null, data: p.reportData }] : []
-        ).map(entry => {
-          const fname = entry.file;
-          const rdata = entry.data || p.reportData || {};
-          const relPath = fname
-            ? (/^reports\//.test(fname) ? fname : `reports/${fname}`)
-            : null;
-          return {
-            icon:  '📋', kind: 'run', label: fname || p.reportFile,
-            desc:  `${rdata.pipeline_solved ? 'SOLVED' : (p.verdict || '?')} · ${rdata.n_conforme ?? p.reportData?.conformes ?? 0}/${rdata.n_total ?? p.frames ?? 0} CONFORMES`,
-            path:  relPath ? `sandboxes/${sb.id}/workspace/${e.id}/${relPath}` : '',
-            date:  (rdata.generated_at || p.reportData?.date || '').slice(0,10) || new Date().toISOString().slice(0,10),
-            run:   'run.pl',
-            explain_file:  entry.explain_file  ?? null,
-            synthese_file: entry.synthese_file ?? null,
-          };
-        });
-
-        // Rapports chorus-check (synthese-/explain-*.md) — uniquement ceux
-        // qui NE SONT PAS déjà liés par timestamp à un run-report existant.
-        // Les fichiers liés sont déjà accessibles via les boutons 📄/🔍 sur
-        // leur ligne de run — les dupliquer ici créerait de la confusion.
-        const linkedByRun = new Set(
-          runReportEntry.flatMap(r => [r.explain_file, r.synthese_file]).filter(Boolean)
-        );
-        const checkReportEntries = (p.checkReports || [])
-          .filter(filename => !linkedByRun.has(filename))
-          .map(filename => ({
-            icon: filename.startsWith('explain-') ? '🔍' : '📄',
-            kind: filename.startsWith('explain-') ? 'explain' : 'summary',
-            label: filename,
-            desc: filename.startsWith('explain-')
-              ? 'Explications règle par règle (chorus-check --explain)'
-              : 'Synthèse 1 page (chorus-check --summary)',
-            path: `sandboxes/${sb.id}/workspace/${e.id}/reports/${filename}`,
-            date: null,
-            run: filename.startsWith('explain-') ? 'chorus-check --explain' : 'chorus-check --summary',
-          }));
-
-        return {
-          id: p.id,
-          name: p.name,
-          type: 'pdf',
-          entity: e.id,
-          frames: p.frames || 0,
-          evidence: 0,
-          state: p.state,
-          compliance: p.compliance,
-          lastRun: p.reportData?.date || null,
-          verdict: p.verdict,
-          imports: [],
-          reports: [...runReportEntry, ...checkReportEntries],
-          corpus: [],
-        };
-      }));
+      const entry = buildSandboxEntry(sb, i);
+      SANDBOXES.push(entry.sandbox);
+      ENTITIES[sb.id] = entry.entities;
+      PROJECTS[sb.id] = entry.projects;
     });
 
     renderGlobalDashboard();
@@ -3067,6 +2958,232 @@ async function initFromServer() {
 
   } catch (err) {
     console.warn('Serveur MVP0 non disponible — mode simulation', err.message);
+  }
+}
+
+// Tri chronologique descendant (plus récent en premier) d'une liste de
+// rapports — utilisé par tous les panneaux affichant une liste de rapports
+// de run (panneau pipeline, aperçu/onglet "Rapports" de la page projet,
+// historique). Priorité à `dateTime` (horodatage complet, le plus précis
+// disponible — ISO ou YYYY-MM-DDTHH:MM:SS) ; repli sur `date` (jour seul)
+// si `dateTime` est absent ; les entrées sans aucune date connue sont
+// reléguées en fin de liste plutôt que de perturber l'ordre des autres.
+function sortReportsByDateDesc(reports) {
+  return [...(reports || [])].sort((a, b) => {
+    const da = a.dateTime || a.date || null;
+    const db = b.dateTime || b.date || null;
+    if (!da && !db) return 0;
+    if (!da) return  1;
+    if (!db) return -1;
+    return new Date(db) - new Date(da);
+  });
+}
+
+const SANDBOX_ICONS = ['🔐','📜','🏗️','♿','🏥','☁️','⚖️','🌍','📋'];
+
+// Construit l'entrée { sandbox, entities, projects } attendue par
+// SANDBOXES/ENTITIES/PROJECTS à partir d'un objet sandbox brut renvoyé par
+// le backend (même forme que chaque élément de /api/scan ou l'unique objet
+// de /api/sandboxes/:sbId). Factorisé hors de initFromServer() pour être
+// réutilisable par refreshSandboxReports() (rafraîchissement ciblé d'un seul
+// sandbox après un run.pl / chorus-check / chorus-complete-report lancé
+// depuis le terminal ECA interactif — voir son appelant pour le contexte).
+function buildSandboxEntry(sb, iconIndex) {
+  const entityList = sb.entities || [];
+  const allProjects = entityList.flatMap(e => e.projects || []);
+  const imported = allProjects.filter(p => p.state === 'imported').length;
+  const runs     = allProjects.filter(p => p.reportFile).length;
+  const dates    = allProjects.map(p => p.reportData?.date).filter(Boolean).sort();
+
+  // Conformité moyenne — moyenne des % de conformité sur tous les projets
+  // ayant un rapport (évite de diluer avec les projets non encore exécutés).
+  const runProjects = allProjects.filter(p => p.reportData && p.compliance != null);
+  const complianceAvg = runProjects.length > 0
+    ? Math.round(runProjects.reduce((s, p) => s + p.compliance, 0) / runProjects.length)
+    : null;
+
+  // Dernier run : entity + projet ayant la date de rapport la plus récente.
+  let lastRunEntity = null, lastRunProject = null, lastRunDate = null;
+  for (const e of entityList) {
+    for (const p of (e.projects || [])) {
+      const d = p.reportData?.date || null;
+      if (d && (!lastRunDate || d > lastRunDate)) {
+        lastRunDate = d; lastRunEntity = e.id; lastRunProject = p.id;
+      }
+    }
+  }
+
+  const sandbox = {
+    id: sb.id,
+    name: sb.name,
+    icon: SANDBOX_ICONS[(iconIndex ?? 0) % SANDBOX_ICONS.length],
+    color: '#64748B',
+    desc: sb.desc || '',
+    standard: sb.standard || sb.norm || '—',
+    projects_total: allProjects.length,
+    projects_imported: imported,
+    runs,
+    last_run: dates.length ? dates[dates.length - 1] : null,
+    compliance_avg:   complianceAvg,
+    last_run_entity:  lastRunEntity,
+    last_run_project: lastRunProject,
+  };
+
+  const entities = entityList.map(e => ({
+    id:    e.id,
+    label: e.label || e.id,
+    path:  `workspace/${e.id}`,
+  }));
+
+  const projects = entityList.flatMap(e => (e.projects || []).map(p => {
+    // Rapport du pipeline run.pl (verdict + comptage) — au plus un, le
+    // plus récent connu pour ce projet.
+    // p.reportFile est déjà relatif à workspace/<entity>/ — soit
+    // "reports/xxx.json" (convention actuelle), soit "../../reports/xxx.json"
+    // (legacy racine sandbox), soit un simple nom de fichier markdown
+    // ("compliance-report-xxx.md", implicitement dans reports/).
+    // All run-reports (most recent first for display)
+    const runReportEntry = (p.runEntries && p.runEntries.length
+      ? [...p.runEntries].reverse()   // most recent first
+      : p.reportFile ? [{ file: p.reportFile, dir: null, data: p.reportData }] : []
+    ).map(entry => {
+      const fname = entry.file;
+      const rdata = entry.data || p.reportData || {};
+      const relPath = fname
+        ? (/^reports\//.test(fname) ? fname : `reports/${fname}`)
+        : null;
+      return {
+        icon:  '📋', kind: 'run', label: fname || p.reportFile,
+        desc:  `${rdata.pipeline_solved ? 'SOLVED' : (p.verdict || '?')} · ${rdata.n_conforme ?? p.reportData?.conformes ?? 0}/${rdata.n_total ?? p.frames ?? 0} CONFORMES`,
+        path:  relPath ? `sandboxes/${sb.id}/workspace/${e.id}/${relPath}` : '',
+        date:  (rdata.generated_at || p.reportData?.date || '').slice(0,10) || new Date().toISOString().slice(0,10),
+        dateTime: rdata.generated_at || p.reportData?.date || null,
+        run:   'run.pl',
+        explain_file:  entry.explain_file  ?? null,
+        synthese_file: entry.synthese_file ?? null,
+      };
+    });
+
+    // Rapports chorus-check (synthese-/explain-*.md) — uniquement ceux
+    // qui NE SONT PAS déjà liés par timestamp à un run-report existant.
+    // Les fichiers liés sont déjà accessibles via les boutons 📄/🔍 sur
+    // leur ligne de run — les dupliquer ici créerait de la confusion.
+    const linkedByRun = new Set(
+      runReportEntry.flatMap(r => [r.explain_file, r.synthese_file]).filter(Boolean)
+    );
+    const checkReportEntries = (p.checkReports || [])
+      .filter(filename => !linkedByRun.has(filename))
+      .map(filename => {
+        // Date de production extraite du nom de fichier — deux formats
+        // coexistent selon l'origine : YYYYMMDD-HHMMSS (skill ECA /
+        // terminal, cf. chorus-complete-report.md et consorts) ou YYYYMMDD
+        // seul (ancien chemin server.js § writeCheckReport, ROUTE 4
+        // /check?action=). Ces rapports n'ont pas de champ date structuré
+        // propre (contrairement aux run-reports qui portent generated_at
+        // dans leur JSON) — sans cette extraction ils ne pourraient jamais
+        // être triés ni afficher de date dans l'UI (voir chorus-web.html
+        // § listes de rapports).
+        const tsMatch = filename.match(/-(\d{4})(\d{2})(\d{2})(?:-(\d{2})(\d{2})(\d{2}))?\.md$/);
+        const date = tsMatch ? `${tsMatch[1]}-${tsMatch[2]}-${tsMatch[3]}` : null;
+        // Horodatage complet (minute près si dispo, sinon 00:00:00) — utilisé
+        // pour le tri chronologique des listes de rapports ; `date` (jour
+        // seul) reste le format affiché, inchangé pour compat avec le reste
+        // du code qui en dépend déjà (pvReportRow, groupement par jour de
+        // openHistoryModal, etc).
+        const dateTime = tsMatch
+          ? `${tsMatch[1]}-${tsMatch[2]}-${tsMatch[3]}T${tsMatch[4]||'00'}:${tsMatch[5]||'00'}:${tsMatch[6]||'00'}`
+          : null;
+        return {
+          icon: filename.startsWith('explain-') ? '🔍' : '📄',
+          kind: filename.startsWith('explain-') ? 'explain' : 'summary',
+          label: filename,
+          desc: filename.startsWith('explain-')
+            ? 'Explications règle par règle (chorus-check --explain)'
+            : 'Synthèse 1 page (chorus-check --summary)',
+          path: `sandboxes/${sb.id}/workspace/${e.id}/reports/${filename}`,
+          date,
+          dateTime,
+          run: filename.startsWith('explain-') ? 'chorus-check --explain' : 'chorus-check --summary',
+        };
+      });
+
+    return {
+      id: p.id,
+      name: p.name,
+      type: 'pdf',
+      entity: e.id,
+      frames: p.frames || 0,
+      evidence: 0,
+      state: p.state,
+      compliance: p.compliance,
+      lastRun: p.reportData?.date || null,
+      verdict: p.verdict,
+      imports: [],
+      reports: [...runReportEntry, ...checkReportEntries],
+      corpus: [],
+    };
+  }));
+
+  return { sandbox, entities, projects };
+}
+
+// Rafraîchissement ciblé d'un seul sandbox — appelé après qu'un terminal ECA
+// interactif (niveau 'project'/'report') ait pu produire de nouveaux rapports
+// (run.pl relancé, chorus-check --summary/--explain, chorus-complete-report)
+// SANS passer par le flux SSE direct de runPipeline()/runChorusCheckAction()
+// (qui, eux, mettent déjà à jour PROJECTS[...] localement). Sans cet appel,
+// window._lastReports / PROJECTS[sbId] restaient figés sur l'état d'avant la
+// commande ECA jusqu'au prochain F5 — même défaut que celui corrigé sur
+// finishPipeline()/runChorusCheckAction(), mais sur ce chemin distinct.
+// Best-effort : si le scan échoue (réseau, sandbox introuvable), on ignore
+// silencieusement plutôt que de casser la session terminal en cours.
+async function refreshSandboxReports(sbId) {
+  if (!sbId) return;
+  try {
+    const r = await fetch(`${API}/api/sandboxes/${sbId}`);
+    if (!r.ok) return;
+    const { sandbox: sb } = await r.json();
+    if (!sb) return;
+
+    const iconIndex = Math.max(0, SANDBOXES.findIndex(s => s.id === sbId));
+    const entry = buildSandboxEntry(sb, iconIndex);
+
+    // Remplacer l'entrée existante de SANDBOXES (préserve l'ordre d'affichage)
+    const idx = SANDBOXES.findIndex(s => s.id === sbId);
+    if (idx >= 0) SANDBOXES[idx] = entry.sandbox; else SANDBOXES.push(entry.sandbox);
+    ENTITIES[sbId] = entry.entities;
+    PROJECTS[sbId] = entry.projects;
+
+    // Resynchroniser currentProject/_lastReports si la page affichée
+    // concerne précisément ce sandbox/projet, pour que les boutons déjà
+    // rendus (ex. 📊 View) reflètent les nouveaux fichiers sans F5.
+    if (currentSandbox?.id === sbId) {
+      currentSandbox = entry.sandbox;
+      if (currentProject) {
+        const freshProj = entry.projects.find(p => p.id === currentProject.id);
+        if (freshProj) {
+          currentProject = freshProj;
+          window._lastReports = freshProj.reports || [];
+        }
+      }
+    }
+
+    renderSidebar();
+    renderGlobalDashboard();
+    if (document.getElementById('page-project')?.classList.contains('active') && currentProject) {
+      const ent = entry.entities.find(e => e.id === currentProject.entity);
+      renderProjectPage(currentProject, ent ? ent.label : (currentProject.entity || ''));
+    } else {
+      renderProjectsTab();
+    }
+    // Panneau pipeline, si ouvert sur ce projet — rafraîchit la liste des
+    // run-reports affichée (y compris les icônes 📄/🔍 désormais liées).
+    if (!document.getElementById('pipeline-modal-overlay')?.hidden && currentProject) {
+      const runReports = (currentProject.reports || []).filter(r => r.kind === 'run');
+      if (runReports.length) renderReportsList(runReports);
+    }
+  } catch (e) {
+    console.warn('refreshSandboxReports: scan impossible —', e.message);
   }
 }
 
@@ -3229,14 +3346,16 @@ function renderProjectPage(proj, entLabel) {
     apercuHtml += `<div class="pv-comp-bar-wrap"><div class="pv-empty">Aucune analyse de conformité disponible — lancez le pipeline.</div></div>`;
   }
 
-  // Overview grid: last import + quick reports
-  const reports = proj.reports || [];
+  // Overview grid: last import + quick reports — triés par date desc (plus
+  // récent en premier), cohérent avec les autres listes de rapports de l'app.
+  const reports = sortReportsByDateDesc(proj.reports || []);
   const quickReports = reports.slice(0, 3);
 
   apercuHtml += `<div class="pv-overview-grid">`;
 
-  // Last run card
-  const lastRunReport = [...reports].reverse().find(r => r.kind === 'run');
+  // Last run card — reports est déjà trié desc, le premier 'run' trouvé
+  // est donc bien le plus récent (plus besoin de .reverse()).
+  const lastRunReport = reports.find(r => r.kind === 'run');
   // Verdict : extrait du desc (ex: "SOLVED · 27/31 CONFORMES" ou "FAILED · …")
   const verdictRaw  = lastRunReport?.desc || '';
   const isSolved    = verdictRaw.toUpperCase().includes('SOLVED');
@@ -4342,6 +4461,28 @@ Run : ${new Date().toISOString().slice(0,19).replace('T',' ')} UTC
     liveProj.reports.push(reportEntry);
     liveProj.verdict = verdictCode;
     if (total) liveProj.compliance = Math.round((conformes / total) * 100);
+    liveProj.lastRun = reportEntry.date;
+    if (total) liveProj.frames = total;
+    // currentProject pointe souvent vers le même objet que liveProj, mais
+    // ce n'est pas garanti (ex. objet reconstruit ailleurs) — forcer la
+    // synchronisation pour que renderProjectPage() (appelé juste après)
+    // lise bien les valeurs fraîches via currentProject.
+    if (currentProject && currentProject.id === liveProj.id) currentProject = liveProj;
+  }
+
+  // Rafraîchir toutes les vues dérivées de PROJECTS — sans ce rafraîchissement
+  // explicite, la sidebar/dashboard/onglet projets et la page projet
+  // elle-même restaient figées sur les données d'avant le run jusqu'au
+  // prochain rechargement complet de la page (F5), seul initFromServer()
+  // les ré-interrogeant jusqu'ici.
+  renderSidebar();
+  renderGlobalDashboard();
+  if (document.getElementById('page-project')?.classList.contains('active') && currentProject) {
+    const ents = (typeof ENTITIES !== 'undefined' ? ENTITIES[currentSandbox.id] : null) || [];
+    const ent  = ents.find(e => e.id === currentProject.entity);
+    renderProjectPage(currentProject, ent ? ent.label : (currentProject.entity || ''));
+  } else {
+    renderProjectsTab();
   }
 
   const wrap = document.getElementById('pipeline-reports');
@@ -4350,6 +4491,12 @@ Run : ${new Date().toISOString().slice(0,19).replace('T',' ')} UTC
 }
 
 function renderReportsList(reports) {
+  // Trier par date desc (plus récent en premier) — appliqué à la liste
+  // complète (pas seulement aux runs affichés ci-dessous) pour que
+  // window._lastReports et les index utilisés par openReportView()/
+  // openMdView() restent cohérents avec l'ordre visuel.
+  reports = sortReportsByDateDesc(reports);
+
   // Afficher uniquement les run-reports (.json) — les explain/synthese sont
   // représentés par des icônes sur chaque ligne de run, liés par timestamp.
   const runReports = reports.filter(r => r.kind === 'run');
@@ -4399,6 +4546,7 @@ function renderReportsList(reports) {
         <div style="font-size:11px;margin-top:2px">
           <span style="${verdictStyle};font-weight:600">${r.desc.split('·')[0].trim()}</span>
           ${scoreHtml ? `&nbsp;·&nbsp;${scoreHtml}` : ''}
+          ${r.date ? `&nbsp;·&nbsp;<span style="color:var(--text-muted)">${r.date}</span>` : ''}
         </div>
       </div>
       <div style="display:flex;gap:2px;align-items:center">${synBtn}${expBtn}</div>
@@ -4597,9 +4745,38 @@ async function openReportView(reportInfo, ctx) {
   updateRvFooter(rows);
   filterReport('ALL');
 
-  // Show "chorus-complete-report" button only for --explain reports
+  // Show "chorus-complete-report" button only for --explain reports —
+  // et seulement si ce rapport n'a pas déjà été croisé (chorus-complete-report
+  // Phase C4). Sans cette seconde vérification, le bouton "📝 Complete"
+  // restait affiché indéfiniment même après un cross-check réussi — contrairement
+  // au viewer Markdown simple (👁️, mdv-cross-area) qui, lui, détecte déjà
+  // l'état enrichi via le même marqueur textuel (voir detectCompleteReportDone()).
   const completeBtn = document.getElementById('rv-complete-btn');
-  if (completeBtn) completeBtn.style.display = (reportInfo && reportInfo.kind === 'explain') ? '' : 'none';
+  if (completeBtn) {
+    if (reportInfo && reportInfo.kind === 'explain' && reportInfo.label) {
+      completeBtn.style.display = '';
+      completeBtn.disabled   = false;
+      completeBtn.title      = '';
+      completeBtn.textContent = '📝 Complete';
+      // Contenu texte non chargé par cette vue (seul le run-report JSON
+      // structuré l'est, pour peupler le tableau ci-dessus) — on le
+      // récupère séparément, en best-effort : une erreur réseau laisse
+      // simplement le bouton actif (comportement antérieur, non régressif).
+      fetch(`${API}/api/sandboxes/${sbId}/entities/${entityId}/projects/${projId}/reports/${reportInfo.label}`)
+        .then(r => r.ok ? r.text() : null)
+        .then(text => {
+          const enrichedDate = detectCompleteReportDone(text);
+          if (enrichedDate && _rvCurrentReport === reportInfo) {
+            completeBtn.disabled    = true;
+            completeBtn.title       = `Déjà croisé avec la source le ${enrichedDate}`;
+            completeBtn.textContent = `✓ Complété (${enrichedDate})`;
+          }
+        })
+        .catch(() => { /* best-effort — bouton reste actif en cas d'échec */ });
+    } else {
+      completeBtn.style.display = 'none';
+    }
+  }
 
   updateRvCheckButtons();
 }
@@ -4903,6 +5080,20 @@ async function runChorusCheckAction(action) {
     existingReports.push(reportEntry);
     renderReportsList(existingReports);
 
+    // Rafraîchir les vues dérivées de PROJECTS — même raison que dans
+    // finishPipeline() : sans cet appel explicite, la sidebar/dashboard/onglet
+    // projets restaient figés sur l'état d'avant le --summary/--explain
+    // jusqu'au prochain F5 (initFromServer()).
+    renderSidebar();
+    renderGlobalDashboard();
+    if (document.getElementById('page-project')?.classList.contains('active') && currentProject) {
+      const ents = (typeof ENTITIES !== 'undefined' ? ENTITIES[sbId] : null) || [];
+      const ent  = ents.find(e => e.id === currentProject.entity);
+      renderProjectPage(currentProject, ent ? ent.label : (currentProject.entity || ''));
+    } else {
+      renderProjectsTab();
+    }
+
     // Show ECA session trigger after --summary or --explain
     const trigger = document.getElementById('eca-session-trigger');
     if (trigger) trigger.style.display = 'block';
@@ -5082,10 +5273,14 @@ function closeLevelTerminal() {
 function levelTerminalStop() {
   // 1. Annuler le fetch SSE côté navigateur
   if (_lvlTermAbortCtrl) { _lvlTermAbortCtrl.abort(); _lvlTermAbortCtrl = null; }
-  // 2. Signaler au serveur d'arrêter la subReq ECA
-  if (_lvlTermCtx && _lvlTermCtx.sbId) {
+  // 2. Signaler au serveur d'arrêter la subReq ECA — sessionId requis pour
+  // que le serveur retrouve la bonne entrée activeTerminals (indexée par
+  // session, pas par sandbox, depuis la correction de l'isolation des chats
+  // ECA — voir server.js § ROUTE 5bis/5quater).
+  if (_lvlTermCtx && _lvlTermCtx.sbId && _lvlTermSessionId) {
     fetch(`${API}/api/sandboxes/${_lvlTermCtx.sbId}/terminal/stop`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sessionId: _lvlTermSessionId }),
     }).catch(() => {});
   }
 }
@@ -5310,6 +5505,14 @@ async function levelTerminalExec(cmd) {
             const sep = document.createElement('hr');
             sep.className = 'lvl-term-sep';
             out.appendChild(sep);
+            // Un run.pl/chorus-check/chorus-complete-report lancé depuis ce
+            // terminal ('project'/'report') peut avoir produit de nouveaux
+            // rapports sur le filesystem — rescanner le sandbox pour que
+            // PROJECTS[...]/_lastReports (et donc le bouton 📊 View, la liste
+            // de rapports, etc.) reflètent ces fichiers sans attendre un F5.
+            if (ctx.level === 'project' || ctx.level === 'report') {
+              refreshSandboxReports(ctx.sbId);
+            }
             break outer;
           }
         }
@@ -5321,6 +5524,9 @@ async function levelTerminalExec(cmd) {
         const elapsed = Math.round((Date.now() - _lvlTermStartTs) / 1000);
         lvlTermAppend(`⏸ Session terminée (${elapsed}s)`, 'dim done-badge');
         doneShown = true;
+        if (ctx.level === 'project' || ctx.level === 'report') {
+          refreshSandboxReports(ctx.sbId);
+        }
       }
     }
   } catch (e) {
@@ -5397,12 +5603,14 @@ function lvlTermAskUser(ctx, question, toolId, isApproval = false) {
     out.appendChild(aLine);
     out.scrollTop = out.scrollHeight;
 
-    // Envoyer la réponse à ECA via /terminal/respond
+    // Envoyer la réponse à ECA via /terminal/respond — sessionId requis
+    // pour reconstruire le même chatId que la session qui a posé la
+    // question (voir server.js § ROUTE 5ter).
     try {
       await fetch(`${API}/api/sandboxes/${ctx.sbId}/terminal/respond`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: answer }),
+        body: JSON.stringify({ message: answer, sessionId: _lvlTermSessionId }),
       });
     } catch (e) {
       lvlTermAppend(`✖ Erreur envoi réponse : ${e.message}`, 'err');
@@ -5858,7 +6066,7 @@ function openHistoryModal(projId) {
     const dates = Object.keys(byDate).sort((a,b)=>b.localeCompare(a));
     let html = '';
     for (const d of dates) {
-      const reps = byDate[d];
+      const reps = sortReportsByDateDesc(byDate[d]);
       // Collect unique run commands for this date
       const runs = [...new Set(reps.map(r=>r.run||'run.pl'))];
       html += `<div class="hm-run-group">
@@ -5893,19 +6101,19 @@ function openHistoryModal(projId) {
     // croisée dans les données). On les affiche dans une section distincte
     // pour éviter toute fausse association avec un run particulier.
     if (analyses.length) {
-      analyses.sort((a, b) => a.label.localeCompare(b.label));
+      const sortedAnalyses = sortReportsByDateDesc(analyses);
       html += `<div style="margin-top:14px">
         <div style="font-size:10px;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:.08em;margin-bottom:6px">
           Analyses (${analyses.length}) — non liées à un run spécifique
         </div>`;
-      for (const r of analyses) {
+      for (const r of sortedAnalyses) {
         const icon = r.kind === 'summary' ? '📄' : '🔍';
         const label = r.kind === 'summary' ? 'Summary' : 'Explain';
         html += `<div class="hm-report-row">
           <div class="hm-report-icon">${icon}</div>
           <div class="hm-report-info">
             <div class="hm-report-name">${r.label}</div>
-            <div class="hm-report-desc">${r.desc||''}</div>
+            <div class="hm-report-desc">${r.desc||''}${r.date ? ` · ${r.date}` : ''}</div>
           </div>
           <div class="hm-report-path" title="${r.path||''}">${r.path||''}</div>
           <button class="btn btn-ghost btn-sm" style="padding:2px 7px;font-size:10px;flex-shrink:0"
@@ -5974,18 +6182,14 @@ function updateMdvCrossArea(filename, content) {
   const isExplain = filename && filename.startsWith('explain-') && filename.endsWith('.md');
   if (!isExplain) { crossArea.innerHTML = ''; return; }
 
-  // Marque insérée par chorus-complete-report Phase C4
-  const enrichMatch = content && content.match(
-    /\*\*[✅🛠️❓]\s*Vérification croisée\s*\(chorus-complete-report,\s*(\d{4}-\d{2}-\d{2})\)/
-  );
+  const enrichedDate = detectCompleteReportDone(content);
 
-  if (enrichMatch) {
+  if (enrichedDate) {
     // Déjà enrichi — badge indicatif
-    const date = enrichMatch[1];
     crossArea.innerHTML =
       `<span class="mdv-cross-badge" title="Ce rapport a été enrichi par croisement avec le document source via chorus-complete-report">` +
       `✅ Croisé avec source` +
-      `<span class="mdv-cross-date">${date}</span>` +
+      `<span class="mdv-cross-date">${enrichedDate}</span>` +
       `</span>`;
   } else {
     // Pas encore enrichi — bouton pour lancer le cross-check
@@ -5994,6 +6198,34 @@ function updateMdvCrossArea(filename, content) {
       `title="Croiser les éléments incertains (❓) de ce rapport avec le document source original — chorus-complete-report">` +
       `🔀 Cross-check source</button>`;
   }
+}
+
+/**
+ * Détecte si un rapport explain-*.md a déjà été enrichi par
+ * chorus-complete-report (Phase C4) à partir de son contenu texte brut.
+ * Retourne la date (YYYY-MM-DD) du dernier passage si trouvé, sinon null.
+ *
+ * Reconnaît le format blockquote actuel :
+ *   > 🔎 **Vérification croisée** (`chorus-complete-report`, YYYY-MM-DD) — <emoji> <libellé>
+ * et l'ancien format bold (rétrocompatibilité — rapports produits avant le
+ * changement de mise en forme du skill, Phase C4) :
+ *   **<emoji> Vérification croisée (chorus-complete-report, YYYY-MM-DD) :**
+ * Les 5 classifications possibles : ✅ 🛠️ ❓ 🏷️ ⚖️ (voir chorus-complete-report.md
+ * § Phase C3 Step 4) — peu importe laquelle, sa seule présence signale que le
+ * cross-check a déjà été exécuté sur ce rapport.
+ *
+ * Partagée par updateMdvCrossArea() (viewer Markdown simple, 👁️) et
+ * openReportView() (modale report-view / tableau filtrable, bouton 📝 Complete)
+ * — sans cette factorisation, les deux points d'affichage du bouton
+ * "cross-check déjà fait ?" divergeaient et pouvaient afficher des états
+ * contradictoires pour le même fichier.
+ */
+function detectCompleteReportDone(content) {
+  if (!content) return null;
+  const m = content.match(
+    /(?:>\s*🔎\s*\*\*Vérification croisée\*\*\s*\(`?chorus-complete-report`?,\s*(\d{4}-\d{2}-\d{2})\)|\*\*[✅🛠️❓🏷️⚖️]\s*Vérification croisée\s*\(chorus-complete-report,\s*(\d{4}-\d{2}-\d{2})\))/
+  );
+  return m ? (m[1] || m[2]) : null;
 }
 
 /**
