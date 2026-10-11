@@ -6498,10 +6498,15 @@ async function openSandboxCorpus() {
 
     // ── COUVERTURE CORPUS ─────────────────────────────────────────────────
     const covEntries = readme?.coverageEntries || [];
-    const nInt  = covEntries.filter(e => e.kind === 'integrated').length;
-    const nDef  = covEntries.filter(e => e.kind === 'deferred').length;
-    const nOos  = covEntries.filter(e => e.kind === 'out_of_scope').length;
-    const kindStyle = { integrated: 'color:var(--success)', deferred: 'color:var(--warn)', out_of_scope: 'color:var(--text-muted)' };
+    const nInt   = covEntries.filter(e => e.kind === 'integrated').length;
+    const nDef   = covEntries.filter(e => e.kind === 'deferred').length;
+    const nOos   = covEntries.filter(e => e.kind === 'out_of_scope').length;
+    const nProm  = covEntries.filter(e => e.kind === 'promoted').length;
+    // 'promoted' : couleur accent (ni vert permanent comme Integrated, ni
+    // gris neutre comme OOS) — signale un delta transitoire de la dernière
+    // passe chorus-feed --enrich (sections qui viennent de passer de
+    // Deferred à Integrated), pas une catégorie de couverture permanente.
+    const kindStyle = { integrated: 'color:var(--success)', deferred: 'color:var(--warn)', out_of_scope: 'color:var(--text-muted)', promoted: 'color:var(--accent)' };
     // Chaque ligne Coverage est dépliable (accordéon <tr> natif, pas de JS
     // supplémentaire ni de modal) : clic → affiche le sous-tableau détaillé
     // (Section/Règle corpus → Règles générées|Raison) extrait depuis le
@@ -6542,7 +6547,7 @@ async function openSandboxCorpus() {
                 : '';
               return `
               <tr style="border-bottom:1px solid var(--border-light)"${toggle}>
-                <td style="padding:3px 8px;white-space:nowrap;${kindStyle[e.kind]||''}">${e.status} ${e.kind === 'integrated' ? 'Integrated' : e.kind === 'deferred' ? 'Deferred' : 'OOS'}</td>
+                <td style="padding:3px 8px;white-space:nowrap;${kindStyle[e.kind]||''}">${e.status} ${e.kind === 'integrated' ? 'Integrated' : e.kind === 'deferred' ? 'Deferred' : e.kind === 'promoted' ? 'Promoted' : 'OOS'}</td>
                 <td style="padding:3px 8px;color:var(--text-secondary);max-width:260px;word-break:break-word">${e.label || '—'}</td>
                 <td style="padding:3px 8px;color:var(--text-muted);font-size:10px;font-family:'JetBrains Mono',monospace">${e.detail || ''}</td>
                 <td style="padding:3px 8px;text-align:center;color:var(--text-muted);font-size:9px">${hasDetail ? `<span class="cov-chevron">▸</span> ${e.detailRows.length}` : ''}</td>
@@ -6561,6 +6566,7 @@ async function openSandboxCorpus() {
             ? `<span style="font-size:11px;color:var(--text-muted)">📅 MAJ : ${readme.coverageLastUpdate.slice(0, 80)}</span>`
             : ''}
           <span style="background:var(--success-dim);color:var(--success);border-radius:4px;padding:2px 8px;font-size:11px;font-weight:600">✅ ${nInt} Integrated</span>
+          ${nProm ? `<span style="background:var(--accent-dim);color:var(--accent);border-radius:4px;padding:2px 8px;font-size:11px;font-weight:600">✅ ${nProm} Promoted (last pass)</span>` : ''}
           ${nDef ? `<span style="background:var(--warn-dim);color:var(--warn);border-radius:4px;padding:2px 8px;font-size:11px;font-weight:600">⏭ ${nDef} Deferred</span>` : ''}
           ${nOos ? `<span style="background:var(--bg-elevated);color:var(--text-muted);border-radius:4px;padding:2px 8px;font-size:11px">⛔ ${nOos} OOS</span>` : ''}
         </div>

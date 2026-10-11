@@ -210,6 +210,12 @@ function parseSandboxReadme(sbPath) {
   // Format attendu : "** ✅ Integrated — <agent>, <source> (<stats>)"
   //                  "** ⏭ Deferred — <agent> (<detail>)"
   //                  "** ⛔ Out of scope — <agent/source>"
+  //                  "** ✅ Promoted this pass (from ⏭ Deferred)" — delta
+  //                  temporaire produit par chorus-feed --enrich (Phase B4.5),
+  //                  distinct du "Integrated" permanent : sections qui viennent
+  //                  de passer de Deferred à Integrated lors de la dernière
+  //                  passe. kind dédié 'promoted' pour un rendu visuellement
+  //                  distinct côté webapp (pas le même vert que Integrated).
   const coverageEntries = [];
   let coverageLastUpdate = null;
   {
@@ -229,12 +235,14 @@ function parseSandboxReadme(sbPath) {
         const l = lines[i];
         // Fin de section Coverage : heading * de niveau 1 (pas ** ou ***)
         if (/^\*\s+\S/.test(l) && !/^\*\*/.test(l)) break;
-        const m = l.match(/^\*{2}\s+([\u2705\u23ed\u26d4✅⏭⛔])\s+(Integrated|Deferred|Out of scope)[^\n]*/i);
+        const m = l.match(/^\*{2}\s+([\u2705\u23ed\u26d4✅⏭⛔])\s+(Integrated|Deferred|Out of scope|Promoted this pass)[^\n]*/i);
         if (!m) continue;
         const statusIcon = m[1];
-        const kind       = m[2].toLowerCase().replace(/\s+/g, '_'); // integrated|deferred|out_of_scope
+        const kindLabel  = m[2].toLowerCase();
+        const kind       = kindLabel.startsWith('promoted') ? 'promoted'
+                          : kindLabel.replace(/\s+/g, '_'); // integrated|deferred|out_of_scope|promoted
         // Le reste après le kind : "— agent, source (stats)" ou "(stats)"
-        const rest = l.replace(/^\*{2}\s+[\u2705\u23ed\u26d4✅⏭⛔]\s+(Integrated|Deferred|Out of scope)\s*/i, '').trim();
+        const rest = l.replace(/^\*{2}\s+[\u2705\u23ed\u26d4✅⏭⛔]\s+(Integrated|Deferred|Out of scope|Promoted this pass)\s*/i, '').trim();
         // Extraire agent (après "—"), label court, stats entre parenthèses
         const dashMatch = rest.match(/^—\s*(.+?)(?:\s*\(([^)]+)\))?$/);
         const parenMatch = rest.match(/^\(([^)]+)\)$/);
