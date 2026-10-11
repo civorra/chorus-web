@@ -1842,6 +1842,13 @@ input, select, textarea { font-family: inherit; }
 .mdv-cross-badge .mdv-cross-date {
   font-family: 'JetBrains Mono', monospace; font-size: 10px; opacity: 0.8;
 }
+/* Variante neutre — zero-target guard (rien à cross-checker), distincte du
+   badge vert "✅ Croisé avec source" pour éviter de laisser croire qu'un
+   cross-check effectif a eu lieu. */
+.mdv-cross-badge-neutral {
+  background: var(--bg-elevated); color: var(--text-muted);
+  border: 1px solid var(--border-light);
+}
 
 /* Services modal */
 #services-modal-overlay {
@@ -4793,11 +4800,19 @@ async function openReportView(reportInfo, ctx) {
       fetch(`${API}/api/sandboxes/${sbId}/entities/${entityId}/projects/${projId}/reports/${reportInfo.label}`)
         .then(r => r.ok ? r.text() : null)
         .then(text => {
-          const enrichedDate = detectCompleteReportDone(text);
-          if (enrichedDate && _rvCurrentReport === reportInfo) {
-            completeBtn.disabled    = true;
-            completeBtn.title       = `Déjà croisé avec la source le ${enrichedDate}`;
-            completeBtn.textContent = `✓ Complété (${enrichedDate})`;
+          const status = detectCompleteReportDone(text);
+          if (status && _rvCurrentReport === reportInfo) {
+            completeBtn.disabled = true;
+            if (status.kind === 'nothing') {
+              // Zero-target guard — rien à cross-checker, relancer ne
+              // changera rien (cf. updateMdvCrossArea() pour le même badge
+              // côté viewer Markdown simple).
+              completeBtn.title       = `chorus-complete-report exécuté le ${status.date} — rien à vérifier (aucun élément ❓ incertain)`;
+              completeBtn.textContent = `✓ Complété (${status.date})`;
+            } else {
+              completeBtn.title       = `Déjà croisé avec la source le ${status.date}`;
+              completeBtn.textContent = `✓ Complété (${status.date})`;
+            }
           }
         })
         .catch(() => { /* best-effort — bouton reste actif en cas d'échec */ });
@@ -6233,14 +6248,25 @@ function updateMdvCrossArea(filename, content) {
   const isExplain = filename && filename.startsWith('explain-') && filename.endsWith('.md');
   if (!isExplain) { crossArea.innerHTML = ''; return; }
 
-  const enrichedDate = detectCompleteReportDone(content);
+  const status = detectCompleteReportDone(content);
 
-  if (enrichedDate) {
+  if (status && status.kind === 'nothing') {
+    // Zero-target guard — rien à cross-checker (aucun élément ❓ incertain).
+    // Badge neutre distinct de "✅ Croisé avec source" : le cross-check a
+    // bien tourné, mais il n'y avait structurellement rien à faire. Évite
+    // qu'un utilisateur, voyant le bouton "🔀 Cross-check source" encore
+    // actif, ne relance le skill en boucle en pensant qu'il n'a jamais tourné.
+    crossArea.innerHTML =
+      `<span class="mdv-cross-badge mdv-cross-badge-neutral" title="chorus-complete-report a été exécuté — aucun élément ❓ incertain à cross-checker dans ce rapport, relancer ne changera rien">` +
+      `✅ Croisé avec source` +
+      `<span class="mdv-cross-date">${status.date}</span>` +
+      `</span>`;
+  } else if (status) {
     // Déjà enrichi — badge indicatif
     crossArea.innerHTML =
       `<span class="mdv-cross-badge" title="Ce rapport a été enrichi par croisement avec le document source via chorus-complete-report">` +
       `✅ Croisé avec source` +
-      `<span class="mdv-cross-date">${enrichedDate}</span>` +
+      `<span class="mdv-cross-date">${status.date}</span>` +
       `</span>`;
   } else {
     // Pas encore enrichi — bouton pour lancer le cross-check
@@ -6252,18 +6278,22 @@ function updateMdvCrossArea(filename, content) {
 }
 
 /**
- * Détecte si un rapport explain-*.md a déjà été enrichi par
- * chorus-complete-report (Phase C4) à partir de son contenu texte brut.
- * Retourne la date (YYYY-MM-DD) du dernier passage si trouvé, sinon null.
+ * Détecte si un rapport explain-*.md a déjà été traité par
+ * chorus-complete-report (Phase C4, ou son "zero-target guard") à partir de
+ * son contenu texte brut. Retourne `{ kind, date }` si trouvé, sinon `null` :
+ *   - `kind: 'checked'` — au moins un élément a été réellement cross-checké
+ *     (une des 5 classifications ✅ 🛠️ ❓ 🏷️ ⚖️, voir chorus-complete-report.md
+ *     § Phase C3 Step 4).
+ *   - `kind: 'nothing'` — le skill a tourné mais n'a trouvé aucun élément
+ *     ❓ incertain / `_a_confirmer` à cross-checker (zero-target guard,
+ *     § Phase C1) — relancer le skill sur ce rapport ne produira rien de
+ *     différent tant qu'aucun nouvel élément incertain n'apparaît.
  *
  * Reconnaît le format blockquote actuel :
  *   > 🔎 **Vérification croisée** (`chorus-complete-report`, YYYY-MM-DD) — <emoji> <libellé>
  * et l'ancien format bold (rétrocompatibilité — rapports produits avant le
  * changement de mise en forme du skill, Phase C4) :
  *   **<emoji> Vérification croisée (chorus-complete-report, YYYY-MM-DD) :**
- * Les 5 classifications possibles : ✅ 🛠️ ❓ 🏷️ ⚖️ (voir chorus-complete-report.md
- * § Phase C3 Step 4) — peu importe laquelle, sa seule présence signale que le
- * cross-check a déjà été exécuté sur ce rapport.
  *
  * Partagée par updateMdvCrossArea() (viewer Markdown simple, 👁️) et
  * openReportView() (modale report-view / tableau filtrable, bouton 📝 Complete)
@@ -6274,9 +6304,12 @@ function updateMdvCrossArea(filename, content) {
 function detectCompleteReportDone(content) {
   if (!content) return null;
   const m = content.match(
-    /(?:>\s*🔎\s*\*\*Vérification croisée\*\*\s*\(`?chorus-complete-report`?,\s*(\d{4}-\d{2}-\d{2})\)|\*\*[✅🛠️❓🏷️⚖️]\s*Vérification croisée\s*\(chorus-complete-report,\s*(\d{4}-\d{2}-\d{2})\))/
+    /(?:>\s*🔎\s*\*\*Vérification croisée\*\*\s*\(`?chorus-complete-report`?,\s*(\d{4}-\d{2}-\d{2})\)\s*—\s*(ℹ️|[✅🛠️❓🏷️⚖️])|\*\*(ℹ️|[✅🛠️❓🏷️⚖️])\s*Vérification croisée\s*\(chorus-complete-report,\s*(\d{4}-\d{2}-\d{2})\))/
   );
-  return m ? (m[1] || m[2]) : null;
+  if (!m) return null;
+  const date  = m[1] || m[4];
+  const emoji = m[2] || m[3];
+  return { kind: emoji === 'ℹ️' ? 'nothing' : 'checked', date };
 }
 
 /**
