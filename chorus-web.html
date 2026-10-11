@@ -75,6 +75,23 @@
   color-scheme: light;
 }
 
+/* ─── DENSITÉ (Settings > Interface > Densité) ──────────────
+   Applique un resserrement global des espacements/typo sur les zones
+   à plus forte densité d'information (listes de projets, sidebar,
+   panneaux settings). Activé via data-density="compact" sur <html>. */
+:root[data-density="compact"] {
+  font-size: 13px;
+}
+:root[data-density="compact"] .sd-field { margin-bottom: 8px; }
+:root[data-density="compact"] .sd-row { gap: 8px; }
+:root[data-density="compact"] .sd-section-title { margin-bottom: 4px; }
+:root[data-density="compact"] .sd-toggle-row { padding: 6px 0; }
+:root[data-density="compact"] .cm-frame,
+:root[data-density="compact"] .isp-msg,
+:root[data-density="compact"] .sb-overview-card { padding: 8px 10px; margin-bottom: 6px; }
+:root[data-density="compact"] .proj-card,
+:root[data-density="compact"] .proj-row { padding: 8px 10px; }
+
 /* ─── RESET ─────────────────────────────────────────────── */
 *, *::before, *::after { box-sizing: border-box; }
 html, body { height: 100%; margin: 0; }
@@ -1852,7 +1869,6 @@ input, select, textarea { font-family: inherit; }
       <div class="sidebar-section">
         <div class="sidebar-label" style="display:flex;align-items:center">
           <span style="flex:1">Sandboxes</span>
-          <button class="btn btn-ghost" onclick="openSettings()" style="padding:2px 6px;font-size:13px;margin-right:4px;line-height:1" title="Configuration">⚙️</button>
         </div>
         <div id="sidebar-list">
           <!-- dynamically filled -->
@@ -2254,12 +2270,11 @@ input, select, textarea { font-family: inherit; }
 <span class="yml-cmt"># chargement…</span>
       </div>
 
-      <div class="svc-section-title" style="margin-top:20px">Architecture réelle</div>
-      <div style="background:var(--bg-elevated);border:1px solid var(--border);border-radius:8px;padding:14px 16px;font-family:'JetBrains Mono',monospace;font-size:11px;line-height:2;color:var(--text-secondary)">
-        <span style="color:var(--accent)">Browser</span> → <span style="color:var(--text-muted)">HTTP</span> → <span style="color:var(--accent)">Node/Express :3000</span> (<code>server.js</code>) → <span style="color:var(--text-muted)">HTTPS+SSE</span> → <span style="color:var(--success)">eca-server :7777</span> (binaire GraalVM, protocole JSON-RPC inspiré LSP)<br>
-        &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;├─ workspace: <span style="color:var(--info)" id="svc-arch-ws1">/chorus/Engine</span> (skills Chorus + AGENTS.md)<br>
-        &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;└─ workspace: <span style="color:var(--info)" id="svc-arch-ws2">/chorus</span> (sandboxes/, accès fichiers complet)<br>
-        <span style="color:var(--text-muted);font-size:10px">chats ECA actifs : <span id="svc-arch-chats">—</span> · conteneur : <span id="svc-arch-container">—</span></span>
+      <div class="svc-section-title" style="margin-top:20px">Workspace &amp; sessions</div>
+      <div style="background:var(--bg-elevated);border:1px solid var(--border);border-radius:8px;padding:12px 14px;font-family:'JetBrains Mono',monospace;font-size:11px;line-height:1.9;color:var(--text-secondary)">
+        <div>workspace 1 : <span style="color:var(--info)" id="svc-arch-ws1">/chorus/Engine</span> <span style="color:var(--text-muted)">(skills Chorus + AGENTS.md)</span></div>
+        <div>workspace 2 : <span style="color:var(--info)" id="svc-arch-ws2">/chorus</span> <span style="color:var(--text-muted)">(sandboxes/, accès fichiers complet)</span></div>
+        <div style="margin-top:6px">chats ECA actifs : <span style="color:var(--accent)" id="svc-arch-chats">—</span> · conteneur : <span style="color:var(--accent)" id="svc-arch-container">—</span></div>
       </div>
     </div>
   </div>
@@ -2437,35 +2452,9 @@ let currentProject = null;
 let pipelineRunning = false;
 
 const SETTINGS = {
-  workspace: {
-    path: '/opt/chorus/workspaces/prod',
-    chorusHome: '/opt/chorus',
-    perl: '/usr/bin/perl',
-    mode: 'local', // 'local' | 'ssh' | 'docker'
-  },
-  eca: {
-    host: 'localhost',
-    port: 7777,
-    wsEndpoint: 'ws://localhost:7777/eca',
-    timeout: 30000,
-    status: 'connected', // 'connected' | 'disconnected' | 'error'
-  },
-  models: {
-    import: 'claude-opus-4',
-    check: 'claude-sonnet-5',
-    summary: 'claude-haiku-4',
-    provider: 'anthropic', // 'anthropic' | 'azure' | 'bedrock'
-    apiKey: '••••••••••••••••••••••••',
-    maxTokens: 8192,
-  },
-  pipeline: {
-    maxPasses: 3,
-    confidenceThreshold: 75,
-    autoSummary: true,
-    autoSummaryThreshold: 80,
-    logLevel: 'info', // 'info' | 'debug' | 'trace'
-    logRetention: 30,
-  },
+  // workspace / eca / models / pipeline : lecture seule, valeurs réelles
+  // chargées dynamiquement depuis /api/eca/info (cf. refreshModelsReadonly,
+  // refreshServicesModalData) — ne sont plus éditables ni persistées ici.
   ui: {
     theme: 'dark', // 'dark' | 'light' | 'system'
     language: 'fr', // 'fr' | 'en'
@@ -3967,6 +3956,16 @@ function selectProjectPipeline(projId) {
 }
 
 function closePipelineModal() {
+  if (pipelineRunning) {
+    const ok = confirm(
+      'Un run.pl est en cours d\'exécution.\n\n' +
+      'Fermer ce panneau n\'interrompt PAS le traitement côté serveur — ' +
+      'il continue en arrière-plan, mais vous ne pourrez plus suivre sa progression ' +
+      'depuis cette fenêtre.\n\n' +
+      'Fermer quand même ?'
+    );
+    if (!ok) return;
+  }
   document.getElementById('pipeline-modal-overlay').hidden = true;
 }
 
@@ -4079,6 +4078,7 @@ function runPipeline() {
     addLog(`❌ ${message}`, 'warn');
     pipelineRunning = false;
     btn.disabled = false; btn.textContent = '↺ Relancer run.pl';
+    notifyBrowser('❌ Erreur pipeline', `${proj.name} · ${message}`);
   }
 
   fetch(url, { method: 'POST' }).then(async r => {
@@ -4135,6 +4135,11 @@ function finishPipeline(proj, workspace, btnId, reportData, reportFile) {
   const nonConf     = reportData?.nonConformes || 0;
   const aConfirmer  = reportData?.aConfirmer || 0;
   const label       = reportFile || `compliance-report-${proj.id}.md`;
+
+  notifyBrowser(
+    isSolved ? '✅ Pipeline terminé — SOLVED' : '⚠️ Pipeline terminé — FAILED',
+    `${proj.name} · ${conformes}/${total} CONFORMES`
+  );
 
   // Verdict box + post-verdict chorus-check actions
   const verdict = document.getElementById('pipeline-verdict');
@@ -4934,6 +4939,16 @@ function openChorusCheckTerminal(action) {
 }
 
 function closeLevelTerminal() {
+  if (_lvlTermAbortCtrl) {
+    const ok = confirm(
+      'Une session ECA est en cours dans ce terminal.\n\n' +
+      'Fermer le panneau n\'interrompt PAS le traitement côté serveur — ' +
+      'il continue en arrière-plan, mais vous ne pourrez plus suivre sa progression ' +
+      'ni récupérer ce panneau.\n\n' +
+      'Fermer quand même ?'
+    );
+    if (!ok) return;
+  }
   document.getElementById('level-terminal-overlay').hidden = true;
   _lvlTermCtx = null;
 }
@@ -7019,19 +7034,41 @@ function switchSettingsTab(id, el) {
   if (el) el.classList.add('active');
 }
 
-function pingEcaServer() {
+async function pingEcaServer() {
   const dot = document.getElementById('sd-eca-dot');
   const txt = document.getElementById('sd-eca-status-text');
-  const host = document.getElementById('sd-eca-host').value;
-  const port = document.getElementById('sd-eca-port').value;
   dot.className = 'sd-status-dot'; dot.style.background = 'var(--warn)';
   txt.textContent = 'Test en cours…';
-  setTimeout(()=>{
-    // Simulate: always connected in PoC
-    dot.className = 'sd-status-dot connected';
-    txt.textContent = `Connecté · ws://${host}:${port}/eca`;
-    SETTINGS.eca.status = 'connected';
-  }, 1200);
+  try {
+    const r = await fetch(`${API}/api/eca/health`);
+    const data = await r.json();
+    if (data.ok) {
+      dot.className = 'sd-status-dot connected';
+      txt.textContent = `Connecté · https://eca-server:7777 (${data.latencyMs}ms)`;
+    } else {
+      dot.className = 'sd-status-dot';
+      dot.style.background = 'var(--error)';
+      txt.textContent = `Injoignable : ${data.error}`;
+    }
+  } catch (e) {
+    dot.className = 'sd-status-dot';
+    dot.style.background = 'var(--error)';
+    txt.textContent = `Erreur : ${e.message}`;
+  }
+}
+
+// Peuple les champs lecture-seule de l'onglet Modèles LLM avec les
+// vraies valeurs actives (mêmes données que le panneau Services).
+async function refreshModelsReadonly() {
+  try {
+    const r = await fetch(`${API}/api/eca/info`);
+    const info = await r.json();
+    const set = (id, val) => { const el = document.getElementById(id); if (el) el.value = val || '—'; };
+    set('sd-m-provider-ro', info.providerType);
+    set('sd-m-architect-ro', info.modelArchitect);
+    set('sd-m-code-ro', info.modelCode);
+    set('sd-m-fast-ro', info.modelFast);
+  } catch (e) { console.warn('Impossible de charger /api/eca/info :', e.message); }
 }
 
 function applyThemeFromSettings(val) {
@@ -7040,30 +7077,68 @@ function applyThemeFromSettings(val) {
   else document.documentElement.removeAttribute('data-theme');
 }
 
+function applyDensityFromSettings(val) {
+  if (val === 'compact') document.documentElement.setAttribute('data-density', 'compact');
+  else document.documentElement.removeAttribute('data-density');
+}
+
+// Déclenche une vraie notification navigateur (API Notification) si
+// l'utilisateur a activé "Notifications navigateur" dans Settings > Interface
+// et accordé la permission. Demande la permission silencieusement si elle
+// n'a jamais été demandée (sans bloquer l'appel courant — la notif ne
+// s'affichera qu'aux appels suivants dans ce cas, comportement standard
+// de l'API Notification qui est asynchrone et nécessite un geste préalable).
+function notifyBrowser(title, body) {
+  if (!SETTINGS.ui.notifications) return;
+  if (!window.Notification) return;
+  if (Notification.permission === 'granted') {
+    try { new Notification(title, { body, icon: undefined }); } catch { /* ignore */ }
+  } else if (Notification.permission === 'default') {
+    Notification.requestPermission();
+  }
+}
+
 function saveSettings() {
-  SETTINGS.workspace.path = document.getElementById('sd-ws-path').value;
-  SETTINGS.workspace.chorusHome = document.getElementById('sd-ws-home').value;
-  SETTINGS.workspace.perl = document.getElementById('sd-ws-perl').value;
-  SETTINGS.workspace.mode = document.getElementById('sd-ws-mode').value;
-  SETTINGS.eca.host = document.getElementById('sd-eca-host').value;
-  SETTINGS.eca.port = parseInt(document.getElementById('sd-eca-port').value);
-  SETTINGS.eca.timeout = parseInt(document.getElementById('sd-eca-timeout').value);
-  SETTINGS.models.provider = document.getElementById('sd-m-provider').value;
-  SETTINGS.models.import = document.getElementById('sd-m-import').value;
-  SETTINGS.models.check = document.getElementById('sd-m-check').value;
-  SETTINGS.models.summary = document.getElementById('sd-m-summary').value;
-  SETTINGS.models.maxTokens = parseInt(document.getElementById('sd-m-tokens').value);
-  SETTINGS.pipeline.maxPasses = parseInt(document.getElementById('sd-p-passes').value);
-  SETTINGS.pipeline.confidenceThreshold = parseInt(document.getElementById('sd-p-threshold').value);
-  SETTINGS.pipeline.autoSummary = document.getElementById('sd-p-autosummary').checked;
-  SETTINGS.pipeline.logLevel = document.getElementById('sd-p-loglevel').value;
-  SETTINGS.pipeline.logRetention = parseInt(document.getElementById('sd-p-retention').value);
   SETTINGS.ui.theme = document.getElementById('sd-ui-theme').value;
   SETTINGS.ui.language = document.getElementById('sd-ui-lang').value;
   SETTINGS.ui.density = document.getElementById('sd-ui-density').value;
   SETTINGS.ui.notifications = document.getElementById('sd-ui-notif').checked;
   applyThemeFromSettings(SETTINGS.ui.theme);
+  applyDensityFromSettings(SETTINGS.ui.density);
+  if (SETTINGS.ui.notifications && window.Notification && Notification.permission === 'default') {
+    Notification.requestPermission();
+  }
+  try {
+    localStorage.setItem('chorus-web-settings-ui', JSON.stringify(SETTINGS.ui));
+  } catch (e) { console.warn('Impossible de sauvegarder les préférences UI :', e.message); }
   closeSettings();
+}
+
+// Charge les préférences UI persistées (localStorage) au boot — seules les
+// préférences réellement appliquées en JS (thème/densité/notifications)
+// sont concernées. "Langue" est conservée dans SETTINGS/localStorage pour ne
+// pas perdre le choix utilisateur, mais n'a aucun effet (pas d'i18n — voir
+// badge "prochaine version" dans le select). Les autres sections (Workspace,
+// ECA Server, Models, Pipeline) sont en lecture seule : leurs valeurs
+// viennent de l'environnement serveur (docker-compose.yml/.env), jamais de
+// ce localStorage.
+function loadSettingsFromStorage() {
+  try {
+    const raw = localStorage.getItem('chorus-web-settings-ui');
+    if (!raw) return;
+    const saved = JSON.parse(raw);
+    Object.assign(SETTINGS.ui, saved);
+    applyThemeFromSettings(SETTINGS.ui.theme);
+    applyDensityFromSettings(SETTINGS.ui.density);
+    const themeSel = document.getElementById('sd-ui-theme');
+    const langSel  = document.getElementById('sd-ui-lang');
+    const densSel  = document.getElementById('sd-ui-density');
+    const notifChk = document.getElementById('sd-ui-notif');
+    if (themeSel) themeSel.value = SETTINGS.ui.theme;
+    if (langSel)  langSel.value  = SETTINGS.ui.language;
+    if (densSel)  densSel.value  = SETTINGS.ui.density;
+    if (notifChk) notifChk.checked = !!SETTINGS.ui.notifications;
+  } catch (e) { console.warn('Préférences UI corrompues, ignorées :', e.message); }
 }
 
 function exportSettingsJSON() {
@@ -7077,6 +7152,7 @@ function exportSettingsJSON() {
 // ─── BOOT ─────────────────────────────────────────────────────
 init();
 bootServices();
+loadSettingsFromStorage();
 initFromServer(); // surcharge avec les données réelles si le serveur MVP0 répond
 </script>
 
@@ -7094,8 +7170,8 @@ initFromServer(); // surcharge avec les données réelles si le serveur MVP0 ré
   <div class="sd-body">
     <nav class="sd-nav">
       <div class="sd-nav-item active" onclick="switchSettingsTab('workspace',this)"><span class="sd-nav-icon">📁</span>Workspace</div>
-      <div class="sd-nav-item" onclick="switchSettingsTab('eca',this)"><span class="sd-nav-icon">🔌</span>ECA Server</div>
-      <div class="sd-nav-item" onclick="switchSettingsTab('models',this)"><span class="sd-nav-icon">🤖</span>Modèles LLM</div>
+      <div class="sd-nav-item" onclick="switchSettingsTab('eca',this);pingEcaServer()"><span class="sd-nav-icon">🔌</span>ECA Server</div>
+      <div class="sd-nav-item" onclick="switchSettingsTab('models',this);refreshModelsReadonly()"><span class="sd-nav-icon">🤖</span>Modèles LLM</div>
       <div class="sd-nav-item" onclick="switchSettingsTab('auth',this);refreshAuthStatus()">
         <span class="sd-nav-icon">🔑</span>Authentification
         <span id="sd-auth-nav-dot" style="width:7px;height:7px;border-radius:50%;background:var(--text-muted);margin-left:auto;flex-shrink:0;display:inline-block"></span>
@@ -7115,60 +7191,46 @@ initFromServer(); // surcharge avec les données réelles si le serveur MVP0 ré
         <div class="sd-section-title">Workspace</div>
         <div class="sd-section-desc">Chemins et mode d'exécution du moteur Chorus.</div>
         <div class="sd-field">
-          <div class="sd-label">Répertoire workspace <span class="sd-badge-info">$workspace</span></div>
-          <input class="sd-input mono" id="sd-ws-path" type="text" value="/opt/chorus/workspaces/prod">
+          <div class="sd-label">Répertoire workspace <span class="sd-badge-info">lecture seule</span></div>
+          <input class="sd-input mono" id="sd-ws-path" type="text" value="/chorus" readonly>
         </div>
         <div class="sd-row">
           <div class="sd-field">
-            <div class="sd-label">Chorus home <span class="sd-badge-info">$CHORUS_HOME</span></div>
-            <input class="sd-input mono" id="sd-ws-home" type="text" value="/opt/chorus">
+            <div class="sd-label">Chorus home <span class="sd-badge-info">lecture seule</span></div>
+            <input class="sd-input mono" id="sd-ws-home" type="text" value="/chorus" readonly>
           </div>
           <div class="sd-field">
-            <div class="sd-label">Interpréteur Perl</div>
-            <input class="sd-input mono" id="sd-ws-perl" type="text" value="/usr/bin/perl">
+            <div class="sd-label">Interpréteur Perl <span class="sd-badge-info">lecture seule</span></div>
+            <input class="sd-input mono" id="sd-ws-perl" type="text" value="/usr/bin/perl" readonly>
           </div>
         </div>
-        <div class="sd-field">
-          <div class="sd-label">Mode d'exécution</div>
-          <select class="sd-select" id="sd-ws-mode">
-            <option value="local" selected>🖥️ Local</option>
-            <option value="ssh">🔗 SSH distant</option>
-            <option value="docker">🐳 Docker</option>
-          </select>
-        </div>
+        <div class="sd-section-desc" style="margin-top:4px">Configuré via <code>docker-compose.yml</code> / <code>.env</code> (variables <code>CHORUS_HOME</code>, <code>PERL_BIN</code>) — non modifiable depuis cette interface.</div>
       </div>
 
       <!-- ECA SERVER -->
       <div class="sd-section" id="sd-eca">
         <div class="sd-section-title">ECA Server</div>
-        <div class="sd-section-desc">Serveur Clojure qui dispatche les skills LLM via WebSocket.</div>
+        <div class="sd-section-desc">Binaire GraalVM natif (protocole JSON-RPC inspiré LSP + SSE) qui dispatche les skills LLM. Configuré via <code>docker-compose.yml</code> / <code>.env</code> — non modifiable depuis cette interface.</div>
         <div class="sd-toggle-row" style="margin-bottom:16px">
           <div>
             <div class="sd-toggle-label">Statut de connexion</div>
-            <div class="sd-toggle-sub" id="sd-eca-status-text">Connecté · ws://localhost:7777/eca</div>
+            <div class="sd-toggle-sub" id="sd-eca-status-text">Vérification…</div>
           </div>
-          <span class="sd-status-dot connected" id="sd-eca-dot"></span>
+          <span class="sd-status-dot" id="sd-eca-dot"></span>
         </div>
         <div class="sd-row">
           <div class="sd-field">
-            <div class="sd-label">Host</div>
-            <input class="sd-input mono" id="sd-eca-host" type="text" value="localhost">
+            <div class="sd-label">Host <span class="sd-badge-info">lecture seule</span></div>
+            <input class="sd-input mono" id="sd-eca-host" type="text" value="eca-server" readonly>
           </div>
           <div class="sd-field">
-            <div class="sd-label">Port</div>
-            <input class="sd-input mono" id="sd-eca-port" type="number" value="7777" min="1024" max="65535">
+            <div class="sd-label">Port <span class="sd-badge-info">lecture seule</span></div>
+            <input class="sd-input mono" id="sd-eca-port" type="number" value="7777" readonly>
           </div>
         </div>
         <div class="sd-field">
-          <div class="sd-label">WebSocket endpoint</div>
-          <input class="sd-input mono" id="sd-eca-ws" type="text" value="ws://localhost:7777/eca">
-        </div>
-        <div class="sd-field">
-          <div class="sd-label">Timeout par skill (ms)</div>
-          <div style="display:flex;align-items:center;gap:12px">
-            <input type="range" class="sd-range" id="sd-eca-timeout" min="5000" max="120000" step="5000" value="30000" oninput="document.getElementById('sd-eca-timeout-val').textContent=this.value/1000+'s'">
-            <span class="sd-range-val" id="sd-eca-timeout-val">30s</span>
-          </div>
+          <div class="sd-label">Server URL <span class="sd-badge-info">lecture seule</span></div>
+          <input class="sd-input mono" id="sd-eca-ws" type="text" value="https://eca-server:7777" readonly>
         </div>
         <button class="btn btn-ghost" style="font-size:11px" onclick="pingEcaServer()">🔄 Tester la connexion</button>
       </div>
@@ -7176,51 +7238,26 @@ initFromServer(); // surcharge avec les données réelles si le serveur MVP0 ré
       <!-- MODELS -->
       <div class="sd-section" id="sd-models">
         <div class="sd-section-title">Modèles LLM</div>
-        <div class="sd-section-desc">Routing des modèles par type d'opération.</div>
+        <div class="sd-section-desc">Configuré via <code>docker-compose.yml</code> / <code>.env</code> (<code>ECA_DEFAULT_MODEL</code>, <code>ECA_MODEL_*</code>, <code>ANTHROPIC_PROVIDER_TYPE</code>) — non modifiable depuis cette interface. Voir le panneau <strong>Services</strong> pour les valeurs réellement actives.</div>
         <div class="sd-field">
-          <div class="sd-label">Provider</div>
-          <select class="sd-select" id="sd-m-provider">
-            <option value="anthropic" selected>Anthropic (API directe)</option>
-            <option value="azure">Azure OpenAI</option>
-            <option value="bedrock">AWS Bedrock</option>
-            <option value="local">Local (Ollama)</option>
-          </select>
-        </div>
-        <div class="sd-field">
-          <div class="sd-label">Clé API</div>
-          <input class="sd-input mono" id="sd-m-apikey" type="password" value="sk-ant-••••••••••••••••">
+          <div class="sd-label">Provider <span class="sd-badge-info">lecture seule</span></div>
+          <input class="sd-input mono" id="sd-m-provider-ro" type="text" value="—" readonly>
         </div>
         <div class="sd-divider"></div>
         <div class="sd-row">
           <div class="sd-field">
-            <div class="sd-label">Import (parsing frames)</div>
-            <select class="sd-select" id="sd-m-import">
-              <option value="claude-opus-4" selected>claude-opus-4</option>
-              <option value="claude-sonnet-5">claude-sonnet-5</option>
-              <option value="claude-haiku-4">claude-haiku-4</option>
-            </select>
+            <div class="sd-label">Architect <span class="sd-badge-info">lecture seule</span></div>
+            <input class="sd-input mono" id="sd-m-architect-ro" type="text" value="—" readonly>
           </div>
           <div class="sd-field">
-            <div class="sd-label">Vérification (chorus-check)</div>
-            <select class="sd-select" id="sd-m-check">
-              <option value="claude-opus-4">claude-opus-4</option>
-              <option value="claude-sonnet-5" selected>claude-sonnet-5</option>
-              <option value="claude-haiku-4">claude-haiku-4</option>
-            </select>
+            <div class="sd-label">Code <span class="sd-badge-info">lecture seule</span></div>
+            <input class="sd-input mono" id="sd-m-code-ro" type="text" value="—" readonly>
           </div>
         </div>
         <div class="sd-row">
           <div class="sd-field">
-            <div class="sd-label">Synthèse (--summary)</div>
-            <select class="sd-select" id="sd-m-summary">
-              <option value="claude-opus-4">claude-opus-4</option>
-              <option value="claude-sonnet-5">claude-sonnet-5</option>
-              <option value="claude-haiku-4" selected>claude-haiku-4</option>
-            </select>
-          </div>
-          <div class="sd-field">
-            <div class="sd-label">Budget tokens max / run</div>
-            <input class="sd-input mono" id="sd-m-tokens" type="number" value="8192" step="1024" min="1024">
+            <div class="sd-label">Fast <span class="sd-badge-info">lecture seule</span></div>
+            <input class="sd-input mono" id="sd-m-fast-ro" type="text" value="—" readonly>
           </div>
         </div>
       </div>
@@ -7321,47 +7358,10 @@ initFromServer(); // surcharge avec les données réelles si le serveur MVP0 ré
       <div class="sd-section" id="sd-pipeline">
         <div class="sd-section-title">Pipeline</div>
         <div class="sd-section-desc">Comportement du moteur de décision <code style="font-size:10px;color:var(--accent)">run.pl</code>.</div>
-        <div class="sd-row">
-          <div class="sd-field">
-            <div class="sd-label">Passes max (forward chaining)</div>
-            <input class="sd-input mono" id="sd-p-passes" type="number" value="3" min="1" max="10">
-          </div>
-          <div class="sd-field">
-            <div class="sd-label">Seuil confiance SOLVED (%)</div>
-            <div style="display:flex;align-items:center;gap:12px">
-              <input type="range" class="sd-range" id="sd-p-threshold" min="50" max="100" step="5" value="75" oninput="document.getElementById('sd-p-threshold-val').textContent=this.value+'%'">
-              <span class="sd-range-val" id="sd-p-threshold-val">75%</span>
-            </div>
-          </div>
-        </div>
-        <div class="sd-toggle-row">
-          <div>
-            <div class="sd-toggle-label">Générer --summary automatiquement</div>
-            <div class="sd-toggle-sub">Si score &lt; seuil après run.pl</div>
-          </div>
-          <label class="sd-toggle"><input type="checkbox" id="sd-p-autosummary" checked><div class="sd-toggle-track"></div><div class="sd-toggle-thumb"></div></label>
-        </div>
-        <div class="sd-field">
-          <div class="sd-label">Seuil déclenchement auto-summary (%)</div>
-          <div style="display:flex;align-items:center;gap:12px">
-            <input type="range" class="sd-range" id="sd-p-autothreshold" min="50" max="100" step="5" value="80" oninput="document.getElementById('sd-p-autothreshold-val').textContent=this.value+'%'">
-            <span class="sd-range-val" id="sd-p-autothreshold-val">80%</span>
-          </div>
-        </div>
-        <div class="sd-divider"></div>
-        <div class="sd-row">
-          <div class="sd-field">
-            <div class="sd-label">Niveau de logs</div>
-            <select class="sd-select" id="sd-p-loglevel">
-              <option value="info" selected>info</option>
-              <option value="debug">debug</option>
-              <option value="trace">trace</option>
-            </select>
-          </div>
-          <div class="sd-field">
-            <div class="sd-label">Rétention logs (jours)</div>
-            <input class="sd-input mono" id="sd-p-retention" type="number" value="30" min="1" max="365">
-          </div>
+        <div class="sd-placeholder">
+          <div style="font-size:28px;margin-bottom:8px">⚙️</div>
+          Paramétrage du pipeline (passes, seuils, logs) disponible dans une prochaine version.<br>
+          <span style="font-size:11px">Ces réglages ne sont pas encore lus par <code>run.pl</code> — éviter de laisser croire qu'ils s'appliquent.</span>
         </div>
       </div>
 
@@ -7390,15 +7390,15 @@ initFromServer(); // surcharge avec les données réelles si le serveur MVP0 ré
         </div>
         <div class="sd-row">
           <div class="sd-field">
-            <div class="sd-label">Langue</div>
-            <select class="sd-select" id="sd-ui-lang">
+            <div class="sd-label">Langue <span class="sd-badge-info">prochaine version</span></div>
+            <select class="sd-select" id="sd-ui-lang" disabled title="Pas d'internationalisation disponible — toute l'interface est en français">
               <option value="fr" selected>🇫🇷 Français</option>
               <option value="en">🇬🇧 English</option>
             </select>
           </div>
           <div class="sd-field">
             <div class="sd-label">Densité</div>
-            <select class="sd-select" id="sd-ui-density">
+            <select class="sd-select" id="sd-ui-density" onchange="applyDensityFromSettings(this.value)">
               <option value="normal" selected>Normal</option>
               <option value="compact">Compact</option>
             </select>
@@ -7428,7 +7428,7 @@ initFromServer(); // surcharge avec les données réelles si le serveur MVP0 ré
           </div>
           <div class="sd-toggle-row" style="margin:0">
             <div class="sd-toggle-label">ECA Protocol</div>
-            <span style="font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--text-muted)">LSP-inspired · WS · Clojure</span>
+            <span style="font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--text-muted)">JSON-RPC (LSP-inspired) + SSE · GraalVM native</span>
           </div>
           <div class="sd-toggle-row" style="margin:0">
             <div class="sd-toggle-label">Runtime</div>
