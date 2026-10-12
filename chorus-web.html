@@ -781,10 +781,19 @@
           <div id="sd-auth-login-url-step" style="display:none">
             <div style="font-size:11px;color:var(--text-muted);margin-bottom:6px" id="sd-auth-login-msg"></div>
             <div style="display:flex;gap:6px;align-items:center;margin-bottom:8px">
+              <!-- ⚠ PAS de bouton 📋 ici : copier l'URL dans le presse-papiers
+                   puis faire Ctrl+V dans le champ "code" est l'erreur typique.
+                   Le lien s'ouvre directement → l'utilisateur n'a rien à copier. -->
               <a id="sd-auth-login-url" href="#" target="_blank" rel="noopener"
-                 style="font-size:11px;color:var(--accent);word-break:break-all;flex:1"></a>
-              <button class="btn btn-ghost" style="font-size:10px;padding:2px 8px;flex-shrink:0"
-                      onclick="navigator.clipboard.writeText(document.getElementById('sd-auth-login-url').href)">📋</button>
+                 style="display:none"></a>
+              <button class="btn btn-primary" style="font-size:12px;padding:6px 14px"
+                      onclick="window.open(document.getElementById('sd-auth-login-url').href,'_blank')">
+                🔐 Ouvrir la page Anthropic →
+              </button>
+            </div>
+            <div style="font-size:11px;color:var(--text-muted);margin-top:2px;margin-bottom:8px">
+              ➜ Authentifie-toi sur la page qui s'ouvre, puis <strong>reviens ici</strong>
+              et colle le <strong>code court</strong> affiché par Anthropic dans le champ ci-dessous.
             </div>
             <!-- Code device-flow (GitHub Copilot) -->
             <div id="sd-auth-login-code-block" style="display:none;margin-bottom:10px">

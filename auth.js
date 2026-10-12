@@ -340,10 +340,6 @@ function httpsPost(urlStr, body, headers) {
       method:   'POST',
       headers:  { ...headers, 'Content-Length': Buffer.byteLength(data) },
     };
-    // DEBUG temporaire — à retirer après diagnostic
-    console.log('[httpsPost DEBUG]', opts.hostname + opts.path,
-      '\n  Content-Type:', headers['Content-Type'],
-      '\n  body:', data.slice(0, 300));
     const req = https.request(opts, (res) => {
       let d = '';
       res.on('data', c => (d += c));
@@ -462,11 +458,23 @@ router.post('/api/auth/eca-login/:sessionId/submit', express.json(), async (req,
   // la partie après '#' est le state, qu'on vérifie pour la sécurité.
   const rawCode = (req.body && req.body.data && req.body.data.code || '').trim();
   if (!rawCode) return res.status(400).json({ ok: false, error: 'code manquant' });
-  const hashIdx    = rawCode.indexOf('#');
-  const code       = hashIdx !== -1 ? rawCode.slice(0, hashIdx) : rawCode;
+
+  // Détection : l'utilisateur a collé l'URL d'autorisation au lieu du code
+  if (rawCode.startsWith('http')) {
+    return res.status(400).json({
+      ok:    false,
+      error: 'Vous avez collé l\'URL d\'autorisation, pas le code. ' +
+             'Ouvrez d\'abord ce lien dans le navigateur, authentifiez-vous, ' +
+             'puis copiez le code court affiché sur la page console.anthropic.com qui s\'ouvre ensuite.',
+    });
+  }
+
+  // La console Anthropic affiche un bundle "code#state". Seule la partie avant
+  // '#' est le code d'autorisation ; la partie après '#' est le state (CSRF check).
+  const hashIdx     = rawCode.indexOf('#');
+  const code        = hashIdx !== -1 ? rawCode.slice(0, hashIdx) : rawCode;
   const stateInCode = hashIdx !== -1 ? rawCode.slice(hashIdx + 1) : null;
 
-  // Vérification du state CSRF si présent dans le bundle
   if (stateInCode && stateInCode !== session.state) {
     dropSession(req.params.sessionId);
     return res.status(400).json({ ok: false, error: 'State mismatch — relancez le flow OAuth' });
@@ -474,7 +482,6 @@ router.post('/api/auth/eca-login/:sessionId/submit', express.json(), async (req,
 
   try {
     // 1. Échanger le code contre un access_token
-    // ⚠ Anthropic /v1/oauth/token attend du JSON (pas x-www-form-urlencoded)
     const tokenRes = await httpsPost(
       ANTHROPIC_TOKEN_URL,
       {
