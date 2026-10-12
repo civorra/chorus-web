@@ -54,13 +54,31 @@ function ecaRequest(path, method, bodyObj) {
           if (res.statusCode >= 200 && res.statusCode < 300) {
             resolve(parsed);
           } else {
-            reject(new Error(`eca-server ${method} ${path} → HTTP ${res.statusCode}: ${data.slice(0, 300)}`));
+            const msg = res.statusCode === 401
+              ? `eca-server: token invalide (ECA_REMOTE_PASSWORD incorrect) — ${method} ${path}`
+              : res.statusCode === 403
+              ? `eca-server: accès refusé (périmètre insuffisant) — ${method} ${path}`
+              : `eca-server ${method} ${path} → HTTP ${res.statusCode}: ${data.slice(0, 300)}`;
+            const err = new Error(msg);
+            err.statusCode = res.statusCode;
+            reject(err);
           }
         });
       }
     );
-    req.on('error', (e) => reject(new Error(`eca-server ${method} ${path} → ${e.message}`)));
-    req.on('timeout', () => { req.destroy(new Error(`eca-server ${method} ${path} → timeout`)); });
+    req.on('error', (e) => {
+      const msg = (e.code === 'ECONNREFUSED' || e.code === 'ETIMEDOUT' || e.code === 'ENOTFOUND')
+        ? `eca-server inaccessible (${e.code}) — vérifier que le service eca-server est démarré`
+        : `eca-server ${method} ${path} → ${e.message}`;
+      const err = new Error(msg);
+      err.statusCode = 503;
+      reject(err);
+    });
+    req.on('timeout', () => {
+      const err = new Error(`eca-server inaccessible (timeout) — ${method} ${path}`);
+      err.statusCode = 503;
+      req.destroy(err);
+    });
     if (body) req.write(body);
     req.end();
   });
@@ -282,7 +300,15 @@ function subscribeEcaEvents(chatId, { onChunk, onAsk, onToolLog, onDone, onError
       res.on('error', (e) => { if (onError) onError(e); rejectPromise(e); });
     }
   );
-  req.on('error', (e) => { if (onError) onError(e); rejectPromise(e); });
+  req.on('error', (e) => {
+    const msg = (e.code === 'ECONNREFUSED' || e.code === 'ETIMEDOUT' || e.code === 'ENOTFOUND')
+      ? `eca-server inaccessible (${e.code}) — vérifier que le service eca-server est démarré`
+      : e.message;
+    const err = new Error(msg);
+    err.statusCode = e.statusCode || 503;
+    if (onError) onError(err);
+    rejectPromise(err);
+  });
   req.end();
 
   return { req, done };

@@ -118,7 +118,15 @@ router.post('/sandboxes/:sbId/terminal', (req, res) => {
       onAsk:     (payload)  => { if (!finished) sseSend(res, 'ask', payload); },
       onToolLog: (toolInfo) => { if (!finished) sseSend(res, 'tool', toolInfo); },
       onDone:    ()         => { clearTimeout(timeoutHandle); finish(); },
-      onError:   (err)      => { clearTimeout(timeoutHandle); finish(`ECA events: ${err.message}`); },
+      onError:   (err)      => {
+        clearTimeout(timeoutHandle);
+        const label = err.statusCode === 401
+          ? `ECA: authentification refusée — vérifier ECA_REMOTE_PASSWORD dans .env`
+          : err.statusCode === 503 || !err.statusCode
+          ? `ECA: serveur inaccessible — vérifier que eca-server est démarré`
+          : `ECA events: ${err.message}`;
+        finish(label);
+      },
     });
     subReq = sReq;
     activeTerminals.set(sessionId, {
@@ -134,7 +142,12 @@ router.post('/sandboxes/:sbId/terminal', (req, res) => {
       );
     } catch (err) {
       clearTimeout(timeoutHandle);
-      finish(`Erreur POST prompt : ${err.message}`);
+      const label = err.statusCode === 401
+        ? `ECA: authentification refusée (ECA_REMOTE_PASSWORD) — vérifier .env`
+        : err.statusCode === 503 || !err.statusCode
+        ? `ECA: serveur inaccessible — vérifier que eca-server est démarré`
+        : `Erreur POST prompt : ${err.message}`;
+      finish(label);
       return;
     }
 

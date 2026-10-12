@@ -287,10 +287,71 @@ npm install
 cp .env.example .env
 # Éditer .env : CHORUS_HOME, ANTHROPIC_API_KEY
 
-# Copier le PoC
-cp /path/to/chorus-web.html .
-
 # Démarrer
 node server.js
 # → http://localhost:3000
 ```
+
+---
+
+## Authentification — deux couches indépendantes
+
+### Couche 1 — webapp → eca-server (Bearer token)
+
+`eca-client.js` envoie `Authorization: Bearer <ECA_REMOTE_PASSWORD>` à chaque
+requête vers `eca-server`. Ce mot de passe doit être **identique** dans les
+deux services Docker :
+
+```yaml
+# docker-compose.yml — les deux services doivent partager la même valeur
+eca-server:
+  environment:
+    - ECA_REMOTE_PASSWORD=${ECA_REMOTE_PASSWORD}   # lu par eca-config.json
+chorus-web:
+  environment:
+    - ECA_REMOTE_PASSWORD=${ECA_REMOTE_PASSWORD}   # lu par eca-client.js
+```
+
+`eca-config.json` déclare `"password": "${env:ECA_REMOTE_PASSWORD}"`.
+
+> ⚠️ **Valeur par défaut `changeme-local-dev`** — à remplacer impérativement
+> en production. Sans `.env`, les deux services utilisent cette valeur par défaut,
+> ce qui fonctionne en dev local mais est insécurisé en exposition publique.
+>
+> **Indépendant d'Emacs** : ce token n'a aucune relation avec une session Emacs.
+
+---
+
+### Couche 2 — eca-server → LLM (credentials Anthropic / GitHub Copilot)
+
+`eca-bootstrap.sh` applique la chaîne de priorité suivante au démarrage du
+container `eca-server` :
+
+| Priorité | Source | Description |
+|---|---|---|
+| 1 (haute) | `db.transit.json` | OAuth ECA natif — credentials de la session Emacs Pro/Max montés via `OAUTH_CREDENTIALS` |
+| 2 | `.webapp-auth.json` | Credentials gérés par la WEBAPP — OAuth PKCE (Anthropic) ou Device Flow (GitHub Copilot) initiés depuis Settings > Authentification |
+| 3 (fallback) | Docker secret | `/run/secrets/anthropic_api_key` — API key Anthropic injectée via `ANTHROPIC_API_KEY_FILE` dans `docker-compose.yml` |
+
+**`OAUTH_CREDENTIALS` est optionnel.** Si la variable est absente ou si
+`db.transit.json` n'existe pas, `eca-bootstrap.sh` passe automatiquement à la
+priorité 2 (`.webapp-auth.json`). La WEBAPP peut donc fonctionner **sans
+session Emacs active** dès lors qu'une authentification a été réalisée via
+Settings > Authentification (OAuth PKCE ou clé API manuelle).
+
+#### Workflow webapp-native (sans Emacs)
+
+1. Ouvrir Settings (⚙️) > Authentification
+2. Cliquer **🔐 Anthropic** → suivre le flow PKCE (console.anthropic.com)
+   OU renseigner une clé API manuelle
+3. La webapp appelle `POST /api/auth/apikey` → écrit `.webapp-auth.json`
+   → redémarre `eca-server` via Docker socket
+4. `eca-bootstrap.sh` lit `.webapp-auth.json` → injecte `ANTHROPIC_API_KEY`
+
+#### Codes d'erreur distingués (depuis v#C)
+
+| Code HTTP | Signification | Cause probable |
+|---|---|---|
+| `401` | Token ECA invalide | `ECA_REMOTE_PASSWORD` incorrect ou manquant dans `.env` |
+| `503` | Serveur ECA inaccessible | Container `eca-server` arrêté ou réseau Docker |
+| `403` | Accès refusé | Token valide mais périmètre insuffisant |

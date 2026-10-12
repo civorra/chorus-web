@@ -22,7 +22,14 @@ router.get('/health', async (req, res) => {
     res.json({ ok: true, latencyMs, history: latencyHistory.slice() });
   } catch (err) {
     const latencyMs = Date.now() - start;
-    res.json({ ok: false, error: err.message, latencyMs, history: latencyHistory.slice() });
+    const statusCode = err.statusCode || 503;
+    res.json({
+      ok: false,
+      error: err.message,
+      errorCode: statusCode,
+      latencyMs,
+      history: latencyHistory.slice(),
+    });
   }
 });
 
