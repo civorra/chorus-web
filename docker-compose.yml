@@ -31,10 +31,11 @@ services:
       # Same mount as chorus-web: ECA must see Engine/AGENTS.md,
       # agent/skills/*.md and sandboxes/ to load the real skills.
       - ${CHORUS_HOME}:/chorus
-      # ECA OAuth credentials (host Pro/Max session) — read-only.
-      # La webapp n'écrit plus dans db.transit.json (OAuth natif Node.js
-      # écrit dans .webapp-auth.json sur le volume /chorus).
-      - ${OAUTH_CREDENTIALS}:/root/.cache/eca/db.transit.json:ro
+      # ECA OAuth credentials (host Pro/Max session) — read-only. OPTIONAL.
+      # Default: /dev/null — not a regular file → eca-bootstrap.sh skips this
+      # source and falls through to .webapp-auth.json (Priority 2).
+      # Set OAUTH_CREDENTIALS in .env to use an existing Emacs ECA session.
+      - ${OAUTH_CREDENTIALS:-/dev/null}:/root/.cache/eca/db.transit.json:ro
       # eca-config.json monté en volume : override du COPY Dockerfile.eca,
       # évite un rebuild pour changer de provider (Anthropic ↔ Copilot).
       - ./eca-config.json:/etc/eca/config.json:ro
