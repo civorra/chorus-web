@@ -70,6 +70,11 @@ app.use('/api',         projectsRouter);
 app.use('/api',         terminalRouter);
 app.use('/api',         reportsRouter);
 
+// ── Fichiers statiques frontend ───────────────────────────────
+// Niveau 1.5 — CSS et JS extraits de chorus-web.html (2026-10-12)
+app.get('/chorus-web.css', (req, res) => res.sendFile(path.join(__dirname, 'chorus-web.css')));
+app.get('/chorus-web.js',  (req, res) => res.sendFile(path.join(__dirname, 'chorus-web.js')));
+
 // ── Frontend ──────────────────────────────────────────────────
 const HTML_FILE = path.join(__dirname, 'chorus-web.html');
 
