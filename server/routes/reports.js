@@ -14,7 +14,7 @@ const chorus = require('../../chorus');
 
 const router = Router({ mergeParams: true });
 
-const BASE = '/api/sandboxes/:sbId/entities/:entityId/projects/:projId/reports';
+const BASE = '/sandboxes/:sbId/entities/:entityId/projects/:projId/reports';
 
 router.get(`${BASE}/:filename`, (req, res) => {
   const { sbId, entityId, projId, filename } = req.params;
