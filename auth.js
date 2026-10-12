@@ -458,6 +458,7 @@ router.post('/api/auth/eca-login/:sessionId/submit', express.json(), async (req,
 
   try {
     // 1. Échanger le code contre un access_token
+    // ⚠ Anthropic /v1/oauth/token attend du JSON (pas x-www-form-urlencoded)
     const tokenRes = await httpsPost(
       ANTHROPIC_TOKEN_URL,
       {
@@ -467,7 +468,7 @@ router.post('/api/auth/eca-login/:sessionId/submit', express.json(), async (req,
         redirect_uri:  ANTHROPIC_REDIRECT,
         code_verifier: session.verifier,
       },
-      { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' }
+      { 'Content-Type': 'application/json', Accept: 'application/json' }
     );
     if (tokenRes.status !== 200 || !tokenRes.data.access_token) {
       return res.status(401).json({ ok: false, error: `Échange token échoué : ${JSON.stringify(tokenRes.data)}` });
