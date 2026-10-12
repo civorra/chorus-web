@@ -43,7 +43,9 @@ WORKDIR /app
 COPY chorus-web/package.json .
 RUN npm install --omit=dev
 
-COPY chorus-web/server.js chorus-web/chorus.js chorus-web/prompts.js chorus-web/eca-client.js chorus-web/auth.js chorus-web/chorus-web.html ./
+COPY chorus-web/server.js chorus-web/prompts.js chorus-web/eca-client.js chorus-web/auth.js chorus-web/chorus-web.html ./
+COPY chorus-web/chorus/ ./chorus/
+COPY chorus-web/server/ ./server/
 
 # CHORUS_HOME est monté en volume depuis l'hôte, uniquement pour les données
 # (sandboxes, scripts run.pl générés par sandbox, etc.) — plus pour les

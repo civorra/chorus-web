@@ -97,7 +97,8 @@ services:
       - ${CHORUS_HOME}:/chorus
       # Bind-mount chorus-web.html so edits on the host sont visibles sans rebuild.
       - ./chorus-web.html:/app/chorus-web.html:ro
-      - ./chorus.js:/app/chorus.js:ro
+      - ./chorus/:/app/chorus/:ro
+      - ./server/:/app/server/:ro
       - ./auth.js:/app/auth.js:ro
       - ./server.js:/app/server.js:ro
       # Docker socket — nécessaire pour /api/auth/reload-eca (restart eca-server).
