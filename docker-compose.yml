@@ -95,8 +95,11 @@ services:
       # Mount the entire existing Chorus repo read-write
       # (run.pl writes reports under Engine/sandboxes/*/workspace/)
       - ${CHORUS_HOME}:/chorus
-      # Bind-mount chorus-web.html so edits on the host sont visibles sans rebuild.
+      # Bind-mount frontend files so edits on the host sont visibles sans rebuild.
+      # Niveau 1.5 (2026-10-12): CSS et JS extraits de chorus-web.html.
       - ./chorus-web.html:/app/chorus-web.html:ro
+      - ./chorus-web.css:/app/chorus-web.css:ro
+      - ./chorus-web.js:/app/chorus-web.js:ro
       - ./chorus/:/app/chorus/:ro
       - ./server/:/app/server/:ro
       - ./auth.js:/app/auth.js:ro
