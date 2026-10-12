@@ -482,17 +482,21 @@ router.post('/api/auth/eca-login/:sessionId/submit', express.json(), async (req,
 
   try {
     // 1. Échanger le code contre un access_token
+    // Diagnostic : corps minimal
+    const tokenBody = {};
+    console.log('[TOKEN-PROBE] sending empty body to test format acceptance');
     const tokenRes = await httpsPost(
       ANTHROPIC_TOKEN_URL,
+      tokenBody,
       {
-        grant_type:    'authorization_code',
-        code,
-        client_id:     ANTHROPIC_CLIENT_ID,
-        redirect_uri:  ANTHROPIC_REDIRECT,
-        code_verifier: session.verifier,
-      },
-      { 'Content-Type': 'application/json', Accept: 'application/json' }
+        'Content-Type':      'application/json',
+        'Accept':            'application/json',
+        'anthropic-version': '2023-06-01',
+        'anthropic-beta':    'oauth-2025-04-20',
+      }
     );
+    console.log('[TOKEN-PROBE] →', tokenRes.status,
+                JSON.stringify(tokenRes.data).slice(0, 300));
     if (tokenRes.status !== 200 || !tokenRes.data.access_token) {
       return res.status(401).json({ ok: false, error: `Échange token échoué : ${JSON.stringify(tokenRes.data)}` });
     }
