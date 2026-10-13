@@ -123,43 +123,31 @@ async function promptAndWait(chatId, message, { pollIntervalMs = 300, timeoutMs 
   throw new Error(`eca-server: timeout en attente de réponse pour le chat ${chatId}`);
 }
 
-/**
- * Connects to ECA's global SSE event stream (GET /api/v1/events), filters
- * events for a specific chatId, and dispatches them to handlers.
- *
- * Returns { req, done } where:
- *   req  — the underlying https.Request; call req.destroy() to cancel
- *   done — Promise that resolves when chat reaches 'idle' (or on error)
- *
- * handlers:
- *   onChunk(text)              — assistant text fragment (stream token)
- *   onAsk({ question, toolId })— ECA issued an ask_user tool call
- *   onToolLog(toolInfo)        — structured tool call info for progress display,
- *                                see classifyToolCall() for the shape
- *   onDone()                   — chat reached 'idle' status
- *   onError(err)               — network or parse error
- */
-
 // ── Tool call classification ────────────────────────────────────────────
 // Regroupe les ~15 outils ECA en familles affichables (icône + couleur côté
-// frontend) plutôt que de relayer un résumé texte opaque. Les noms d'outils
-// sont préfixés "eca__" côté serveur ECA — on matche sur le nom nu.
+// frontend) plutôt que de relayer un résumé texte opaque.
+// ⚠️ Noms NUS, sans préfixe "eca__" : confirmé empiriquement en conditions
+// réelles (session ECA 2026-10-13) sur tous les outils testés (read_file,
+// grep, directory_tree, shell_command, skill, spawn_agent, task) — le
+// préfixe "eca__" n'existe que côté outils MCP de LA SESSION COURANTE
+// (celle-ci), jamais dans le payload que renvoie un eca-server distant
+// piloté via son API HTTP+SSE. La version précédente de cette table
+// (clés préfixées "eca__") ne matchait donc JAMAIS → tout tool-call
+// tombait silencieusement dans DEFAULT_FAMILY (icône ⚙, label "Outil"),
+// sans erreur ni log — bug corrigé ici, voir Engine/TODO.org [#J] Axe 3.
 const TOOL_FAMILIES = {
-  eca__read_file:          { family: 'read',  icon: '📖', label: 'Lecture' },
-  eca__grep:               { family: 'read',  icon: '🔎', label: 'Recherche' },
-  eca__directory_tree:     { family: 'read',  icon: '🌳', label: 'Arborescence' },
-  eca__editor_diagnostics: { family: 'read',  icon: '🩺', label: 'Diagnostics' },
-  eca__edit_file:          { family: 'edit',  icon: '✏️', label: 'Édition' },
-  eca__write_file:         { family: 'edit',  icon: '📝', label: 'Écriture' },
-  eca__move_file:          { family: 'edit',  icon: '📦', label: 'Déplacement' },
-  eca__shell_command:      { family: 'shell', icon: '💻', label: 'Commande shell' },
-  eca__git:                { family: 'git',   icon: '🌿', label: 'Git' },
-  // ⚠️ Nom réel observé dans le payload serveur : "spawn_agent" (sans
-  // préfixe "eca__", contrairement aux autres outils) — confirmé en
-  // conditions réelles via content.name sur un vrai toolCalled/toolCallRun.
-  spawn_agent:             { family: 'agent', icon: '🤖', label: 'Sous-agent' },
-  eca__task:               { family: 'task',  icon: '🗂️', label: 'Tâche' },
-  eca__skill:              { family: 'skill', icon: '📘', label: 'Skill' },
+  read_file:          { family: 'read',  icon: '📖', label: 'Lecture' },
+  grep:               { family: 'read',  icon: '🔎', label: 'Recherche' },
+  directory_tree:     { family: 'read',  icon: '🌳', label: 'Arborescence' },
+  editor_diagnostics: { family: 'read',  icon: '🩺', label: 'Diagnostics' },
+  edit_file:          { family: 'edit',  icon: '✏️', label: 'Édition' },
+  write_file:         { family: 'edit',  icon: '📝', label: 'Écriture' },
+  move_file:          { family: 'edit',  icon: '📦', label: 'Déplacement' },
+  shell_command:      { family: 'shell', icon: '💻', label: 'Commande shell' },
+  git:                { family: 'git',   icon: '🌿', label: 'Git' },
+  spawn_agent:        { family: 'agent', icon: '🤖', label: 'Sous-agent' },
+  task:               { family: 'task',  icon: '🗂️', label: 'Tâche' },
+  skill:              { family: 'skill', icon: '📘', label: 'Skill' },
 };
 const DEFAULT_FAMILY = { family: 'other', icon: '⚙', label: 'Outil' };
 
@@ -177,8 +165,9 @@ function toolArgHint(name, args) {
 
 /**
  * Construit un objet structuré { family, icon, label, name, hint, detail,
- * isSubagent, agentName, subagentChatId, agentModel, agentStep } à partir
- * d'un événement toolCalled/toolCallRun.
+ * isSubagent, agentName, subagentChatId, agentModel, agentStep,
+ * isSkillLoad, skillName, isTaskUpdate, taskboard } à partir d'un
+ * événement toolCalled/toolCallRun.
  *
  * Cas particulier "spawn_agent" : le serveur ECA fournit un bloc
  * `content.details` dédié quand il s'agit d'un sous-agent, confirmé en
@@ -187,6 +176,21 @@ function toolArgHint(name, args) {
  * On l'exploite pour permettre au frontend de distinguer visuellement
  * (indentation, couleur, libellé "agent: explorer") un appel de sous-agent
  * d'un tool-call standard — voir lvlTermAppendTool() dans chorus-web.html.
+ *
+ * Cas particulier "skill" : content.arguments.name porte le nom du skill
+ * chargé (ex. "chorus-feed"), confirmé en conditions réelles sur l'event
+ * toolCalled — voir server/routes/terminal.js § currentSkill pour l'usage
+ * (bandeau "Skill actif" persistant, Engine/TODO.org [#J] Axe 3).
+ *
+ * Cas particulier "task" : content.details fournit DÉJÀ l'état consolidé
+ * complet de la todo-list à chaque appel (plan/start/complete/…) — pas
+ * besoin de reconstituer l'état côté client à partir des arguments bruts.
+ * Confirmé en conditions réelles :
+ *   details: { type: 'task', inProgressTaskIds: [...], tasks: [{ id,
+ *     subject, description, status, priority, isBlocked }, ...],
+ *     summary: { done, inProgress, pending, total }, activeSummary? }
+ * Voir server/routes/terminal.js § taskboard pour l'usage (panneau de
+ * tâches temps réel, Engine/TODO.org [#J] Axe 4).
  */
 function classifyToolCall(content) {
   const meta = TOOL_FAMILIES[content.name] || DEFAULT_FAMILY;
@@ -195,6 +199,8 @@ function classifyToolCall(content) {
     ? content.outputs.filter((o) => o.type === 'text').map((o) => o.text).join('\n')
     : '';
   const isSubagent = content.details?.type === 'subagent';
+  const isSkillLoad = content.name === 'skill';
+  const isTaskUpdate = content.name === 'task' && content.details?.type === 'task';
   return {
     family: meta.family,
     icon:   meta.icon,
@@ -209,13 +215,70 @@ function classifyToolCall(content) {
     agentModel:     isSubagent ? content.details.model : null,
     agentStep:      isSubagent ? content.details.step : null,
     agentMaxSteps:  isSubagent ? content.details.maxSteps : null,
+    isSkillLoad,
+    skillName: isSkillLoad ? (content.arguments?.name || null) : null,
+    isTaskUpdate,
+    taskboard: isTaskUpdate ? {
+      tasks:             content.details.tasks || [],
+      summary:           content.details.summary || null,
+      inProgressTaskIds: content.details.inProgressTaskIds || [],
+      activeSummary:     content.details.activeSummary || null,
+      op:                content.arguments?.op || null,
+    } : null,
   };
 }
 
-function subscribeEcaEvents(chatId, { onChunk, onAsk, onToolLog, onDone, onError } = {}) {
+/**
+ * Connects to ECA's global SSE event stream (GET /api/v1/events), filters
+ * events for a specific chatId AND any sub-agent chat spawned from it, and
+ * dispatches them to handlers.
+ *
+ * ⚠️ Sub-agent visibility (Engine/TODO.org [#J] Axe 5): ECA emits a
+ * sub-agent's OWN tool calls (its internal grep/read_file/etc., executed
+ * while `spawn_agent` is running) under a SEPARATE chatId, formatted
+ * `subagent-<spawnAgentToolCallId>` — confirmed empirically (session ECA
+ * 2026-10-13) by inspecting the raw SSE stream without chatId filtering.
+ * These events are invisible to any caller that only watches the parent
+ * chatId (which was the case before this function tracked sub-chats) —
+ * only the `spawn_agent` start/end markers (toolCallRun/toolCallRunning/
+ * toolCalled on the PARENT chatId, carrying `details.subagentChatId`) were
+ * visible, making every sub-agent an opaque black box between launch and
+ * completion. This function now watches the parent chatId AND dynamically
+ * adds each `subagentChatId` to its watch set as soon as a `spawn_agent`
+ * toolCallRun reveals it — the underlying SSE connection is global
+ * (`/api/v1/events` already streams every chat), so widening the filter
+ * is enough; no additional HTTP request or connection is needed.
+ *
+ * Returns { req, done } where:
+ *   req  — the underlying https.Request; call req.destroy() to cancel
+ *   done — Promise that resolves when the PARENT chat reaches 'idle'
+ *          (sub-agent idle events do not resolve this promise — the
+ *          parent's own 'idle' already implies all its sub-agents have
+ *          completed, since spawn_agent is a synchronous tool call from
+ *          the parent's perspective)
+ *
+ * handlers:
+ *   onChunk(text)                      — assistant text fragment (parent chat only)
+ *   onAsk({ question, toolId })        — ECA issued an ask_user tool call (parent only)
+ *   onToolLog(toolInfo)                — structured tool call info, PARENT chat only —
+ *                                         see classifyToolCall() for the shape
+ *   onSubagentToolLog(subagentChatId, toolInfo) — same shape as onToolLog, but for
+ *                                         a tool call executed INSIDE a running
+ *                                         sub-agent (Axe 5) — optional, omit to keep
+ *                                         previous behaviour (sub-agent detail ignored)
+ *   onDone()                           — parent chat reached 'idle' status
+ *   onError(err)                       — network or parse error
+ */
+function subscribeEcaEvents(chatId, { onChunk, onAsk, onToolLog, onSubagentToolLog, onDone, onError } = {}) {
   const base = new URL(ECA_SERVER_URL);
   let resolvePromise, rejectPromise;
   const done = new Promise((res, rej) => { resolvePromise = res; rejectPromise = rej; });
+
+  // Watch set: starts with just the parent chatId, grows as spawn_agent
+  // calls reveal sub-agent chatIds. A plain Set is enough — the SSE
+  // connection itself is global, this only widens which chatId values
+  // we react to (see Axe 5 doc comment above).
+  const watchedChatIds = new Set([chatId]);
 
   const req = https.request(
     {
@@ -240,12 +303,25 @@ function subscribeEcaEvents(chatId, { onChunk, onAsk, onToolLog, onDone, onError
           let data;
           try { data = JSON.parse(datMatch[1]); } catch { continue; }
 
-          // Filter by chatId — /api/v1/events is global (all chats)
-          if (data.chatId !== chatId) continue;
+          const isParentChat = data.chatId === chatId;
+          const isSubagentChat = !isParentChat && watchedChatIds.has(data.chatId);
+          if (!isParentChat && !isSubagentChat) continue; // unrelated chat — ignore
 
           if (eventType === 'chat:content-received') {
             const { role, content } = data;
             if (!content) continue;
+
+            // Sub-agent chat: only relay its own tool calls (if a handler is
+            // provided) — ignore text chunks / ask_user for sub-chats, the
+            // parent's spawn_agent call already owns the user-facing flow.
+            if (isSubagentChat) {
+              if (role === 'assistant' && content.type === 'toolCalled' && onSubagentToolLog) {
+                onSubagentToolLog(data.chatId, classifyToolCall(content));
+              }
+              continue;
+            }
+
+            // Parent chat — original behaviour, unchanged.
             if (role === 'assistant') {
               // Streaming text fragment
               if (content.type === 'text' && content.text) {
@@ -258,6 +334,13 @@ function subscribeEcaEvents(chatId, { onChunk, onAsk, onToolLog, onDone, onError
                   || content.summary
                   || `${content.name}(${JSON.stringify(content.arguments || {}).slice(0, 60)})`;
                 if (onAsk) onAsk({ question: `Approuver : ${cmd}`, toolId: content.id, isApproval: true });
+              }
+              // Sub-agent launch detected — start watching its chatId so
+              // its own tool calls (received under that separate chatId,
+              // see Axe 5 doc comment above) are no longer silently dropped.
+              if (content.type === 'toolCallRun' && content.details?.type === 'subagent'
+                  && content.details.subagentChatId) {
+                watchedChatIds.add(content.details.subagentChatId);
               }
               // Tool call completed (after approval or auto-trust)
               if (content.type === 'toolCalled') {
@@ -272,7 +355,10 @@ function subscribeEcaEvents(chatId, { onChunk, onAsk, onToolLog, onDone, onError
             }
           }
 
-          if (eventType === 'chat:status-changed' && data.status === 'idle') {
+          // Only the PARENT reaching 'idle' ends this subscription — a
+          // sub-agent's own 'idle' is expected (it finishes before/with the
+          // parent's spawn_agent toolCalled) and must not resolve `done` early.
+          if (isParentChat && eventType === 'chat:status-changed' && data.status === 'idle') {
             if (onDone) onDone();
             resolvePromise();
           }
@@ -288,4 +374,43 @@ function subscribeEcaEvents(chatId, { onChunk, onAsk, onToolLog, onDone, onError
   return { req, done };
 }
 
-module.exports = { ecaRequest, promptAndWait, lastAssistantText, subscribeEcaEvents };
+/**
+ * Force l'agent ECA (architect/code/fast/…) d'un chat existant
+ * (Engine/TODO.org [#J] Axe 1 — routage explicite skill → agent).
+ *
+ * ⚠️ Découverte empirique (session ECA 2026-10-13) : le champ `agent` du
+ * body de `POST /api/v1/chats/:id/prompt` (documenté côté protocole
+ * JSON-RPC `chat/prompt` sur https://eca.dev/protocol/) N'A AUCUN EFFET
+ * observé sur l'API REST `/api/v1/chats/:id/prompt` — testé et confirmé :
+ * un chat créé avec `{ message, agent: 'architect' }` reste sur
+ * `defaultAgent` (`GET /api/v1/chats/:id` → `agent: "code"`).
+ *
+ * Le mécanisme qui fonctionne réellement est une route REST séparée, non
+ * documentée dans https://eca.dev/protocol/ (qui ne documente que le
+ * JSON-RPC stdin, pas le mapping HTTP du mode `remote`) mais découverte
+ * et confirmée empiriquement : `POST /api/v1/chats/:id/agent` avec
+ * `{ agent }` → `204 No Content`, et l'agent du chat change durablement
+ * (vérifié via `GET /api/v1/chats/:id` → `agent` mis à jour). Cette route
+ * correspond très probablement à l'implémentation serveur de la
+ * notification JSON-RPC `chat/selectedAgentChanged` documentée dans le
+ * protocole, simplement exposée différemment côté API HTTP remote.
+ *
+ * Appeler cette fonction AVANT d'envoyer le prompt (`ecaRequest(.../prompt)`)
+ * sur un chat dont l'agent attendu est connu à l'avance (cf.
+ * server/routes/terminal.js § AGENT_BY_TRIGGER) — ne bloque jamais l'envoi
+ * du prompt en cas d'échec (best-effort, voir `onError`).
+ *
+ * @param {string} chatId
+ * @param {string} agentName — ex. 'architect', 'code', 'fast'
+ * @returns {Promise<boolean>} true si la requête a abouti (204), false sinon
+ */
+async function setChatAgent(chatId, agentName) {
+  try {
+    await ecaRequest(`/api/v1/chats/${encodeURIComponent(chatId)}/agent`, 'POST', { agent: agentName });
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
+module.exports = { ecaRequest, promptAndWait, lastAssistantText, subscribeEcaEvents, setChatAgent };

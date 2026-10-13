@@ -39,33 +39,45 @@ if [ -f "$CREDS_FILE" ]; then
   # Pas d'injection ANTHROPIC_API_KEY : ECA route vers le provider via config.json (defaultModel).
 elif [ -f "$WEBAPP_AUTH" ]; then
   echo "[eca-bootstrap] Credentials webapp détectés (.webapp-auth.json)"
-  # Extraire l'api_key Anthropic depuis le JSON simple de la webapp
-  API_KEY=""
-  if command -v python3 >/dev/null 2>&1; then
-    API_KEY=$(python3 -c "
-import json, sys
-try:
-    d = json.load(open('$WEBAPP_AUTH'))
-    a = d.get('anthropic', {})
-    print(a.get('api_key', a.get('access_token', '')), end='')
-except Exception:
-    pass
-" 2>/dev/null)
-  fi
+  # Extraction POSIX pure (grep/sed), sans dépendance python3 — cette image
+  # (Dockerfile.eca, debian:bookworm-slim minimal) n'installe QUE
+  # curl/ca-certificates/unzip, contrairement à Dockerfile de chorus-web.
+  # Un appel `command -v python3` échouait silencieusement ici (binaire
+  # absent), laissant API_KEY/COPILOT_TOKEN vides en permanence, peu
+  # importe le contenu réel de .webapp-auth.json — bug découvert en
+  # session ECA (2026-10-13) en testant le scénario de fallback webapp
+  # sans credentials OAuth natifs. La version précédente (python3 -c)
+  # n'a donc, de fait, jamais pu extraire un token dans ce conteneur.
+  #
+  # Approche : extraire le bloc JSON du provider ciblé via grep -o sur un
+  # pattern non-gourmand bloc-par-clé, puis sed pour isoler la valeur du
+  # champ voulu. Suffisant pour le JSON plat (non nesté, une seule ligne
+  # ou multi-lignes simples) produit par server/routes/*.js côté webapp.
+  extract_json_field() {
+    # $1 = fichier ; $2 = nom du bloc provider (ex: "anthropic") ;
+    # $3 = nom du champ (ex: "api_key") — retourne la valeur ou vide.
+    _file="$1"; _provider="$2"; _field="$3"
+    awk -v provider="\"$_provider\"" -v field="\"$_field\"" '
+      index($0, provider) { in_block=1 }
+      in_block && index($0, "}") { in_block=0 }
+      in_block && index($0, field) {
+        line=$0
+        sub(/^[^:]*:[ \t]*"/, "", line)
+        sub(/".*$/, "", line)
+        print line
+        exit
+      }
+    ' "$_file"
+  }
+
+  API_KEY=$(extract_json_field "$WEBAPP_AUTH" "anthropic" "api_key")
+  [ -z "$API_KEY" ] && API_KEY=$(extract_json_field "$WEBAPP_AUTH" "anthropic" "access_token")
   if [ -n "$API_KEY" ]; then
     export ANTHROPIC_API_KEY="$API_KEY"
     echo "[eca-bootstrap] ANTHROPIC_API_KEY injectée depuis .webapp-auth.json"
   fi
-  # Copilot token (provider github-copilot)
-  COPILOT_TOKEN=$(python3 -c "
-import json, sys
-try:
-    d = json.load(open('$WEBAPP_AUTH'))
-    c = d.get('github-copilot', {})
-    print(c.get('access_token', ''), end='')
-except Exception:
-    pass
-" 2>/dev/null)
+
+  COPILOT_TOKEN=$(extract_json_field "$WEBAPP_AUTH" "github-copilot" "access_token")
   if [ -n "$COPILOT_TOKEN" ]; then
     export GITHUB_COPILOT_TOKEN="$COPILOT_TOKEN"
     echo "[eca-bootstrap] GITHUB_COPILOT_TOKEN injectée depuis .webapp-auth.json"

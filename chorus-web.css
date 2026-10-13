@@ -140,6 +140,14 @@ input, select, textarea { font-family: inherit; }
   content: ''; width: 6px; height: 6px; border-radius: 50%;
   background: var(--success); animation: pulse 2s infinite;
 }
+.engine-badge.degraded {
+  background: var(--warn-dim); border-color: var(--warn); color: var(--warn);
+}
+.engine-badge.degraded::before { background: var(--warn); animation: pulse 0.8s infinite; }
+.engine-badge.offline {
+  background: var(--error-dim); border-color: var(--error); color: var(--error);
+}
+.engine-badge.offline::before { background: var(--error); animation: none; }
 @keyframes pulse {
   0%, 100% { opacity: 1; } 50% { opacity: 0.4; }
 }
@@ -1271,6 +1279,11 @@ input, select, textarea { font-family: inherit; }
   font-size: 9.5px; color: #8B949E;
   font-family: 'JetBrains Mono', monospace;
   margin-left: 2px;
+}
+.eca-subagent-body {
+  margin-left: 18px;
+  border-left: 1px dashed rgba(179,136,255,0.3);
+  padding-left: 4px;
 }
 
 /* Separators between exchanges */

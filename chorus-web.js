@@ -1970,7 +1970,7 @@ function renderTestingBugsSection(readme, sbId) {
     <div class="pv-panel">
       <div style="display:flex;align-items:center;gap:10px;cursor:pointer" onclick="toggleTestingBugsSection()">
         <span style="font-size:15px">🐛</span>
-        <span style="font-weight:600;font-size:13px">${n} bug${n > 1 ? 's' : ''} corrigé${n > 1 ? 's' : ''} durant les tests</span>
+        <span style="font-weight:600;font-size:13px">${n} divergence${n > 1 ? 's' : ''} résolue${n > 1 ? 's' : ''} durant les tests</span>
         <span style="font-size:11px;color:var(--text-muted)">découverts via chorus-strengthen / chorus-stress</span>
         <span id="testing-bugs-chevron" class="cov-chevron${_testingBugsOpen ? ' open' : ''}" style="margin-left:auto">▸</span>
       </div>
@@ -3252,6 +3252,12 @@ let _lvlTermSessionId = null;
 let _lvlTermAbortCtrl = null;  // AbortController de la requête SSE courante
 let _lvlTermLastCmd   = null;  // dernière commande exécutée (pour Retry)
 let _lvlTermMinimized = false; // true si le terminal est réduit (overlay masqué, stream/session toujours vivants)
+// Regroupement visuel des sous-agents parallèles (Engine/TODO.org [#J]
+// Axe 5, étape 3) — subagentChatId → élément DOM de la section pliable
+// correspondante, pour router chaque 'subagent-tool' reçu vers la bonne
+// section (plutôt que de les mélanger dans le flux linéaire principal).
+// Réinitialisé à chaque ouverture de terminal (openLevelTerminal).
+let _lvlTermSubagentSections = new Map();
 
 function levelPromptLabel(ctx) {
   const { level, sbId, entityId, projId, reportFile } = ctx;
@@ -3389,6 +3395,7 @@ function openLevelTerminal(level, ctx, autoCmd = null) {
   // A single ECA chat per terminal opening — preserves history between
   // turns (cf. server.js § ROUTE 5bis /terminal, chatId = `term-${sessionId}`).
   _lvlTermSessionId = 'lvlterm-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8);
+  _lvlTermSubagentSections = new Map();
 
   const overlay = document.getElementById('level-terminal-overlay');
   const out     = document.getElementById('lvl-term-output');
@@ -3398,6 +3405,13 @@ function openLevelTerminal(level, ctx, autoCmd = null) {
   document.getElementById('lvl-term-title').textContent =
     `ECA — ${levelPromptLabel(_lvlTermCtx).replace(' ?>','')} — session interactive`;
   document.getElementById('lvl-term-prompt').textContent = levelPromptLabel(_lvlTermCtx);
+  // Nouvelle session = pas encore de skill chargé — masquer le bandeau
+  // persisté d'une éventuelle session précédente (Engine/TODO.org [#J] Axe 3).
+  const skillBanner = document.getElementById('lvl-term-skill-banner');
+  if (skillBanner) skillBanner.hidden = true;
+  // Idem pour le panneau de tâches (Engine/TODO.org [#J] Axe 4).
+  const taskboardPanel = document.getElementById('lvl-term-taskboard');
+  if (taskboardPanel) taskboardPanel.hidden = true;
 
   out.innerHTML = '';
   overlay.hidden = false;
@@ -3646,53 +3660,112 @@ const TOOL_FAMILY_COLOR = {
 };
 
 /**
+ * Met à jour le bandeau "Skill actif" du panneau terminal (Engine/TODO.org
+ * [#J] Axe 3) à partir d'un événement SSE 'skill' ({ name, history }).
+ * Persiste à l'écran même après défilement du log principal — bandeau fixe
+ * sous la titlebar, voir chorus-web.html § #lvl-term-skill-banner.
+ */
+function lvlTermUpdateSkillBanner({ name, history }) {
+  const banner = document.getElementById('lvl-term-skill-banner');
+  const nameEl = document.getElementById('lvl-term-skill-name');
+  const histEl = document.getElementById('lvl-term-skill-history');
+  if (!banner || !nameEl) return;
+  banner.hidden = false;
+  nameEl.textContent = name || '?';
+  if (histEl) {
+    const prior = Array.isArray(history) ? history.slice(0, -1) : [];
+    histEl.textContent = prior.length ? prior.join(' → ') + ' → ' : '';
+  }
+}
+
+const TASKBOARD_STATUS_ICON = {
+  pending:     '☐',
+  'in-progress': '⏳',
+  done:        '☑',
+};
+const TASKBOARD_STATUS_COLOR = {
+  pending:       'var(--text-muted)',
+  'in-progress': 'var(--warn,#FEBC2E)',
+  done:          'var(--success,#28C840)',
+};
+
+/**
+ * Met à jour le panneau de tâches du terminal (Engine/TODO.org [#J] Axe 4)
+ * à partir d'un événement SSE 'taskboard', lui-même dérivé de l'état
+ * consolidé que ECA fournit nativement à chaque appel eca__task (plan/
+ * start/complete/…) — voir eca-client.js#classifyToolCall § isTaskUpdate.
+ * Checklist en direct : ☐ pending · ⏳ in-progress · ☑ done.
+ */
+function lvlTermUpdateTaskboard({ tasks, summary, activeSummary }) {
+  const panel   = document.getElementById('lvl-term-taskboard');
+  const sumEl   = document.getElementById('lvl-term-taskboard-summary');
+  const listEl  = document.getElementById('lvl-term-taskboard-list');
+  if (!panel || !listEl) return;
+  panel.hidden = false;
+
+  if (sumEl && summary) {
+    sumEl.textContent =
+      `${summary.done}/${summary.total} terminée(s)` +
+      (summary.inProgress ? ` · ${summary.inProgress} en cours` : '') +
+      (activeSummary ? ` — ${activeSummary}` : '');
+  }
+
+  listEl.innerHTML = (tasks || []).map(t => {
+    const icon  = TASKBOARD_STATUS_ICON[t.status] || '☐';
+    const color = TASKBOARD_STATUS_COLOR[t.status] || 'var(--text-muted)';
+    const strike = t.status === 'done' ? 'text-decoration:line-through;opacity:.7' : '';
+    return `<div style="display:flex;align-items:baseline;gap:6px;color:${color}">
+      <span>${icon}</span>
+      <span style="${strike}">#${t.id} ${escapeHtml(t.subject || '')}</span>
+      ${t.isBlocked ? '<span style="color:var(--error,#EF4444);font-size:10px">⛔ bloquée</span>' : ''}
+    </div>`;
+  }).join('');
+}
+
+/**
  * Renders an enriched tool-call (icon + family + summary), with a clickable
  * fold to the full detail (tool output) when available.
  * `toolInfo` comes from eca-client.js#classifyToolCall — see its docs for
  * the field details { family, icon, label, name, hint, summary, detail,
  * isSubagent, agentName, subagentChatId, agentModel, agentStep }.
  *
- * Sub-agent case (isSubagent === true, tool "spawn_agent"): distinct rendering
- * — visual indentation + thicker border + "agent:<name>" label and current
- * step, to clearly signal a delegation to an isolated context (dedicated
- * ECA sub-chat, subagentChatId) rather than a tool executed directly in
- * the main conversation.
+ * Sub-agent case (isSubagent === true, tool "spawn_agent"): rendered as a
+ * foldable SECTION (Engine/TODO.org [#J] Axe 5, étape 3) rather than a
+ * single line — registered in _lvlTermSubagentSections by subagentChatId
+ * so that subsequent 'subagent-tool' events (the sub-agent's OWN internal
+ * tool calls — grep/read_file/etc. — see eca-client.js#subscribeEcaEvents
+ * § onSubagentToolLog) can be appended inside this section instead of
+ * polluting the main linear flow. If 'subagent-tool' events for this
+ * subagentChatId already arrived BEFORE this final spawn_agent summary
+ * (the common case — see lvlTermAppendSubagentTool, which creates a
+ * placeholder section on first arrival), this call reuses and enriches
+ * that existing section (header: agentName/agentModel, final result)
+ * instead of creating a duplicate.
  */
 function lvlTermAppendTool(toolInfo) {
   const out = document.getElementById('lvl-term-output');
   const color = TOOL_FAMILY_COLOR[toolInfo.family] || TOOL_FAMILY_COLOR.other;
+
+  if (toolInfo.isSubagent && toolInfo.subagentChatId) {
+    return lvlTermFinalizeSubagentSection(toolInfo, color);
+  }
+
   const line = document.createElement('div');
-  line.className = toolInfo.isSubagent
-    ? 'eca-session-line dim eca-tool-line eca-subagent-line'
-    : 'eca-session-line dim eca-tool-line';
-  line.style.borderLeft = toolInfo.isSubagent ? `3px solid ${color}` : `2px solid ${color}`;
+  line.className = 'eca-session-line dim eca-tool-line';
+  line.style.borderLeft = `2px solid ${color}`;
 
   const hasDetail = !!(toolInfo.detail && toolInfo.detail.trim());
   const head = document.createElement('div');
   head.className = 'eca-tool-head';
   head.style.cursor = hasDetail ? 'pointer' : 'default';
 
-  let labelHtml;
-  if (toolInfo.isSubagent) {
-    const stepHtml = toolInfo.agentStep
-      ? `<span class="eca-subagent-step">étape ${toolInfo.agentStep}${toolInfo.agentMaxSteps ? '/' + toolInfo.agentMaxSteps : ''}</span>`
-      : '';
-    labelHtml =
-      `<span class="eca-subagent-tag" style="color:${color};border-color:${color}">agent: ${escapeHtml(toolInfo.agentName || '?')}</span>` +
-      stepHtml;
-  } else {
-    labelHtml = `<span class="eca-tool-label" style="color:${color}">${toolInfo.label || 'Outil'}</span>`;
-  }
+  const labelHtml = `<span class="eca-tool-label" style="color:${color}">${toolInfo.label || 'Outil'}</span>`;
 
   head.innerHTML =
     `<span class="eca-tool-icon">${toolInfo.icon || '⚙'}</span>` +
     labelHtml +
     `<span class="eca-tool-summary">${escapeHtml(toolInfo.summary || toolInfo.name || '…')}</span>` +
     (hasDetail ? `<span class="eca-tool-chevron">▸</span>` : '');
-  if (toolInfo.isSubagent && toolInfo.agentModel) {
-    head.title = `Sous-agent "${toolInfo.agentName}" — modèle ${toolInfo.agentModel}` +
-      (toolInfo.subagentChatId ? ` — chat ${toolInfo.subagentChatId}` : '');
-  }
   line.appendChild(head);
 
   if (hasDetail) {
@@ -3711,6 +3784,143 @@ function lvlTermAppendTool(toolInfo) {
   lvlTermPruneOldLines();
   out.scrollTop = out.scrollHeight;
   return line;
+}
+
+/**
+ * Crée (si absente) la section pliable DOM pour un sous-agent donné, et y
+ * ajoute une ligne pour un tool-call interne reçu via l'événement SSE
+ * 'subagent-tool' (Engine/TODO.org [#J] Axe 5, étape 3).
+ * Appelée généralement AVANT lvlTermAppendTool/lvlTermFinalizeSubagentSection
+ * pour ce même subagentChatId (le détail arrive en continu pendant que le
+ * sous-agent travaille ; le résumé final n'arrive qu'à la toute fin) — la
+ * section est donc créée ici en premier, avec un en-tête provisoire
+ * ("agent…" sans nom tant que agentName n'est pas encore connu), puis
+ * enrichie par lvlTermFinalizeSubagentSection une fois le spawn_agent
+ * terminé.
+ */
+function lvlTermAppendSubagentTool(subagentChatId, toolInfo) {
+  const out = document.getElementById('lvl-term-output');
+  let section = _lvlTermSubagentSections.get(subagentChatId);
+
+  if (!section) {
+    const color = TOOL_FAMILY_COLOR.agent;
+    const wrap = document.createElement('div');
+    wrap.className = 'eca-session-line dim eca-tool-line eca-subagent-line';
+    wrap.style.borderLeft = `3px solid ${color}`;
+
+    const head = document.createElement('div');
+    head.className = 'eca-tool-head';
+    head.style.cursor = 'pointer';
+    head.innerHTML =
+      `<span class="eca-tool-icon">🤖</span>` +
+      `<span class="eca-subagent-tag" style="color:${color};border-color:${color}">agent: …</span>` +
+      `<span class="eca-tool-summary">en cours…</span>` +
+      `<span class="eca-tool-chevron">▾</span>`;
+    wrap.appendChild(head);
+
+    const body = document.createElement('div');
+    body.className = 'eca-subagent-body';
+    wrap.appendChild(body);
+
+    head.onclick = () => {
+      body.classList.toggle('hidden');
+      head.querySelector('.eca-tool-chevron').textContent =
+        body.classList.contains('hidden') ? '▸' : '▾';
+    };
+
+    out.appendChild(wrap);
+    section = { wrap, head, body, finalized: false };
+    _lvlTermSubagentSections.set(subagentChatId, section);
+  }
+
+  const color = TOOL_FAMILY_COLOR[toolInfo.family] || TOOL_FAMILY_COLOR.other;
+  const hasDetail = !!(toolInfo.detail && toolInfo.detail.trim());
+  const subLine = document.createElement('div');
+  subLine.className = 'eca-tool-head';
+  subLine.style.cursor = hasDetail ? 'pointer' : 'default';
+  subLine.style.paddingLeft = '14px';
+  subLine.innerHTML =
+    `<span class="eca-tool-icon">${toolInfo.icon || '⚙'}</span>` +
+    `<span class="eca-tool-label" style="color:${color}">${toolInfo.label || 'Outil'}</span>` +
+    `<span class="eca-tool-summary">${escapeHtml(toolInfo.summary || toolInfo.name || '…')}</span>` +
+    (hasDetail ? `<span class="eca-tool-chevron">▸</span>` : '');
+
+  if (hasDetail) {
+    const detail = document.createElement('pre');
+    detail.className = 'eca-tool-detail hidden';
+    detail.textContent = toolInfo.detail;
+    subLine.onclick = () => {
+      detail.classList.toggle('hidden');
+      subLine.querySelector('.eca-tool-chevron').textContent =
+        detail.classList.contains('hidden') ? '▸' : '▾';
+    };
+    section.body.appendChild(subLine);
+    section.body.appendChild(detail);
+  } else {
+    section.body.appendChild(subLine);
+  }
+
+  out.scrollTop = out.scrollHeight;
+}
+
+/**
+ * Enrichit (ou crée si aucun 'subagent-tool' n'est jamais arrivé — cas d'un
+ * sous-agent qui conclut sans exécuter d'outil, ex. réponse directe) la
+ * section pliable d'un sous-agent avec son résultat final, une fois
+ * l'événement spawn_agent/toolCalled reçu sur le chat parent.
+ */
+function lvlTermFinalizeSubagentSection(toolInfo, color) {
+  const out = document.getElementById('lvl-term-output');
+  let section = _lvlTermSubagentSections.get(toolInfo.subagentChatId);
+
+  if (!section) {
+    // Aucun détail de sous-agent capté (cas rare — ex. refus immédiat par
+    // le sous-agent, voir test réel en session où un chemin hors workspace
+    // produit une erreur textuelle sans aucun tool-call interne) : repli
+    // sur l'ancien rendu ligne simple, pas de section vide à créer.
+    const wrap = document.createElement('div');
+    wrap.className = 'eca-session-line dim eca-tool-line eca-subagent-line';
+    wrap.style.borderLeft = `3px solid ${color}`;
+    const head = document.createElement('div');
+    head.className = 'eca-tool-head';
+    wrap.appendChild(head);
+    out.appendChild(wrap);
+    section = { wrap, head, body: null, finalized: false };
+  }
+
+  const { head } = section;
+  const hasDetail = !!(toolInfo.detail && toolInfo.detail.trim());
+  head.style.cursor = hasDetail || section.body ? 'pointer' : 'default';
+  const stepHtml = toolInfo.agentStep
+    ? `<span class="eca-subagent-step">étape ${toolInfo.agentStep}${toolInfo.agentMaxSteps ? '/' + toolInfo.agentMaxSteps : ''}</span>`
+    : '';
+  head.innerHTML =
+    `<span class="eca-tool-icon">🤖</span>` +
+    `<span class="eca-subagent-tag" style="color:${color};border-color:${color}">agent: ${escapeHtml(toolInfo.agentName || '?')}</span>` +
+    stepHtml +
+    `<span class="eca-tool-summary">${escapeHtml(toolInfo.summary || toolInfo.name || '…')}</span>` +
+    (hasDetail ? `<span class="eca-tool-chevron">▸</span>` : '');
+  if (toolInfo.agentModel) {
+    head.title = `Sous-agent "${toolInfo.agentName}" — modèle ${toolInfo.agentModel}` +
+      (toolInfo.subagentChatId ? ` — chat ${toolInfo.subagentChatId}` : '');
+  }
+
+  if (hasDetail) {
+    const detail = document.createElement('pre');
+    detail.className = 'eca-tool-detail hidden';
+    detail.textContent = toolInfo.detail;
+    section.wrap.appendChild(detail);
+    head.onclick = () => {
+      detail.classList.toggle('hidden');
+      head.querySelector('.eca-tool-chevron').textContent =
+        detail.classList.contains('hidden') ? '▸' : '▾';
+    };
+  }
+
+  section.finalized = true;
+  lvlTermPruneOldLines();
+  out.scrollTop = out.scrollHeight;
+  return section.wrap;
 }
 
 function levelTerminalKeydown(e) {
@@ -3877,6 +4087,16 @@ async function levelTerminalExec(cmd) {
           } else if (evt === 'tool') {
             ensureThinkingRemoved();
             lvlTermAppendTool(data);
+
+          } else if (evt === 'skill') {
+            lvlTermUpdateSkillBanner(data);
+
+          } else if (evt === 'taskboard') {
+            lvlTermUpdateTaskboard(data);
+
+          } else if (evt === 'subagent-tool') {
+            ensureThinkingRemoved();
+            lvlTermAppendSubagentTool(data.subagentChatId, data.toolInfo);
 
           } else if (evt === 'ask') {
             ensureThinkingRemoved();
@@ -5064,7 +5284,7 @@ async function openSandboxCorpus() {
                ${readme.enrichmentLastDate ? `<span style="color:var(--text-muted)">· dernier : ${readme.enrichmentLastDate}</span>` : ''}</span>`
             : ''}
           ${readme?.bugsFixed
-            ? `<span${bugsToggle} title="${bugsTbl ? 'Cliquer pour voir le détail' : ''}" style="font-size:12px;color:var(--text-secondary)${bugsTbl ? ';cursor:pointer' : ''}">🐛 <strong>${readme.bugsFixed}</strong> bug(s) résolu(s)${bugsTbl ? ` <span class="cov-chevron">▸</span>` : ''}</span>`
+            ? `<span${bugsToggle} title="${bugsTbl ? 'Cliquer pour voir le détail' : ''}" style="font-size:12px;color:var(--text-secondary)${bugsTbl ? ';cursor:pointer' : ''}">🐛 <strong>${readme.bugsFixed}</strong> divergence(s) résolue(s)${bugsTbl ? ` <span class="cov-chevron">▸</span>` : ''}</span>`
             : ''}
           ${validHtml}
         </div>
@@ -5820,6 +6040,7 @@ function ecaLoginCancel() {
 async function refreshAuthStatus() {
   const grid   = document.getElementById('sd-auth-status-grid');
   const navDot = document.getElementById('sd-auth-nav-dot');
+  const pill   = document.getElementById('svc-auth');
   if (!grid) return;
   try {
     const r    = await fetch(`${API}/api/auth/status`);
@@ -5828,8 +6049,10 @@ async function refreshAuthStatus() {
     if (!data.ok || !data.sources || data.sources.length === 0) {
       grid.innerHTML = '<div style="color:var(--error);font-size:11px">⚠ Aucun credential configuré — renseignez une clé API ci-dessous.</div>';
       if (navDot) navDot.style.background = 'var(--error)';
+      if (pill) { pill.hidden = false; pill.querySelector('span').textContent = '🔑 Non authentifié'; }
       return;
     }
+    if (pill) pill.hidden = true;
 
     let hasActive = false;
     const now = Date.now() / 1000;
@@ -5852,6 +6075,14 @@ async function refreshAuthStatus() {
     }).join('');
 
     if (navDot) navDot.style.background = hasActive ? '#28C840' : '#FEBC2E';
+    if (pill) {
+      if (!hasActive) {
+        pill.hidden = false;
+        pill.querySelector('span').textContent = '🔑 Credential expiré';
+      } else {
+        pill.hidden = true;
+      }
+    }
   } catch (e) {
     if (grid) grid.innerHTML = `<div style="color:var(--error);font-size:11px">Erreur /api/auth/status : ${e.message}</div>`;
   }
@@ -5916,13 +6147,53 @@ function showAuthMsg(level, text) {
 
 // ─── ECA SERVICE STATUS — real ping (replaces the old simulation) ─────
 async function bootServices() {
-  await Promise.all([refreshEcaStatus(), refreshAuthStatus()]);
+  await Promise.all([refreshEcaStatus(), refreshAuthStatus(), refreshEngineBadge()]);
   // Re-checks periodically (detects an eca-server going down/coming back).
   setInterval(refreshEcaStatus, 30000);
+  setInterval(refreshEngineBadge, 30000);
   // "Active ECA sessions" badge — lightweight polling, independent of the
   // server online/offline status (purely informational, modifies nothing).
   refreshActiveTerminals();
   setInterval(refreshActiveTerminals, 8000);
+}
+
+// ─── ENGINE BADGE — version réelle Chorus::Engine + statut dérivé ──────
+// Source : GET /api/eca/version (perl -MChorus / -MChorus::Engine, voir
+// server/routes/eca.js) + GET /api/eca/health (déjà utilisé par svc-eca).
+// États : LIVE (module OK + eca-server joignable) · DEGRADED (module OK,
+// eca-server injoignable) · OFFLINE (module Chorus::Engine en échec).
+async function refreshEngineBadge() {
+  const badge = document.getElementById('engine-badge');
+  if (!badge) return;
+  try {
+    const [vRes, hRes] = await Promise.all([
+      fetch(`${API}/api/eca/version`).then(r => r.json()).catch(() => ({ ok: false })),
+      fetch(`${API}/api/eca/health`).then(r => r.json()).catch(() => ({ ok: false })),
+    ]);
+
+    const version = vRes.version || '?';
+    let state, label;
+    if (!vRes.engineOk) {
+      state = 'offline'; label = `engine v${version} · OFFLINE`;
+    } else if (!hRes.ok) {
+      state = 'degraded'; label = `engine v${version} · DEGRADED`;
+    } else {
+      state = ''; label = `engine v${version} · LIVE`;
+    }
+
+    badge.className = 'engine-badge' + (state ? ' ' + state : '');
+    badge.textContent = label;
+    badge.title = [
+      `Chorus::Engine ${version}`,
+      vRes.installedAt ? `installé le ${new Date(vRes.installedAt).toLocaleString('fr-FR')}` : null,
+      vRes.error ? `⚠ ${vRes.error}` : null,
+      !hRes.ok ? 'eca-server injoignable' : null,
+    ].filter(Boolean).join(' · ');
+  } catch (e) {
+    badge.className = 'engine-badge offline';
+    badge.textContent = 'engine ? · OFFLINE';
+    badge.title = `Erreur de vérification : ${e.message}`;
+  }
 }
 
 let _activeTerminalsCache = [];

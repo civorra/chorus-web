@@ -29,9 +29,16 @@
         <div class="svc-dot" style="background:#4E9BF5;animation:pulse 2s infinite"></div>
         <span id="eca-active-terminals-count">0 session active</span>
       </div>
+      <div class="svc-pill offline" id="svc-auth" hidden
+           title="Aucun credential LLM configuré — cliquez pour vous authentifier"
+           onclick="openSettings();switchSettingsTab('auth');refreshAuthStatus()"
+           style="cursor:pointer">
+        <div class="svc-dot"></div>
+        <span>🔑 Non authentifié</span>
+      </div>
     </div>
     <div id="eca-active-terminals-panel" hidden></div>
-    <div class="engine-badge" style="margin-left:8px">engine v2.1 · LIVE</div>
+    <div class="engine-badge" id="engine-badge" style="margin-left:8px" title="Chargement…">engine … · …</div>
     <button onclick="openSettings()" title="Configuration" style="margin-left:10px;background:none;border:1px solid var(--border);border-radius:6px;color:var(--text-secondary);cursor:pointer;padding:4px 8px;font-size:15px;line-height:1;display:flex;align-items:center" onmouseover="this.style.borderColor='var(--accent)';this.style.color='var(--accent)'" onmouseout="this.style.borderColor='var(--border)';this.style.color='var(--text-secondary)'">⚙️</button>
   </header>
 
@@ -635,6 +642,24 @@
           ➖
         </button>
         <button onclick="closeLevelTerminal()" style="background:none;border:none;color:#8B949E;cursor:pointer;font-size:14px;line-height:1;padding:0 2px" title="Fermer définitivement (annule le traitement en cours)">✕</button>
+      </div>
+      <div id="lvl-term-skill-banner" hidden
+           style="display:flex;align-items:center;gap:6px;padding:4px 12px;background:var(--surface-2,#1a2332);border-bottom:1px solid var(--border);font-size:11px;font-family:'JetBrains Mono',monospace;color:var(--text-secondary)">
+        <span>📘</span>
+        <span>Skill actif :</span>
+        <strong id="lvl-term-skill-name" style="color:var(--accent,#4E9BF5)"></strong>
+        <span id="lvl-term-skill-history" style="margin-left:auto;color:var(--text-muted);font-size:10px"></span>
+      </div>
+      <div id="lvl-term-taskboard" hidden
+           style="border-bottom:1px solid var(--border);background:var(--surface-2,#1a2332);font-size:11px;font-family:'JetBrains Mono',monospace">
+        <div style="display:flex;align-items:center;gap:6px;padding:4px 12px;cursor:pointer"
+             onclick="document.getElementById('lvl-term-taskboard-list').classList.toggle('hidden');this.querySelector('.tb-chevron').classList.toggle('open')">
+          <span>🗂️</span>
+          <span>Tâches :</span>
+          <span id="lvl-term-taskboard-summary" style="color:var(--text-secondary)"></span>
+          <span class="tb-chevron" style="margin-left:auto;transition:transform .15s">▸</span>
+        </div>
+        <div id="lvl-term-taskboard-list" class="hidden" style="padding:0 12px 8px;display:flex;flex-direction:column;gap:3px"></div>
       </div>
       <div class="eca-session-output" id="lvl-term-output" style="flex:1;min-height:0;overflow-y:auto"></div>
       <div class="eca-session-input-row">

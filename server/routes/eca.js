@@ -7,10 +7,23 @@
 'use strict';
 
 const { Router } = require('express');
+const fs = require('fs');
+const { execFile } = require('child_process');
 const eca = require('../../eca-client');
 const { latencyHistory, recordLatency } = require('../state');
+const { PERL } = require('../helpers/perl');
 
 const router = Router();
+
+// ── Helper — exécute `perl -e '<code>'` et résout stdout.trim() ─────────
+function perlEval(code) {
+  return new Promise((resolve, reject) => {
+    execFile(PERL, ['-e', code], { timeout: 5000 }, (err, stdout, stderr) => {
+      if (err) return reject(new Error(stderr.toString().trim() || err.message));
+      resolve(stdout.toString().trim());
+    });
+  });
+}
 
 // ── GET /api/eca/health ──────────────────────────────────────
 router.get('/health', async (req, res) => {
@@ -47,6 +60,41 @@ router.get('/info', async (req, res) => {
     activeChatCount:   chatCount,
     containerName:     process.env.ECA_CONTAINER_NAME || null,
   });
+});
+
+// ── GET /api/engine/version ───────────────────────────────────
+// Version réelle de Chorus::Engine installée nativement dans ce conteneur
+// (lib/Chorus.pm $VERSION, cf. Dockerfile § make install) + vérification
+// que Chorus::Engine se charge sans erreur (healthcheck du module Perl,
+// indépendant de eca-server — voir chorus-web.js § refreshEngineBadge).
+router.get('/version', async (req, res) => {
+  let version = null;
+  let engineOk = false;
+  let installedAt = null;
+  let error = null;
+
+  try {
+    version = await perlEval('use Chorus; print $Chorus::VERSION;');
+  } catch (e) {
+    error = `Chorus.pm : ${e.message}`;
+  }
+
+  try {
+    await perlEval('use Chorus::Engine; 1;');
+    engineOk = true;
+  } catch (e) {
+    error = (error ? error + ' · ' : '') + `Chorus::Engine : ${e.message}`;
+  }
+
+  try {
+    const modPath = await perlEval('use Chorus; print $INC{"Chorus.pm"};');
+    if (modPath) {
+      const stat = fs.statSync(modPath);
+      installedAt = stat.mtime.toISOString();
+    }
+  } catch { /* installedAt reste null si introspection impossible */ }
+
+  res.json({ ok: !!version && engineOk, version, engineOk, installedAt, error });
 });
 
 module.exports = router;

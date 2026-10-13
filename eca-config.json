@@ -8,13 +8,41 @@
 
     "defaultModel": "${env:ECA_DEFAULT_MODEL}",
     "defaultAgent": "code",
+    // ⚠️ trust:true + chat.defaultTrust:true auto-accept TOUT tool-call,
+    // y compris les règles "ask" ci-dessous (le schéma ECA documente
+    // explicitement : "auto-accepting all tool calls, never overriding
+    // deny" — "ask" EST écrasé par le mode trust, seul "deny" résiste).
+    // Conservé à true pour ne pas casser l'autonomie des skills Chorus
+    // (chorus-feed, deep-cms6, etc. écrivent des dizaines de fichiers
+    // sans interaction humaine, par conception). Conséquence directe :
+    // les garde-fous ci-dessous DOIVENT utiliser "deny" (jamais "ask")
+    // pour être réellement appliqués dans ce contexte. Voir
+    // Engine/TODO.org [#J] WEBAPP, Axe 2.
     "trust": true,
     "chat": {
         "defaultTrust": true
     },
     "toolCallConfig": {
         "approval": {
-            "byDefault": "allow"
+            "byDefault": "allow",
+            // "deny" bloque inconditionnellement, même en mode trust —
+            // seul mécanisme de garde-fou fiable tant que trust:true est
+            // actif globalement. Motifs volontairement restreints aux
+            // opérations irréversibles/destructrices à fort impact ;
+            // ne pas y ajouter des opérations légitimes des skills
+            // Chorus (écriture KB/YAML, etc.) sous peine de blocage
+            // silencieux et incompréhensible pour l'agent.
+            "deny": {
+                "shell_command": {
+                    "argsMatchers": {
+                        "command": [
+                            "(^|[;&|]\\s*)rm\\s+-rf",
+                            "(^|[;&|]\\s*)(dd|mkfs|shred)\\s",
+                            "(^|[;&|]\\s*)docker\\s+(rm|rmi|system\\s+prune)"
+                        ]
+                    }
+                }
+            }
         }
     },
 
