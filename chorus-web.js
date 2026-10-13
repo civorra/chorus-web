@@ -10,6 +10,15 @@ const SETTINGS = {
   // workspace / eca / models / pipeline : read-only, real values
   // loaded dynamically from /api/eca/info (cf. refreshModelsReadonly,
   // refreshServicesModalData) — no longer editable or persisted here.
+  // Exception : eca.terminalTimeoutMinutes (configurable, voir panneau
+  // Config § ECA Server) — contrôle la durée max d'attente d'une
+  // session terminal (POST /terminal) avant abandon côté webapp. Le
+  // skill ECA peut continuer de tourner après ce délai (ce réglage ne
+  // pilote que l'écoute SSE webapp, pas le serveur eca-server) — voir
+  // server/routes/terminal.js § timeoutHandle.
+  eca: {
+    terminalTimeoutMinutes: 60,
+  },
   ui: {
     theme: 'dark', // 'dark' | 'light' | 'system'
     language: 'fr', // 'fr' | 'en'
@@ -4049,6 +4058,7 @@ async function levelTerminalExec(cmd) {
         reportFile: ctx.reportFile,
         sessionId:  _lvlTermSessionId,
         message:    cmd,
+        timeoutMinutes: SETTINGS.eca.terminalTimeoutMinutes,
       }),
     });
 
@@ -6342,9 +6352,70 @@ async function refreshEcaStatus() {
 function openServicesModal() {
   document.getElementById('services-modal-overlay').hidden = false;
   refreshServicesModalData();
+  refreshServicesModalAuth();
 }
 function closeServicesModal() {
   document.getElementById('services-modal-overlay').hidden = true;
+}
+
+// Indicateur "Authentifié oui/non" dans la modale Services — réutilise
+// GET /api/auth/status (même source que le panneau Config § Authentification
+// et la pill topbar #svc-auth), affiché ici en complément du statut
+// online/offline du service ECA Server lui-même.
+async function refreshServicesModalAuth() {
+  const pill   = document.getElementById('svc-modal-auth');
+  const detail = document.getElementById('svc-modal-auth-detail');
+  if (!pill) return;
+  try {
+    const r    = await fetch(`${API}/api/auth/status`);
+    const data = await r.json();
+    const now  = Date.now() / 1000;
+    const hasActive = data.ok && Array.isArray(data.sources) && data.sources.some(
+      (s) => s.active && !(s.expiresAt && s.expiresAt < now)
+    );
+    pill.className = 'svc-pill ' + (hasActive ? 'online' : 'offline');
+    pill.innerHTML = `<div class="svc-dot"></div>${hasActive ? 'authentifié' : 'non authentifié'}`;
+    if (detail) {
+      detail.textContent = hasActive
+        ? (data.sources || []).map((s) => `${s.provider} (${s.source === 'eca-native' ? 'OAuth ECA' : s.source === 'webapp' ? 'webapp' : 'env'})`).join(', ')
+        : 'Aucun credential actif — voir ⚙️ Configuration › Authentification';
+    }
+  } catch (e) {
+    pill.className = 'svc-pill offline';
+    pill.innerHTML = `<div class="svc-dot"></div>erreur`;
+    if (detail) detail.textContent = e.message;
+  }
+}
+
+function showServicesModalMsg(level, text) {
+  const msg = document.getElementById('svc-modal-msg');
+  if (!msg) return;
+  const colors = { ok: '#28C840', warn: 'var(--warn)', error: 'var(--error)', muted: 'var(--text-muted)' };
+  msg.style.display = 'block';
+  msg.style.color   = colors[level] || 'var(--text-muted)';
+  msg.textContent   = text;
+}
+
+// Bouton "Redémarrer" de la modale Services — même route que l'onglet
+// Config § Authentification (reloadEcaServer/showAuthMsg), mais affiché
+// dans #svc-modal-msg (propre à cette modale) pour ne pas dépendre du
+// panneau Config, potentiellement fermé pendant ce redémarrage.
+async function reloadEcaServerFromServices() {
+  showServicesModalMsg('muted', '⟳ Redémarrage eca-server en cours…');
+  try {
+    const r    = await fetch(`${API}/api/auth/reload-eca`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
+    });
+    const data = await r.json();
+    if (data.ok) {
+      showServicesModalMsg('ok', `✓ eca-server redémarré (${data.container})`);
+      setTimeout(() => { refreshEcaStatus(); refreshServicesModalAuth(); }, 6000);
+    } else {
+      showServicesModalMsg('warn', `⚠ ${data.result && data.result.body ? data.result.body : 'Vérifiez que /var/run/docker.sock est monté dans le conteneur chorus-web.'}`);
+    }
+  } catch (e) {
+    showServicesModalMsg('error', `✗ ${e.message}`);
+  }
 }
 
 // ─── Services modal — données réelles (config + latence) ──────
@@ -6366,14 +6437,6 @@ async function refreshServicesModalData() {
         `  <span class="yml-key">url</span>: <span class="yml-val">${info.serverUrl}</span>\n` +
         `  <span class="yml-key">binary</span>: <span class="yml-val">${info.binary}</span>  <span class="yml-cmt"># pas de JVM, pas de JAR</span>`;
     }
-    const ws1 = document.getElementById('svc-arch-ws1');
-    const ws2 = document.getElementById('svc-arch-ws2');
-    if (ws1 && info.workspaceFolders && info.workspaceFolders[0]) ws1.textContent = info.workspaceFolders[0];
-    if (ws2 && info.workspaceFolders && info.workspaceFolders[1]) ws2.textContent = info.workspaceFolders[1];
-    const chatsEl = document.getElementById('svc-arch-chats');
-    if (chatsEl) chatsEl.textContent = info.activeChatCount != null ? info.activeChatCount : '—';
-    const containerEl = document.getElementById('svc-arch-container');
-    if (containerEl) containerEl.textContent = info.containerName || '—';
   } catch (e) {
     const cfgEl = document.getElementById('svc-real-config');
     if (cfgEl) cfgEl.innerHTML = `<span class="yml-cmt"># indisponible : ${e.message}</span>`;
@@ -6596,6 +6659,22 @@ function saveSettings() {
   closeSettings();
 }
 
+// Sauvegarde du timeout terminal (panneau Config § ECA Server) — séparé de
+// saveSettings() (bouton "Enregistrer" global) car ce champ a son propre
+// onchange, pour un effet immédiat sans attendre la fermeture du panneau.
+function saveEcaTimeoutSetting() {
+  const input = document.getElementById('sd-eca-timeout');
+  if (!input) return;
+  let minutes = parseInt(input.value, 10);
+  if (!Number.isFinite(minutes) || minutes < 1) minutes = 60;
+  if (minutes > 240) minutes = 240;
+  input.value = minutes;
+  SETTINGS.eca.terminalTimeoutMinutes = minutes;
+  try {
+    localStorage.setItem('chorus-web-settings-eca', JSON.stringify(SETTINGS.eca));
+  } catch (e) { console.warn('Impossible de sauvegarder le timeout terminal :', e.message); }
+}
+
 // Loads persisted UI preferences (localStorage) at boot — only the
 // preferences actually applied in JS (theme/density/notifications) are
 // concerned. "Language" is kept in SETTINGS/localStorage to not lose the
@@ -6620,6 +6699,13 @@ function loadSettingsFromStorage() {
     if (densSel)  densSel.value  = SETTINGS.ui.density;
     if (notifChk) notifChk.checked = !!SETTINGS.ui.notifications;
   } catch (e) { console.warn('Préférences UI corrompues, ignorées :', e.message); }
+
+  try {
+    const rawEca = localStorage.getItem('chorus-web-settings-eca');
+    if (rawEca) Object.assign(SETTINGS.eca, JSON.parse(rawEca));
+  } catch (e) { console.warn('Préférence timeout ECA corrompue, ignorée :', e.message); }
+  const timeoutInput = document.getElementById('sd-eca-timeout');
+  if (timeoutInput) timeoutInput.value = SETTINGS.eca.terminalTimeoutMinutes;
 }
 
 function exportSettingsJSON() {

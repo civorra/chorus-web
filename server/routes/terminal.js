@@ -70,12 +70,21 @@ router.get('/terminals/active', (req, res) => {
 router.post('/sandboxes/:sbId/terminal', (req, res) => {
   sseInit(res);
   const { sbId } = req.params;
-  const { level, entityId, projId, reportFile, sessionId, message } = req.body;
+  const { level, entityId, projId, reportFile, sessionId, message, timeoutMinutes } = req.body;
 
   if (!message || !sessionId) return sseError(res, 'message/sessionId manquant');
   if (!['sandbox', 'entity', 'project', 'report'].includes(level)) {
     return sseError(res, `level invalide : ${level}`);
   }
+  // Timeout configurable (panneau Config § ECA Server, défaut 60 min côté
+  // frontend — voir chorus-web.js § SETTINGS.eca.terminalTimeoutMinutes).
+  // Borné ici indépendamment du frontend par sécurité (1 min .. 4h) en cas
+  // de valeur corrompue/absente transmise par un client plus ancien.
+  const DEFAULT_TIMEOUT_MINUTES = 60;
+  let timeoutMs = Number(timeoutMinutes);
+  if (!Number.isFinite(timeoutMs) || timeoutMs < 1) timeoutMs = DEFAULT_TIMEOUT_MINUTES;
+  if (timeoutMs > 240) timeoutMs = 240;
+  timeoutMs = timeoutMs * 60_000;
 
   (async () => {
     // ── Context block ──────────────────────────────────────────────────
@@ -142,8 +151,8 @@ router.post('/sandboxes/:sbId/terminal', (req, res) => {
     };
 
     const timeoutHandle = setTimeout(
-      () => finish('timeout après 20 min — skill encore en cours côté ECA'),
-      1_200_000
+      () => finish(`timeout après ${Math.round(timeoutMs / 60_000)} min — skill encore en cours côté ECA`),
+      timeoutMs
     );
 
     const { req: sReq, done } = eca.subscribeEcaEvents(chatId, {
