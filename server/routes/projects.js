@@ -204,12 +204,12 @@ router.get('/sandboxes/:sbId/entities/:entityId/projects/:projId/check', async (
   const message = `${systemPrompt}\n\n---\n\n${reportContent}`;
 
   try {
-    const chat = await eca.promptAndWait(chatId, message, {
-      onTick: () => sseSend(res, 'log', { line: `… en attente de la réponse ECA (chat ${chatId})` }),
+    const { text: fullText } = await eca.promptAndWaitSSE(chatId, message, {
+      // onChunk silencieux ici — pas de streaming incrémental vers le client
+      // SSE de cette route (le texte est renvoyé en un seul bloc 'chunk' une
+      // fois complet, cf. appel sseSend ci-dessous), juste un log de progression.
     });
-    if (chat.status === 'error') return sseError(res, `eca-server erreur pour le chat ${chatId}`);
-
-    const fullText = eca.lastAssistantText(chat);
+    sseSend(res, 'log', { line: `… réponse ECA reçue (chat ${chatId})` });
     sseSend(res, 'chunk', { text: fullText });
 
     const filename = chorus.writeCheckReport(sbId, entityId, projId, outputLabel, fullText);
@@ -246,11 +246,8 @@ router.post('/sandboxes/:sbId/entities/:entityId/projects/:projId/chat', async (
     : `${prompts.PROMPT_CHAT}\n\nQuestion : ${message}`;
 
   try {
-    const chat = await eca.promptAndWait(chatId, fullMessage, { timeoutMs: 120000 });
-    if (chat.status === 'error') {
-      return res.status(502).json({ ok: false, error: `eca-server erreur pour le chat ${chatId}` });
-    }
-    res.json({ ok: true, reply: eca.lastAssistantText(chat) });
+    const { text } = await eca.promptAndWaitSSE(chatId, fullMessage, { timeoutMs: 120000 });
+    res.json({ ok: true, reply: text });
   } catch (err) {
     res.status(502).json({ ok: false, error: `Erreur eca-server : ${err.message}` });
   }

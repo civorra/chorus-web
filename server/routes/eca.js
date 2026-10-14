@@ -26,16 +26,18 @@ function perlEval(code) {
 }
 
 // ── GET /api/eca/health ──────────────────────────────────────
+// Sonde TCP pure (eca.pingTcp) plutôt qu'un appel HTTP applicatif — cf.
+// eca-client.js § pingTcp pour le détail du bug Jetty contourné (toute
+// route HTTP d'eca-server peut le déclencher ; ce health-check, appelé en
+// polling toutes les 30s par chorus-web.js § refreshEcaStatus, en était la
+// source la plus bruyante avant ce changement).
 router.get('/health', async (req, res) => {
-  const start = Date.now();
   try {
-    await eca.ecaRequest('/api/v1/chats', 'GET');
-    const latencyMs = Date.now() - start;
+    const latencyMs = await eca.pingTcp();
     recordLatency(latencyMs);
     res.json({ ok: true, latencyMs, history: latencyHistory.slice() });
   } catch (err) {
-    const latencyMs = Date.now() - start;
-    res.json({ ok: false, error: err.message, latencyMs, history: latencyHistory.slice() });
+    res.json({ ok: false, error: err.message, latencyMs: null, history: latencyHistory.slice() });
   }
 });
 

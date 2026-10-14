@@ -20,10 +20,47 @@
 'use strict';
 
 const https = require('https');
+const net   = require('net');
 const { URL } = require('url');
 
 const ECA_SERVER_URL      = process.env.ECA_SERVER_URL || 'https://eca-server:7777';
 const ECA_REMOTE_PASSWORD = process.env.ECA_REMOTE_PASSWORD || '';
+
+/**
+ * Sonde la disponibilité d'eca-server par simple connexion TCP (handshake
+ * de socket uniquement, aucune requête HTTP applicative) — utilisée par
+ * GET /api/eca/health. Évite délibérément tout appel à ecaRequest() :
+ * TOUTE route HTTP d'eca-server (vérifié empiriquement : /api/v1/chats,
+ * /api/v1/events, /api/v1/chats/:id/prompt, /api/v1/chats/:id/agent) peut
+ * déclencher un bug Jetty 12/GraalVM natif (IllegalArgumentException: "No
+ * matching field found: getOutputStream for class
+ * org.eclipse.jetty.ee9.nested.Response", cf. ring.adapter.jetty) — sans
+ * impact fonctionnel observé (le client reçoit quand même sa réponse), mais
+ * pollue bruyamment les logs serveur. Un health-check appelé en polling
+ * (toutes les 30s par chorus-web.js § refreshEcaStatus) était la source
+ * majoritaire de ce bruit (~46/54 occurrences sur un échantillon de 10 min)
+ * — remplacé par une sonde TCP pure qui ne traverse jamais la couche HTTP
+ * applicative d'eca-server, donc jamais ce bug, tout en restant un ping
+ * de disponibilité équivalent (TLS handshake non inclus — latence mesurée
+ * est donc légèrement optimiste par rapport à un vrai aller-retour HTTPS,
+ * mais la connectivité TCP est la seule chose qu'un health-check doit
+ * réellement vérifier ici).
+ */
+function pingTcp(timeoutMs = 5000) {
+  return new Promise((resolve, reject) => {
+    const target = new URL(ECA_SERVER_URL);
+    const start = Date.now();
+    const sock = net.createConnection({ host: target.hostname, port: target.port || 7777 });
+    const onError = (e) => { sock.destroy(); reject(e); };
+    sock.setTimeout(timeoutMs, () => onError(new Error('eca-server TCP ping timeout')));
+    sock.on('error', onError);
+    sock.on('connect', () => {
+      const latencyMs = Date.now() - start;
+      sock.end();
+      resolve(latencyMs);
+    });
+  });
+}
 
 function ecaRequest(path, method, bodyObj) {
   return new Promise((resolve, reject) => {
@@ -121,6 +158,63 @@ async function promptAndWait(chatId, message, { pollIntervalMs = 300, timeoutMs 
     }
   }
   throw new Error(`eca-server: timeout en attente de réponse pour le chat ${chatId}`);
+}
+
+/**
+ * Alternative à promptAndWait() basée sur SSE (subscribeEcaEvents) plutôt
+ * que sur le polling GET /api/v1/chats/:id — contourne entièrement le bug
+ * Jetty 12 documenté plus haut (socket hang up / "No matching field found:
+ * getOutputStream") en n'appelant jamais cet endpoint : /api/v1/events
+ * (utilisé par le terminal principal, server/routes/terminal.js) n'est pas
+ * affecté. Préférer cette fonction à promptAndWait() pour tout nouvel appel
+ * one-shot (un prompt → une réponse complète, pas de session interactive
+ * multi-tour) — mêmes garanties (texte complet accumulé, pas de limite de
+ * taille contrairement au fallback liste de promptAndWait qui renvoie un
+ * texte vide en cas de bug Jetty).
+ *
+ * Subscribe AVANT d'envoyer le prompt (même pattern que
+ * server/routes/terminal.js) pour éviter de manquer les tout premiers
+ * événements si la réponse ECA commence avant que l'abonnement SSE soit
+ * établi côté client.
+ *
+ * @returns {Promise<{status: string, text: string}>} status: 'idle' | 'error'
+ */
+async function promptAndWaitSSE(chatId, message, { timeoutMs = 120000 } = {}) {
+  return new Promise((resolve, reject) => {
+    let text = '';
+    let settled = false;
+    const timeoutHandle = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      try { req.destroy(); } catch {}
+      reject(new Error(`eca-server: timeout en attente de réponse pour le chat ${chatId}`));
+    }, timeoutMs);
+
+    const { req } = subscribeEcaEvents(chatId, {
+      onChunk: (t) => { text += t; },
+      onDone: () => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeoutHandle);
+        resolve({ status: 'idle', text });
+      },
+      onError: (e) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeoutHandle);
+        reject(new Error(`eca-server SSE ${chatId} → ${e.message}`));
+      },
+    });
+
+    ecaRequest(`/api/v1/chats/${encodeURIComponent(chatId)}/prompt`, 'POST', { message })
+      .catch((e) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeoutHandle);
+        try { req.destroy(); } catch {}
+        reject(e);
+      });
+  });
 }
 
 // ── Tool call classification ────────────────────────────────────────────
@@ -413,4 +507,4 @@ async function setChatAgent(chatId, agentName) {
   }
 }
 
-module.exports = { ecaRequest, promptAndWait, lastAssistantText, subscribeEcaEvents, setChatAgent };
+module.exports = { ecaRequest, pingTcp, promptAndWait, promptAndWaitSSE, lastAssistantText, subscribeEcaEvents, setChatAgent };
