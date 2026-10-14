@@ -71,7 +71,18 @@ router.post(
 
     const ext      = path.extname(uploadedFile.originalname) || '.pdf';
     const destFile = path.join(srcDir, `source${ext}`);
-    fs.renameSync(uploadedFile.path, destFile);
+    // copyFileSync + unlinkSync plutôt que renameSync : multer écrit les
+    // uploads sous os.tmpdir() (souvent un volume/device distinct de
+    // SANDBOXES_DIR en environnement Docker — bind-mount vs tmpfs/overlay
+    // internes) — fs.rename()/renameSync() échoue en EXDEV ("cross-device
+    // link not permitted") dès que source et destination ne sont pas sur
+    // le même device, ce qui est systématiquement le cas ici en prod
+    // conteneurisée (découvert en testant [#J] en conditions réelles,
+    // cf. Engine/todo-history/TODO.org § [#J] WEBAPP). copyFileSync
+    // fonctionne across-device (copie physique des octets), unlinkSync
+    // nettoie ensuite le fichier temporaire.
+    fs.copyFileSync(uploadedFile.path, destFile);
+    fs.unlinkSync(uploadedFile.path);
 
     sseSend(res, 'log', { line: `→ Source : ${uploadedFile.originalname} → workspace/${entityId}/sources/${projId}/source${ext}` });
     sseSend(res, 'log', { line: `→ Lancement chorus-import-project (session ECA headless) …` });
