@@ -709,6 +709,12 @@ async function refreshSandboxReports(sbId) {
     } else {
       renderProjectsTab();
     }
+    // Onglet "Tests" — rafraîchit les badges lastRun/convergence si l'onglet
+    // est actuellement affiché sur CE sandbox (ex. après un test lancé via
+    // runTestingStrategy, terminal de niveau 'sandbox' — voir levelTerminalExec).
+    if (currentSandbox?.id === sbId && document.getElementById('tab-tests')?.classList.contains('active')) {
+      renderTestingTab();
+    }
     // Pipeline panel, if open on this project — refreshes ONLY the most
     // recent report (the one produced by the current/just-finished run),
     // not the full run-report history of the project. The pipeline execution
@@ -1842,6 +1848,48 @@ async function fetchTestingBugs(sbId) {
   return _testingBugsCache[sbId];
 }
 
+// Badge de convergence réelle — distinct du statut SOLVED/FAILED et du
+// décompte brut conforme/non-conforme : un test "iso" attend volontairement
+// des NON_CONFORME (1 cas conforme + 1 cas non-conforme par règle), donc
+// "converger" ne veut PAS dire "0 NON_CONFORME" mais "les verdicts
+// CONFORME/NON_CONFORME obtenus sont ceux attendus" (0 discordance).
+// Source : $SANDBOX/.last-check-results.json produit par `chorus-check --all`
+// (cf. Engine/agent/skills/chorus-check.md § 6-all.6, chorus/scanner.js §
+// readLastCheckResults). `convergence` est `null` si ce fichier n'existe pas
+// (jamais lancé en mode --all, ou invalidé par un chorus-feed depuis).
+function renderConvergenceBadge(slug, convergence) {
+  if (!convergence) {
+    return `<div style="font-size:10px;color:var(--text-muted);font-style:italic">Convergence inconnue — lancez chorus-check --all</div>`;
+  }
+  const { discordances, stale, timestamp, source } = convergence;
+  const staleTag = stale
+    ? ` <span style="color:var(--warn)" title="La KB a été modifiée depuis ce résultat (chorus-feed) — à relancer">⚠️ obsolète</span>`
+    : '';
+  const dateTag = timestamp ? ` · ${timestamp.slice(0, 10)}` : '';
+  // `source: 'run-report'` = calculé côté webapp depuis le dernier run-report
+  // de CE fichier (fallback quand .last-check-results.json est absent/ne
+  // couvre pas ce fichier — cf. chorus/reports.js § computeConvergenceFromRunReport).
+  // Moins autoritaire qu'un `chorus-check --all` réel (pas de rule_id par
+  // discordance, pas de détection "stale" vs agent/.kb-hash) — signalé
+  // discrètement, sans bloquer l'affichage du badge de convergence lui-même.
+  const sourceTag = source === 'run-report'
+    ? ` <span style="color:var(--text-muted)" title="Calculé depuis le dernier run-report de ce fichier — lancez chorus-check --all pour le détail par règle (rule_id) et la détection KB obsolète">·🧮</span>`
+    : '';
+
+  // Le badge ne reflète QUE les discordances (expected ≠ got) — jamais le
+  // compteur "unprocessed" : un élément non traité n'est pas en soi un écart
+  // de convergence (il peut s'agir d'un Frame de contrôle technique du
+  // pipeline, hors périmètre de test -OK-/-KO-, cf. pipeline_control) et ne
+  // doit pas assombrir un résultat par ailleurs sans aucune discordance.
+  if (!discordances) {
+    return `<div style="font-size:11px;font-weight:700;color:var(--success)">✅ Converge${dateTag}${staleTag}${sourceTag}</div>`;
+  }
+
+  const detail = `${discordances} discordance${discordances > 1 ? 's' : ''}`;
+
+  return `<div style="font-size:11px;font-weight:700;color:var(--warn)">⚠️ ${detail}${dateTag}${staleTag}${sourceTag}</div>`;
+}
+
 function renderTestingTab() {
   const sb = currentSandbox;
   const panel = document.getElementById('tab-tests');
@@ -1852,7 +1900,7 @@ function renderTestingTab() {
 
   const cards = Object.keys(TESTING_META).map(slug => {
     const meta  = TESTING_META[slug];
-    const entry = testing[slug]; // null si fichier absent, sinon {file, lastRun}
+    const entry = testing[slug]; // null si fichier absent, sinon {file, lastRun, convergence}
     const exists = !!entry;
     const checked = _testsSelected.has(slug);
 
@@ -1868,11 +1916,22 @@ function renderTestingTab() {
         <div><span style="color:${isSolved ? 'var(--success)' : 'var(--error)'};font-weight:700">${r.verdict}</span>
           <span style="color:var(--text-muted)"> · ${r.conformes ?? 0}/${r.totalFrames ?? 0} CONFORMES</span></div>
         <div style="color:var(--text-muted)">${r.date || '—'}</div>
+        ${renderConvergenceBadge(slug, entry.convergence)}
       </div>`;
     }
 
+    // Bouton "Renforcer" conditionné aux discordances uniquement (même
+    // logique que renderConvergenceBadge) — un élément "unprocessed" seul
+    // (ex. pipeline_control, hors périmètre -OK-/-KO-) ne justifie pas de
+    // lancer chorus-strengthen, qui cible spécifiquement les discordances
+    // attendu/obtenu.
+    const hasDiscordances = !!(entry && entry.convergence && entry.convergence.discordances);
     const actionsHtml = exists
-      ? `<button class="btn btn-ghost btn-sm" style="font-size:11px" onclick="runTestingStrategy('${slug}')">🖥️ Lancer via ECA</button>`
+      ? `<button class="btn btn-ghost btn-sm" style="font-size:11px" onclick="runTestingStrategy('${slug}')">🖥️ Lancer le test</button>`
+          + ` <button class="btn btn-ghost btn-sm" style="font-size:11px;padding:2px 6px" onclick="regenerateTestingStrategy('${slug}')" title="Régénérer ce test depuis la KB (sauvegarde l'existant avant remplacement)">⟲</button>`
+          + (hasDiscordances
+            ? ` <button class="btn btn-ghost btn-sm" style="font-size:11px" onclick="confirmRunStrengthen('${slug}')" title="Analyse les discordances et renforce la KB — opération potentiellement longue et consommatrice de CPU">🔧 Renforcer</button>`
+            : '')
       : (kbModeled
           ? `<button class="btn btn-ghost btn-sm" style="font-size:11px" onclick="generateTestingStrategy('${slug}')">+ Générer ce test</button>`
           : `<button class="btn btn-ghost btn-sm" style="font-size:11px" disabled title="La KB doit être modélisée (chorus-feed) avant de générer des tests">+ Générer ce test</button>`);
@@ -2046,6 +2105,29 @@ function generateTestingStrategy(slug) {
     `chorus-create-project ${currentSandbox.id} --strategy ${slug}`);
 }
 
+// Regenerates a SINGLE already-existing test file (⟲ icon next to an
+// existing test's actions) — distinct from generateTestingStrategy (which
+// targets a missing file, no backup needed). Backs up the existing file
+// with a timestamped suffix first, same convention as generateAllTests(),
+// to never silently overwrite a test that may have already been run/
+// validated/analysed via chorus-strengthen.
+function regenerateTestingStrategy(slug) {
+  if (!currentSandbox) return;
+  const sb = currentSandbox;
+  const entry = (sb.testing || {})[slug];
+  const file = entry ? entry.file : TESTING_FILES[slug];
+  if (!confirm(`Régénérer « ${TESTING_META[slug]?.label || slug} » (${file}) ?\n\n` +
+    `Le fichier existant sera d'abord sauvegardé avec un suffixe horodaté, ` +
+    `puis régénéré depuis la KB (chorus-create-project --strategy ${slug}).`)) return;
+
+  const cmd = `Avant toute chose, sauvegarde le fichier de test existant "${file}" dans ${sb.id} `
+    + `en le copiant avec un suffixe horodaté (ex: ${file}.bak-AAAAMMJJ-HHMMSS) dans le même dossier. `
+    + `Confirme le backup effectué, puis lance chorus-create-project ${sb.id} --strategy ${slug} `
+    + `pour régénérer ce test.`;
+
+  openLevelTerminal('sandbox', { sbId: sb.id }, cmd);
+}
+
 // Generates/re-generates ALL tests at once via chorus-create-project
 // --batch (4 strategies: iso/edges/cross/scale). If test files already
 // exist, the agent is explicitly asked to back them up (timestamped copy)
@@ -2080,6 +2162,70 @@ function runTestingStrategy(slug) {
   const file = TESTING_FILES[slug];
   openLevelTerminal('sandbox', { sbId: currentSandbox.id },
     `chorus-check ${currentSandbox.id} ${file}`);
+}
+
+// Launches chorus-strengthen for a non-converged test — ALWAYS gated by an
+// explicit confirmation modal first (never a direct onclick → fetch), given
+// the known risk: this command can run for a long time, produce infinite
+// loops on the Perl side, and spike CPU to 99% (cf. user warning). The
+// terminal session is opened with kind:'strengthen' (see openLevelTerminal /
+// levelTerminalExec § ctx.kind), which the server uses to (a) reject a 2nd
+// concurrent strengthen on the same sandbox and (b) cap the timeout at 45min
+// by default instead of 60 — see server/routes/terminal.js.
+function confirmRunStrengthen(slug) {
+  if (!currentSandbox) return;
+  const sb      = currentSandbox;
+  const meta    = TESTING_META[slug];
+  const testing = sb.testing || {};
+
+  // Reject immediately, client-side, if we already know (via the global
+  // terminal badge / last poll of /api/terminals/active) that a strengthen
+  // session is active on this sandbox — avoids a round-trip just to get
+  // the same server-side refusal. Not a strict guarantee (race condition
+  // possible if two tabs act at the same time) — the server-side check in
+  // terminal.js is the actual authoritative guard.
+  const already = (_activeTerminalsCache || [])
+    .find(t => t.sbId === sb.id && t.kind === 'strengthen');
+  if (already) {
+    alert(
+      `Un chorus-strengthen est déjà en cours sur ce sandbox ` +
+      `(depuis ${Math.round((already.elapsedMs || 0) / 60000)} min).\n\n` +
+      `Attendez sa fin avant d'en relancer un — l'exécution concurrente de ` +
+      `plusieurs chorus-strengthen est fortement déconseillée (risque CPU élevé).`
+    );
+    return;
+  }
+
+  const ok = confirm(
+    `Lancer chorus-strengthen sur le test « ${meta.label} » uniquement (${sb.id}) ?\n\n` +
+    `⚠️ Cette opération peut être LONGUE (plusieurs dizaines de minutes), ` +
+    `très consommatrice de CPU, et peut dans de rares cas entrer dans une ` +
+    `boucle de diagnostic prolongée côté moteur Perl.\n\n` +
+    `Un seul chorus-strengthen à la fois est autorisé par sandbox ` +
+    `(verrou serveur) — le timeout est plafonné à 45 min pour cette opération.\n\n` +
+    `Continuer ?`
+  );
+  if (!ok) return;
+
+  // chorus-strengthen's documented trigger (`chorus-strengthen <sandbox>`)
+  // always runs the FULL suite (all project-*.json) — there is no native
+  // CLI scoping option (cf. Engine/agent/skills/chorus-strengthen.md § Phase
+  // 0/1). The user explicitly asked to limit this button to the single
+  // selected test, not the whole sandbox — so scope is restricted via an
+  // explicit natural-language instruction rather than the bare trigger,
+  // listing the other project files to leave untouched.
+  const file = TESTING_FILES[slug];
+  const otherFiles = Object.keys(TESTING_FILES)
+    .filter(s => s !== slug && testing[s])
+    .map(s => TESTING_FILES[s]);
+  const scopeNote = otherFiles.length
+    ? ` Limite-toi exclusivement au fichier "${file}" — ignore les autres fichiers de la suite `
+      + `(${otherFiles.map(f => `"${f}"`).join(', ')}), même si chorus-strengthen analyse `
+      + `normalement la suite complète par défaut.`
+    : ` Limite-toi exclusivement au fichier "${file}".`;
+
+  openLevelTerminal('sandbox', { sbId: sb.id, kind: 'strengthen' },
+    `chorus-strengthen ${sb.id}` + scopeNote);
 }
 
 // Runs the current selection. If all present tests are selected
@@ -4058,7 +4204,10 @@ async function levelTerminalExec(cmd) {
         reportFile: ctx.reportFile,
         sessionId:  _lvlTermSessionId,
         message:    cmd,
-        timeoutMinutes: SETTINGS.eca.terminalTimeoutMinutes,
+        timeoutMinutes: ctx.kind === 'strengthen'
+          ? Math.min(SETTINGS.eca.terminalTimeoutMinutes, 45)
+          : SETTINGS.eca.terminalTimeoutMinutes,
+        kind:       ctx.kind || null,
       }),
     });
 
@@ -4163,7 +4312,12 @@ async function levelTerminalExec(cmd) {
             // rapports sur le filesystem — rescanner le sandbox pour que
             // PROJECTS[...]/_lastReports (et donc le bouton 📊 View, la liste
             // report lists, etc.) reflect these files without waiting for an F5.
-            if (ctx.level === 'project' || ctx.level === 'report') {
+            // 'sandbox' est inclus aussi : c'est le niveau utilisé par
+            // l'onglet Tests (runTestingStrategy → chorus-check <sb> <file>)
+            // — sans ce rescan, les badges de convergence/lastRun de l'onglet
+            // Tests restaient figés sur l'état précédent après un test lancé
+            // depuis ce terminal.
+            if (ctx.level === 'sandbox' || ctx.level === 'project' || ctx.level === 'report') {
               refreshSandboxReports(ctx.sbId);
             }
             break outer;
@@ -4178,7 +4332,7 @@ async function levelTerminalExec(cmd) {
         lvlTermAppend(`⏸ Session terminée (${elapsed}s)`, 'dim done-badge');
         doneShown = true;
         lvlTermSaveHistory();
-        if (ctx.level === 'project' || ctx.level === 'report') {
+        if (ctx.level === 'sandbox' || ctx.level === 'project' || ctx.level === 'report') {
           refreshSandboxReports(ctx.sbId);
         }
       }

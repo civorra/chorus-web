@@ -123,6 +123,75 @@ function buildRunReportIndex(sbPath) {
   return index;
 }
 
+// ── Convergence calculée depuis un run-report (fallback sans --all) ───────
+//
+// `chorus-check <sandbox> <fichier>` (mode single-file, sans --all) calcule
+// et affiche déjà un verdict de convergence (discordances attendu/obtenu) en
+// Phase 6.2 — mais ne le persiste nulle part : seul le mode --all écrit
+// `.last-check-results.json` (Phase 6-all.6). Résultat : l'onglet "Tests" de
+// la webapp affichait "Convergence inconnue" après un simple run single-file,
+// alors que toute l'information nécessaire est déjà dans le run-report produit
+// par CE run — chaque élément y porte son `id` (convention -OK-/-KO-) et son
+// `verdict` réel (cf. Engine/agent/skills/chorus-check.md § Phase 6.1, règle
+// d'extraction de l'attendu : "-OK-"/"-ok-" → CONFORME attendu, "-KO-"/"-ko-"
+// → NON_CONFORME attendu). Cette fonction réapplique la même convention
+// directement sur `run-report-*.json`, sans dépendre de --all ni d'aucun
+// fichier supplémentaire — un run-report (single-file ou --all) suffit.
+//
+// Ne remplace PAS .last-check-results.json quand il existe pour ce fichier :
+// ce dernier reste la source préférée (calculé par l'agent ECA, avec le
+// detail complet des discordances incluant le rule_id responsable via
+// _rule_trace — information non reconstructible depuis ce seul fichier JSON
+// côté webapp). Ce fallback comble uniquement le cas où .last-check-results.json
+// est absent ou ne couvre pas ce fichier projet précis.
+function computeConvergenceFromRunReport(reportData) {
+  if (!reportData || !Array.isArray(reportData.elements)) return null;
+
+  let discordances = 0;
+  let unprocessed   = 0;
+  const discDetail   = [];
+  const unprocDetail = [];
+
+  for (const e of reportData.elements) {
+    const id = e.id || '';
+    const verdict = e.verdict || '(unprocessed)';
+
+    if (verdict === '(unprocessed)' || !verdict) {
+      unprocessed++;
+      unprocDetail.push({ id, type: e.type_element || null });
+      continue;
+    }
+
+    // NOT_CHECKED — statut métier distinct de CONFORME/NON_CONFORME/(unprocessed),
+    // utilisé par certaines règles pour un élément volontairement hors
+    // échantillon/périmètre vérifiable (cf. sandbox 05a-CC-3.1.4,
+    // operation_mandate_ok: élément hors mandatory_operations() catalogue).
+    // Ni une discordance (le moteur n'a jamais tenté CONFORME/NON_CONFORME,
+    // donc rien à comparer à l'attendu -OK-/-KO-), ni un "unprocessed"
+    // (le moteur l'a bien traité, juste avec ce statut terminal spécifique)
+    // — exclu du calcul plutôt que mal classé dans l'une des deux catégories.
+    if (verdict === 'NOT_CHECKED') continue;
+
+    let expected = null;
+    if (/-OK-/i.test(id))      expected = 'CONFORME';
+    else if (/-KO-/i.test(id)) expected = 'NON_CONFORME';
+    if (!expected) continue; // id sans convention -OK-/-KO- → pas de discordance calculable
+
+    if (expected !== verdict) {
+      discordances++;
+      discDetail.push({ id, expected, got: verdict });
+    }
+  }
+
+  return {
+    converged:    reportData.pipeline_solved === true && discordances === 0 && unprocessed === 0,
+    discordances,
+    unprocessed,
+    discDetail,
+    unprocDetail,
+  };
+}
+
 // ── Lecture / écriture de rapports ────────────────────────────────────────
 
 function readReport(sbId, entityId, projId, filename) {
@@ -145,6 +214,7 @@ module.exports = {
   parseReport,
   indexRunReportsDir,
   buildRunReportIndex,
+  computeConvergenceFromRunReport,
   readReport,
   writeCheckReport,
 };

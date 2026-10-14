@@ -24,7 +24,7 @@ const {
   collectImportHistory,
 } = require('./parser');
 const { scanSandboxThesaurus } = require('./thesaurus');
-const { parseReport, buildRunReportIndex } = require('./reports');
+const { parseReport, buildRunReportIndex, computeConvergenceFromRunReport } = require('./reports');
 
 // Extensions non-documentaires à ignorer dans le listing corpus.
 const NON_DOC_EXT_RE = /\.(log|pyc|pyo|tmp|bak|swp)$/i;
@@ -315,6 +315,57 @@ function scanEntity(sbPath, entityId, runReportIndex) {
   return { id: entityId, label, path: entityPath, projects: [...flatProjects, ...nestedProjects] };
 }
 
+// ── readLastCheckResults ──────────────────────────────────────────────────
+//
+// Lit $SANDBOX/.last-check-results.json, écrit par `chorus-check --all`
+// (cf. Engine/agent/skills/chorus-check.md § 6-all.6 Persist results cache).
+// Contient, par fichier projet, le statut réel de convergence au sens
+// "CONFORME/NON_CONFORME attendus == obtenus" (discordances), distinct du
+// simple statut SOLVED/FAILED (qui ne dit rien sur l'exactitude des verdicts
+// individuels — un test `iso` attend volontairement des NON_CONFORME).
+//
+// Ce fichier est invalidé (supprimé) par `chorus-feed` à chaque run — son
+// absence est donc un état normal ("jamais lancé" ou "KB modifiée depuis"),
+// pas une erreur. On distingue les deux en comparant `kb_hash` au contenu
+// courant de agent/.kb-hash quand les deux existent.
+function readLastCheckResults(sbPath) {
+  const raw = readFileSafe(path.join(sbPath, '.last-check-results.json'));
+  if (!raw) return null;
+  let data;
+  try { data = JSON.parse(raw); } catch { return null; }
+
+  // Normalisation : agent/.kb-hash (format sha256sum, double espace entre
+  // hash et chemin) vs. kb_hash stocké en JSON peuvent différer sur des
+  // détails d'espacement sans que le contenu ait réellement changé — on
+  // compare après écrasement des espaces/retours multiples pour éviter un
+  // faux "stale" qui discréditerait le badge de convergence.
+  const normalizeHash = (s) => (s || '').trim().replace(/[ \t]+/g, ' ');
+  const currentKbHash = readFileSafe(path.join(sbPath, 'agent', '.kb-hash'));
+  const stale = !!(currentKbHash && data.kb_hash && normalizeHash(currentKbHash) !== normalizeHash(data.kb_hash));
+
+  const byFile = {};
+  for (const f of (data.files || [])) {
+    byFile[f.file] = {
+      status:        f.status || null,
+      conforme:      f.conforme ?? 0,
+      nonConforme:   f.non_conforme ?? 0,
+      unprocessed:   f.unprocessed ?? 0,
+      discordances:  f.discordances ?? 0,
+      discDetail:    f.disc_detail || [],
+      unprocDetail:  f.unproc_detail || [],
+      converged:     f.status === 'SOLVED' && (f.discordances ?? 0) === 0 && (f.unprocessed ?? 0) === 0,
+    };
+  }
+
+  return {
+    timestamp:  data.timestamp || null,
+    kbHash:     data.kb_hash || null,
+    converged:  !!data.converged,
+    stale,
+    byFile,
+  };
+}
+
 // ── scanSandbox ────────────────────────────────────────────────────────────
 
 function scanSandbox(sbId) {
@@ -363,19 +414,37 @@ function scanSandbox(sbId) {
   const entityIds     = listDirs(workspacePath);
   const entities      = entityIds.map(eId => scanEntity(sbPath, eId, runReportIndex));
 
-  // Onglet "Tests" — fichiers project-*.json générés par chorus-create-project
+  // Onglet "Tests" — fichiers project-*.json générés par chorus-create-project.
+  // Nom bilingue : certains sandboxes francophones (ex. corpus CC/ANSSI en
+  // français) utilisent le préfixe `projet-` plutôt que `project-` — Chorus
+  // supporte nativement le français (YAML RULE/REGLE, cf. AGENTS.md § Language
+  // & conventions), donc le scanner doit tolérer les deux plutôt que de
+  // forcer une convention anglaise stricte. `project-` reste essayé en
+  // premier (défaut historique) ; `projet-` en repli si le fichier anglais
+  // est absent du disque.
   const TESTING_STRATEGIES = {
-    iso:   'project-rules-iso.json',
-    edges: 'project-edges.json',
-    cross: 'project-cross.json',
-    scale: 'project-scale.json',
+    iso:   ['project-rules-iso.json', 'projet-rules-iso.json'],
+    edges: ['project-edges.json',     'projet-edges.json'],
+    cross: ['project-cross.json',     'projet-cross.json'],
+    scale: ['project-scale.json',     'projet-scale.json'],
   };
+  const lastCheckResults = readLastCheckResults(sbPath);
   const testing = {};
-  for (const [slug, filename] of Object.entries(TESTING_STRATEGIES)) {
-    const exists = fileExists(path.join(sbPath, filename));
-    if (!exists) { testing[slug] = null; continue; }
+  for (const [slug, candidates] of Object.entries(TESTING_STRATEGIES)) {
+    const filename = candidates.find(f => fileExists(path.join(sbPath, f)));
+    if (!filename) { testing[slug] = null; continue; }
     const entries = runReportIndex.get(filename) || [];
     const latest  = entries[entries.length - 1] || null;
+    // Convergence réelle (discordances attendu/obtenu == 0) — préférence
+    // .last-check-results.json (Phase 6-all.6, calculé par l'agent ECA avec
+    // le rule_id responsable via _rule_trace), sinon repli sur un calcul
+    // direct depuis le dernier run-report-*.json de CE fichier (couvre le
+    // cas --all jamais lancé / invalidé par chorus-feed depuis — voir
+    // computeConvergenceFromRunReport dans reports.js).
+    const checkEntry = lastCheckResults && lastCheckResults.byFile[filename] || null;
+    const fallbackConvergence = !checkEntry && latest
+      ? computeConvergenceFromRunReport(latest.data)
+      : null;
     testing[slug] = {
       file: filename,
       lastRun: latest ? {
@@ -384,6 +453,21 @@ function scanSandbox(sbId) {
         conformes:   latest.data.n_conforme ?? 0,
         date:        (latest.data.generated_at || '').slice(0, 10) || null,
       } : null,
+      convergence: checkEntry ? {
+        converged:    checkEntry.converged,
+        discordances: checkEntry.discordances,
+        unprocessed:  checkEntry.unprocessed,
+        discDetail:   checkEntry.discDetail,
+        unprocDetail: checkEntry.unprocDetail,
+        stale:        lastCheckResults.stale,
+        source:       'check-all',
+        timestamp:    lastCheckResults.timestamp,
+      } : fallbackConvergence ? {
+        ...fallbackConvergence,
+        stale:     false,
+        source:    'run-report',
+        timestamp: latest.data.generated_at || null,
+      } : null, // null = ni .last-check-results.json ni run-report exploitable (jamais lancé)
     };
   }
 
@@ -401,6 +485,7 @@ function scanAll() {
 
 module.exports = {
   readAgentOrgFile,
+  readLastCheckResults,
   scanSandboxCorpus,
   scanFlatProject,
   scanNestedProject,
