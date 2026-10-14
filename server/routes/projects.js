@@ -106,7 +106,16 @@ router.post(
     // le scope depuis le chemin du fichier source, ce qui fonctionnerait
     // aussi (destFile est déjà sous workspace/<entityId>/...), mais le
     // passer explicitement est plus robuste et explicite.
-    const message = `chorus-import-project ${sbId} ${destFile} --context ${entityId}` + DONE_INSTRUCTION;
+    //
+    // --out <entityPath>/project-<projId>.json : force le skill à nommer
+    // sa sortie selon la convention "flat" réellement reconnue par
+    // chorus.scanEntity (regex stricte `/^(projet|project)[-_].*\.json$/i`,
+    // cf. chorus/scanner.js) — un simple `<projId>.json` (sans préfixe
+    // `project-`/`projet-`) ne matche PAS cette regex et reste invisible
+    // au scan "flat" (confirmé par test réel, cf. Engine/todo-history/
+    // TODO.org § [#K] WEBAPP pour le détail complet de l'investigation).
+    const outFile = path.join(entityPath, `project-${projId}.json`);
+    const message = `chorus-import-project ${sbId} ${destFile} --context ${entityId} --out ${outFile}` + DONE_INSTRUCTION;
 
     const chatId = `eca-import-${sbId}-${projId}`;
     let finished = false;
@@ -123,7 +132,29 @@ router.post(
       if (subReq) { try { subReq.destroy(); } catch {} }
       if (errMsg) return sseError(res, errMsg);
       try {
-        const proj = chorus.scanProject(entityPath, projId);
+        // chorus.scanProject est un alias de scanNestedProject (convention
+        // legacy sources/<projId>/frames.pl) — totalement sans rapport avec
+        // le JSON produit par chorus-import-project (--out ci-dessus, lu par
+        // le scan "flat" de scanEntity). L'appeler ici retournerait toujours
+        // frames: 0 par construction, quel que soit le nom du fichier JSON
+        // (confirmé par test réel, cf. Engine/todo-history/TODO.org §
+        // [#K] WEBAPP). Utiliser scanEntity (qui agrège flat + nested) et
+        // retrouver le projet par id.
+        //
+        // ⚠️ scanEntity dérive l'id du projet "flat" depuis le NOM DE
+        // FICHIER JSON (slug = nom sans extension, donc ici
+        // `project-<projId>`), distinct du `projId` interne utilisé pour
+        // le dossier `sources/<projId>/` (qui produit une 2e entrée
+        // "nested" vide, state: 'available', sans rapport avec l'import
+        // réel) — chercher par `projId` nu matche donc à tort cette entrée
+        // nested vide plutôt que l'entrée flat qui contient les vraies
+        // données d'import. Chercher explicitement le slug flat en
+        // priorité (confirmé par test réel, cf. TODO.org § [#K] WEBAPP).
+        const entity = chorus.scanEntity(sbPath, entityId);
+        const flatSlug = `project-${projId}`;
+        const proj = (entity.projects || []).find(p => p.id === flatSlug)
+          || (entity.projects || []).find(p => p.id === projId)
+          || { id: projId, state: 'imported', frames: 0 };
         sseSend(res, 'log', { line: `✓ Import terminé — ${proj.frames} frames extraites` });
         sseDone(res, { project: proj });
       } catch {
