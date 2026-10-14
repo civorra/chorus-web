@@ -72,8 +72,24 @@ app.use('/api',         reportsRouter);
 
 // ── Fichiers statiques frontend ───────────────────────────────
 // Niveau 1.5 — CSS et JS extraits de chorus-web.html (2026-10-12)
-app.get('/chorus-web.css', (req, res) => res.sendFile(path.join(__dirname, 'chorus-web.css')));
-app.get('/chorus-web.js',  (req, res) => res.sendFile(path.join(__dirname, 'chorus-web.js')));
+// ⚠️ no-store explicite (incident 2026-10-14) : sendFile() applique par
+// défaut un Last-Modified/ETag que certains navigateurs/proxies traitent
+// de façon permissive (pas de revalidation systématique), ce qui a permis
+// à une ancienne version de chorus-web.js de rester active malgré un
+// rechargement complet de page (F5) — seul le HTML (/) avait déjà ce
+// garde-fou explicite ci-dessous, pas les fichiers statiques JS/CSS.
+app.get('/chorus-web.css', (req, res) => {
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
+  res.sendFile(path.join(__dirname, 'chorus-web.css'));
+});
+app.get('/chorus-web.js', (req, res) => {
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
+  res.sendFile(path.join(__dirname, 'chorus-web.js'));
+});
 
 // ── Frontend ──────────────────────────────────────────────────
 const HTML_FILE = path.join(__dirname, 'chorus-web.html');
