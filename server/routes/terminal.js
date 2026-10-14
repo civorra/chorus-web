@@ -59,6 +59,7 @@ router.get('/terminals/active', (req, res) => {
     entityId:    t.entityId || null,
     projId:      t.projId || null,
     reportFile:  t.reportFile || null,
+    kind:        t.kind || null,
     startedAt:   t.startedAt || null,
     elapsedMs:   t.startedAt ? Date.now() - t.startedAt : null,
     lastMessage: t.lastMessage || null,
@@ -68,19 +69,47 @@ router.get('/terminals/active', (req, res) => {
 
 // ── POST /api/sandboxes/:sbId/terminal ───────────────────────────────────
 router.post('/sandboxes/:sbId/terminal', (req, res) => {
-  sseInit(res);
   const { sbId } = req.params;
-  const { level, entityId, projId, reportFile, sessionId, message, timeoutMinutes } = req.body;
+  const { level, entityId, projId, reportFile, sessionId, message, timeoutMinutes, kind } = req.body;
 
-  if (!message || !sessionId) return sseError(res, 'message/sessionId manquant');
+  if (!message || !sessionId) { sseInit(res); return sseError(res, 'message/sessionId manquant'); }
   if (!['sandbox', 'entity', 'project', 'report'].includes(level)) {
-    return sseError(res, `level invalide : ${level}`);
+    sseInit(res); return sseError(res, `level invalide : ${level}`);
   }
+
+  // ── Garde de concurrence — chorus-strengthen / chorus-stress ─────────
+  // Ces commandes peuvent être très chronophages, produire des boucles
+  // infinies côté Perl et faire grimper le CPU à 99% (cf. Engine/AGENTS.md
+  // et retour utilisateur) — on interdit catégoriquement plus d'une session
+  // de ce type active simultanément sur un même sandbox, avant même de
+  // contacter eca-server. `kind` est fourni explicitement par le bouton
+  // dédié de l'onglet TESTS (jamais déduit du texte libre — un utilisateur
+  // tapant "lance chorus-strengthen" dans un terminal normal n'est pas
+  // bloqué ici, seule la UI "Renforcer" de l'onglet TESTS positionne ce flag).
+  if (kind === 'strengthen') {
+    const already = [...activeTerminals.values()]
+      .find(t => t.sbId === sbId && t.kind === 'strengthen');
+    if (already) {
+      sseInit(res);
+      return sseError(
+        res,
+        `Un chorus-strengthen est déjà en cours sur ce sandbox depuis ` +
+        `${Math.round((Date.now() - (already.startedAt || Date.now())) / 60000)} min — ` +
+        `attendez sa fin avant d'en relancer un (risque CPU élevé en cas d'exécution concurrente).`
+      );
+    }
+  }
+
+  sseInit(res);
   // Timeout configurable (panneau Config § ECA Server, défaut 60 min côté
   // frontend — voir chorus-web.js § SETTINGS.eca.terminalTimeoutMinutes).
   // Borné ici indépendamment du frontend par sécurité (1 min .. 4h) en cas
   // de valeur corrompue/absente transmise par un client plus ancien.
-  const DEFAULT_TIMEOUT_MINUTES = 60;
+  // Les sessions `kind: 'strengthen'` utilisent un plafond réduit (45 min
+  // par défaut au lieu de 60) pour limiter l'exposition en cas de boucle
+  // infinie côté pipeline Perl — toujours modifiable explicitement par le
+  // frontend via timeoutMinutes, jamais silencieusement étendu au-delà.
+  const DEFAULT_TIMEOUT_MINUTES = kind === 'strengthen' ? 45 : 60;
   let timeoutMs = Number(timeoutMinutes);
   if (!Number.isFinite(timeoutMs) || timeoutMs < 1) timeoutMs = DEFAULT_TIMEOUT_MINUTES;
   if (timeoutMs > 240) timeoutMs = 240;
@@ -218,6 +247,7 @@ router.post('/sandboxes/:sbId/terminal', (req, res) => {
     subReq = sReq;
     activeTerminals.set(sessionId, {
       finish, chatId, sbId, level, entityId, projId, reportFile,
+      kind:         kind || null,
       startedAt:    Date.now(),
       lastMessage:  message.length > 160 ? message.slice(0, 160) + '…' : message,
       currentSkill: null,
