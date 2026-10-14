@@ -1861,11 +1861,12 @@ function renderConvergenceBadge(slug, convergence) {
   if (!convergence) {
     return `<div style="font-size:10px;color:var(--text-muted);font-style:italic">Convergence inconnue — lancez chorus-check --all</div>`;
   }
-  const { discordances, stale, timestamp, source } = convergence;
+  const { discordances, stale, source } = convergence;
   const staleTag = stale
     ? ` <span style="color:var(--warn)" title="La KB a été modifiée depuis ce résultat (chorus-feed) — à relancer">⚠️ obsolète</span>`
     : '';
-  const dateTag = timestamp ? ` · ${timestamp.slice(0, 10)}` : '';
+  // Pas de date ici — déjà affichée juste au-dessus (ligne SOLVED/FAILED,
+  // r.date) : ce badge décrit la même exécution, redondant de la répéter.
   // `source: 'run-report'` = calculé côté webapp depuis le dernier run-report
   // de CE fichier (fallback quand .last-check-results.json est absent/ne
   // couvre pas ce fichier — cf. chorus/reports.js § computeConvergenceFromRunReport).
@@ -1882,12 +1883,12 @@ function renderConvergenceBadge(slug, convergence) {
   // pipeline, hors périmètre de test -OK-/-KO-, cf. pipeline_control) et ne
   // doit pas assombrir un résultat par ailleurs sans aucune discordance.
   if (!discordances) {
-    return `<div style="font-size:11px;font-weight:700;color:var(--success)">✅ Converge${dateTag}${staleTag}${sourceTag}</div>`;
+    return `<div style="font-size:11px;font-weight:700;color:var(--success)">✅ Converge${staleTag}${sourceTag}</div>`;
   }
 
   const detail = `${discordances} discordance${discordances > 1 ? 's' : ''}`;
 
-  return `<div style="font-size:11px;font-weight:700;color:var(--warn)">⚠️ ${detail}${dateTag}${staleTag}${sourceTag}</div>`;
+  return `<div style="font-size:11px;font-weight:700;color:var(--warn)">⚠️ ${detail}${staleTag}${sourceTag}</div>`;
 }
 
 function renderTestingTab() {
@@ -1924,14 +1925,16 @@ function renderTestingTab() {
     // logique que renderConvergenceBadge) — un élément "unprocessed" seul
     // (ex. pipeline_control, hors périmètre -OK-/-KO-) ne justifie pas de
     // lancer chorus-strengthen, qui cible spécifiquement les discordances
-    // attendu/obtenu.
+    // attendu/obtenu. En cas de discordance(s), "🔧 Renforcer" REMPLACE
+    // "🖥️ Lancer le test" (pas d'ajout côté à côté) — relancer le test tel
+    // quel reproduirait exactement les mêmes discordances déjà connues ;
+    // l'action pertinente devient l'analyse/correction via chorus-strengthen.
     const hasDiscordances = !!(entry && entry.convergence && entry.convergence.discordances);
     const actionsHtml = exists
-      ? `<button class="btn btn-ghost btn-sm" style="font-size:11px" onclick="runTestingStrategy('${slug}')">🖥️ Lancer le test</button>`
+      ? (hasDiscordances
+          ? `<button class="btn btn-ghost btn-sm" style="font-size:11px" onclick="confirmRunStrengthen('${slug}')" title="Analyse les discordances et renforce la KB — opération potentiellement longue et consommatrice de CPU">🔧 Renforcer</button>`
+          : `<button class="btn btn-ghost btn-sm" style="font-size:11px" onclick="runTestingStrategy('${slug}')">🖥️ Lancer le test</button>`)
           + ` <button class="btn btn-ghost btn-sm" style="font-size:11px;padding:2px 6px" onclick="regenerateTestingStrategy('${slug}')" title="Régénérer ce test depuis la KB (sauvegarde l'existant avant remplacement)">⟲</button>`
-          + (hasDiscordances
-            ? ` <button class="btn btn-ghost btn-sm" style="font-size:11px" onclick="confirmRunStrengthen('${slug}')" title="Analyse les discordances et renforce la KB — opération potentiellement longue et consommatrice de CPU">🔧 Renforcer</button>`
-            : '')
       : (kbModeled
           ? `<button class="btn btn-ghost btn-sm" style="font-size:11px" onclick="generateTestingStrategy('${slug}')">+ Générer ce test</button>`
           : `<button class="btn btn-ghost btn-sm" style="font-size:11px" disabled title="La KB doit être modélisée (chorus-feed) avant de générer des tests">+ Générer ce test</button>`);
@@ -1944,6 +1947,9 @@ function renderTestingTab() {
           <span style="font-weight:600;font-size:13px">${meta.label}</span>
           <span style="margin-left:auto;font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--text-muted)">${entry ? entry.file : TESTING_FILES[slug]}</span>
         </div>
+        ${exists && entry.fileDate
+          ? `<div style="font-size:10px;color:var(--text-muted);text-align:right;margin-top:-4px">créé le ${entry.fileDate}</div>`
+          : ''}
         <div style="font-size:11px;color:var(--text-muted)">${meta.desc}</div>
         ${statusHtml}
         <div>${actionsHtml}</div>

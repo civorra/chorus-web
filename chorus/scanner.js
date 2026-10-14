@@ -434,24 +434,54 @@ function scanSandbox(sbId) {
     const filename = candidates.find(f => fileExists(path.join(sbPath, f)));
     if (!filename) { testing[slug] = null; continue; }
     const entries = runReportIndex.get(filename) || [];
-    const latest  = entries[entries.length - 1] || null;
+    let latest = entries[entries.length - 1] || null;
+    // Date de création/dernière modification du fichier projet lui-même
+    // (affichée sous son nom côté UI, distincte de la date du dernier
+    // rapport ci-dessous) — calculée une seule fois, réutilisée aussi par
+    // l'invalidation par mtime juste en dessous.
+    let fileMtime = null;
+    try { fileMtime = fs.statSync(path.join(sbPath, filename)).mtime; } catch { /* ignore */ }
+    // Invalidation par régénération — un run-report reste indexé par NOM de
+    // fichier (ex. "projet-cross.json"), mais si ce fichier a été régénéré
+    // depuis (⟲, cf. regenerateTestingStrategy côté frontend) son contenu a
+    // changé — le run-report précédent décrit alors un jeu de données qui
+    // n'existe plus sur le disque. Sans ce garde-fou, l'onglet Tests
+    // affichait "SOLVED · Converge" (données de l'ancien fichier) juste
+    // après une régénération, avant toute ré-exécution du test.
+    if (latest && fileMtime && fileMtime.getTime() > new Date(latest.data.generated_at).getTime()) {
+      latest = null;
+    }
     // Convergence réelle (discordances attendu/obtenu == 0) — préférence
     // .last-check-results.json (Phase 6-all.6, calculé par l'agent ECA avec
     // le rule_id responsable via _rule_trace), sinon repli sur un calcul
     // direct depuis le dernier run-report-*.json de CE fichier (couvre le
     // cas --all jamais lancé / invalidé par chorus-feed depuis — voir
     // computeConvergenceFromRunReport dans reports.js).
+    // ⚠️ checkEntry (.last-check-results.json) n'est PAS soumis à la même
+    // invalidation par mtime ci-dessus : il porte son propre kb_hash comparé
+    // à agent/.kb-hash (stale déjà calculé dans readLastCheckResults) — un
+    // mécanisme distinct, orthogonal à la régénération d'un fichier projet
+    // individuel (qui n'affecte pas forcément la KB elle-même).
     const checkEntry = lastCheckResults && lastCheckResults.byFile[filename] || null;
     const fallbackConvergence = !checkEntry && latest
       ? computeConvergenceFromRunReport(latest.data)
       : null;
     testing[slug] = {
       file: filename,
+      // Date+heure de création/dernière modification du fichier projet lui-même
+      // (ex. régénéré via ⟲) — affichée sous son nom côté UI, format ISO complet
+      // (secondes incluses) pour distinguer plusieurs régénérations le même jour.
+      fileDate: fileMtime ? fileMtime.toISOString().slice(0, 19).replace('T', ' ') : null,
       lastRun: latest ? {
         verdict:     latest.data.pipeline_solved ? 'SOLVED' : 'FAILED',
         totalFrames: latest.data.n_total ?? 0,
         conformes:   latest.data.n_conforme ?? 0,
-        date:        (latest.data.generated_at || '').slice(0, 10) || null,
+        // Date+heure complète du rapport (plus seulement la date — un
+        // sandbox peut accumuler plusieurs runs le même jour, cf. incident
+        // 2026-10-14 où 2 runs successifs sur `cross` le même jour ont
+        // généré une confusion temporaire côté opérateur, faute d'heure
+        // affichée pour les distinguer).
+        date:        (latest.data.generated_at || '').replace('T', ' ') || null,
       } : null,
       convergence: checkEntry ? {
         converged:    checkEntry.converged,
@@ -462,12 +492,12 @@ function scanSandbox(sbId) {
         stale:        lastCheckResults.stale,
         source:       'check-all',
         timestamp:    lastCheckResults.timestamp,
-      } : fallbackConvergence ? {
+      } : (fallbackConvergence && latest) ? {
         ...fallbackConvergence,
         stale:     false,
         source:    'run-report',
         timestamp: latest.data.generated_at || null,
-      } : null, // null = ni .last-check-results.json ni run-report exploitable (jamais lancé)
+      } : null, // null = ni .last-check-results.json ni run-report exploitable (jamais lancé, ou invalidé par régénération)
     };
   }
 
