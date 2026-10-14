@@ -12,6 +12,22 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.eca
+    # ⚠️ Pas de `dns:` figé ici — abandonné après incident (2026-10-14).
+    # Un premier incident (résolveur Docker embarqué 127.0.0.11 intermittent
+    # pour les lookups applicatifs vers tls.eca.dev/models.dev/
+    # api.business.githubcopilot.com, alors qu'une connexion TLS directe par
+    # IP fonctionnait) avait été "corrigé" en figeant `dns: [1.1.1.1, 8.8.8.8]`.
+    # Ce correctif casse la résolution DNS dès que le VPN d'entreprise est
+    # actif sur l'hôte (route split-tunnel `0.0.0.0/1` + `128.0.0.0/1` via
+    # tun0) : le VPN bloque/filtre spécifiquement les requêtes DNS directes
+    # vers des résolveurs publics (ping 1.1.1.1 → 100% packet loss, alors que
+    # curl HTTPS vers la même IP passe sans problème — seul le port 53 est
+    # filtré), forçant l'usage de son propre résolveur interne
+    # (192.168.212.24/23). Sans `dns:` explicite, le conteneur hérite du
+    # résolveur de l'hôte via Docker (qui bascule correctement lui-même
+    # entre DNS normal et DNS VPN selon le contexte réseau actif) — solution
+    # robuste dans les deux cas (VPN actif ou non), contrairement à des IP
+    # figées qui ne conviennent qu'à un seul des deux contextes.
     environment:
       - ECA_REMOTE_PASSWORD=${ECA_REMOTE_PASSWORD:-changeme-local-dev}
       # ── Provider LLM ──────────────────────────────────────────
@@ -104,6 +120,13 @@ services:
       - ./server/:/app/server/:ro
       - ./auth.js:/app/auth.js:ro
       - ./server.js:/app/server.js:ro
+      # eca-client.js — manquait jusqu'ici (incident 2026-10-14) : seul
+      # fichier serveur encore COPY-é au build (Dockerfile) sans bind-mount,
+      # ce qui faisait qu'un `docker restart chorus-web` rechargeait
+      # systématiquement l'ancienne version buildée malgré des modifications
+      # sur le disque hôte — symptôme observé : `eca.pingTcp is not a
+      # function` après ajout de cette fonction sans rebuild de l'image.
+      - ./eca-client.js:/app/eca-client.js:ro
       # Docker socket — nécessaire pour /api/auth/reload-eca (restart eca-server).
       # Lecture seule insuffisante : POST /restart requiert accès RW au socket.
       - /var/run/docker.sock:/var/run/docker.sock
