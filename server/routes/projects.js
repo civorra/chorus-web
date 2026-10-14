@@ -29,6 +29,25 @@ const upload = multer({
 const router = Router();
 
 // ── POST .../projects/import ──────────────────────────────────────────────
+//
+// Invocation d'une session ECA headless réelle (skill
+// `chorus-import-project`), sur le même modèle que server/routes/terminal.js
+// (chat dédié + subscribeEcaEvents + routage agent 'code' + timeout/heartbeat)
+// — voir Engine/todo-history/TODO.org § "[#J] WEBAPP". L'ancien appel
+// `spawnPerl(['chorus-import-project.pl', ...])` est supprimé : ce script
+// n'a jamais existé dans le dépôt (placeholder MVP0 jamais implémenté).
+//
+// Note sur l'extraction d'un helper commun (TODO.org §3) : le pattern
+// chatId + subscribeEcaEvents + setChatAgent + timeout/heartbeat est répliqué
+// ici depuis terminal.js plutôt qu'extrait dans un helper partagé — la
+// logique terminal.js reste plus riche (ask_user, sous-agents, taskboard,
+// garde de concurrence chorus-strengthen, respond/stop/delete multi-tour)
+// et une extraction prématurée aurait dû paramétrer tout ce surplus pour un
+// seul appelant supplémentaire ne s'en servant pas, ce qui aurait complexifié
+// l'ensemble sans bénéfice réel. Le code ci-dessous reste volontairement
+// une version simplifiée et autonome, adaptée à un usage one-shot (un
+// import = un prompt = une fin de session), à réévaluer si un 3e appelant
+// du même pattern apparaît.
 router.post(
   '/sandboxes/:sbId/entities/:entityId/projects/import',
   upload.single('file'),
@@ -36,8 +55,8 @@ router.post(
     sseInit(res);
     const { sbId, entityId } = req.params;
     const projId    = req.body.projId || `proj-${Date.now()}`;
-    const llmModel  = req.body.model  || MODEL;
     const uploadedFile = req.file;
+    const timeoutMinutes = Number(req.body.timeoutMinutes);
 
     if (!uploadedFile) return sseError(res, 'Fichier manquant');
     if (!entityId)     return sseError(res, 'entityId manquant dans l\'URL');
@@ -55,18 +74,43 @@ router.post(
     fs.renameSync(uploadedFile.path, destFile);
 
     sseSend(res, 'log', { line: `→ Source : ${uploadedFile.originalname} → workspace/${entityId}/sources/${projId}/source${ext}` });
-    sseSend(res, 'log', { line: `→ Lancement chorus-import-project …` });
+    sseSend(res, 'log', { line: `→ Lancement chorus-import-project (session ECA headless) …` });
 
-    const args = [
-      'chorus-import-project.pl',
-      '--input',  destFile,
-      '--output', srcDir,
-      '--id',     projId,
-      '--ctx',    entityId,
-      '--model',  llmModel,
-    ];
+    // Timeout configurable (défaut 15 min — import plus simple qu'une
+    // session terminal interactive) — borné 1 min .. 4h par sécurité.
+    const DEFAULT_TIMEOUT_MINUTES = 15;
+    let timeoutMs = Number.isFinite(timeoutMinutes) && timeoutMinutes >= 1 ? timeoutMinutes : DEFAULT_TIMEOUT_MINUTES;
+    if (timeoutMs > 240) timeoutMs = 240;
+    timeoutMs = timeoutMs * 60_000;
 
-    spawnPerl(args, chorus.CHORUS_HOME(), res, () => {
+    const DONE_INSTRUCTION =
+      '\n\n[IMPORT PROTOCOL — OBLIGATOIRE] ' +
+      'Quand ta réponse est entièrement terminée — JSON projet écrit — ' +
+      'tu dois écrire en toute dernière ligne, seule sur sa ligne, le mot exactement : DONE';
+
+    // --context <entityId> : label de scope terminologique (cf.
+    // chorus-import-project.md § "Scope derivation") — cohérent avec
+    // l'usage actuel de la WEBAPP où entityId identifie le client/contexte
+    // de l'entité dans le sandbox. Sans cette option, le skill dériverait
+    // le scope depuis le chemin du fichier source, ce qui fonctionnerait
+    // aussi (destFile est déjà sous workspace/<entityId>/...), mais le
+    // passer explicitement est plus robuste et explicite.
+    const message = `chorus-import-project ${sbId} ${destFile} --context ${entityId}` + DONE_INSTRUCTION;
+
+    const chatId = `eca-import-${sbId}-${projId}`;
+    let finished = false;
+
+    const heartbeat = setInterval(() => {
+      if (!finished) sseSend(res, 'ping', { t: Date.now() });
+    }, 15000);
+
+    const finish = (errMsg) => {
+      if (finished) return;
+      finished = true;
+      clearInterval(heartbeat);
+      clearTimeout(timeoutHandle);
+      if (subReq) { try { subReq.destroy(); } catch {} }
+      if (errMsg) return sseError(res, errMsg);
       try {
         const proj = chorus.scanProject(entityPath, projId);
         sseSend(res, 'log', { line: `✓ Import terminé — ${proj.frames} frames extraites` });
@@ -74,7 +118,49 @@ router.post(
       } catch {
         sseDone(res, { project: { id: projId, state: 'imported' } });
       }
+    };
+
+    const timeoutHandle = setTimeout(
+      () => finish(`timeout après ${Math.round(timeoutMs / 60_000)} min — import encore en cours côté ECA`),
+      timeoutMs
+    );
+
+    // Subscribe AVANT d'envoyer le prompt (même pattern que terminal.js) —
+    // évite de manquer les tout premiers événements du chat.
+    const { req: sReq, done } = eca.subscribeEcaEvents(chatId, {
+      onToolLog: (toolInfo) => { if (!finished) sseSend(res, 'log', { line: `→ ${toolInfo.summary}` }); },
+      onDone:    () => finish(),
+      onError:   (err) => finish(`ECA events: ${err.message}`),
+      // onChunk/onAsk silencieux ici : l'import ne nécessite pas de
+      // relayer le texte assistant au front, seuls les logs d'outils et
+      // la fin de session comptent pour cette route (cohérent avec
+      // l'ancien comportement spawnPerl qui ne relayait que des logs).
     });
+    let subReq = sReq;
+
+    // Envoi du prompt, puis routage explicite vers l'agent 'code' — même
+    // stratégie anti-race-condition que terminal.js : chat nouveau (jamais
+    // vu par eca-server), donc le prompt est envoyé en fire-and-forget,
+    // puis on patiente ~200ms (le temps que le chat soit matérialisé
+    // côté serveur) avant d'appeler setChatAgent (POST /agent échouerait
+    // sur un chatId inconnu si appelé avant la création réelle du chat).
+    (async () => {
+      const promptPromise = eca.ecaRequest(
+        `/api/v1/chats/${encodeURIComponent(chatId)}/prompt`, 'POST', { message }
+      );
+      await new Promise((r) => setTimeout(r, 200));
+      await eca.setChatAgent(chatId, 'code');
+
+      try {
+        await promptPromise;
+      } catch (err) {
+        finish(`Erreur POST prompt : ${err.message}`);
+        return;
+      }
+
+      await done.catch(() => {});
+      finish();
+    })().catch((err) => finish(err.message));
   }
 );
 
