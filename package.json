@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "description": "Chorus Web MVP0 — serveur Node.js pour Chorus neuro-symbolic compliance engine",
   "main": "server.js",
+  "license": "Artistic-2.0",
   "scripts": {
     "start": "node server.js",
     "dev": "node --watch server.js"
