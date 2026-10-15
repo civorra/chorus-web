@@ -67,6 +67,8 @@
           <div class="subtitle">Chorus · Neuro-symbolic compliance engine</div>
         </div>
 
+<!-- ─── NEW ENTITY MODAL ───────────────────────────────────── -->
+
         <!-- Recent projects strip -->
         <div class="sb-overview-grid" id="sandbox-cards"></div>
         <div class="recent-section">
@@ -90,6 +92,7 @@
             <div class="subtitle" id="sb-detail-desc"></div>
           </div>
           <div style="display:flex;gap:8px;margin-top:4px;flex-shrink:0">
+            <button class="btn btn-ghost btn-sm" style="white-space:nowrap" onclick="openNewEntityModal()">➕ Entity</button>
             <button class="btn btn-ghost btn-sm" style="white-space:nowrap" onclick="openSandboxCorpus()">📚 Corpus</button>
             <button class="btn btn-ghost btn-sm" style="white-space:nowrap" onclick="openLevelTerminal('sandbox', {sbId: currentSandbox.id})">🖥️ Terminal ECA</button>
           </div>
@@ -569,6 +572,23 @@
   </div>
 </div>
 
+<!-- ─── NEW ENTITY MODAL ───────────────────────────────────── -->
+<div id="newentity-modal-overlay" hidden>
+  <div class="modal" id="newentity-modal-content" style="max-width:420px">
+    <h2>Nouvelle entity</h2>
+    <div class="form-group">
+      <label class="form-label">Nom de l'entity</label>
+      <input class="form-input" id="newentity-name" type="text" placeholder="ex. Acme Corp" oninput="updateNewEntityPathPreview()">
+      <div style="font-size:11px;color:var(--text-muted);margin-top:4px">Chemin: workspace/<span id="newentity-path-preview" style="font-family:'JetBrains Mono',monospace"></span>/</div>
+      <div id="newentity-hint" style="font-size:11px;margin-top:4px;min-height:14px"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeNewEntityModal()">Annuler</button>
+      <button class="btn btn-primary" id="newentity-create-btn" onclick="createEntity()">Créer l'entity</button>
+    </div>
+  </div>
+</div>
+
 <div id="modal-overlay" hidden>
   <div class="modal" id="modal-content">
     <h2>Import project</h2>
@@ -579,16 +599,43 @@
     </div>
     <div class="form-group" id="import-source-group">
       <label class="form-label">Source type</label>
+      <!-- Auto-derived from the selected file's extension (updateImportFileHint())
+           — manual options kept only as a fallback display / for the frozen
+           re-import branch (startImport() § reimportId), which never shows
+           this group to the user. Aligned with extensions actually handled
+           server-side (server/routes/projects.js § ext = path.extname(...)),
+           "zip"/"url" removed: never supported by chorus-import-project. -->
       <select class="form-select" id="import-source">
         <option value="pdf">PDF</option>
         <option value="docx">Word (.docx)</option>
-        <option value="zip">Zip archive</option>
-        <option value="url">Remote URL</option>
+        <option value="xlsx">Excel (.xlsx/.csv)</option>
+        <option value="md">Markdown / texte (.md/.txt)</option>
+        <option value="json">JSON machine-readable (.json — ex. CBOM/CycloneDX)</option>
       </select>
     </div>
     <div class="form-group" id="import-path-group">
-      <label class="form-label">Source path / URL</label>
-      <input class="form-input" id="import-path" type="text" placeholder="/path/to/dossier.pdf">
+      <label class="form-label">Source file</label>
+      <!-- Real file picker — a project document is a binary upload, not a
+           path typed by the user (the webapp runs server-side, it has no
+           access to the operator's local filesystem by path). Transmitted
+           as multipart/form-data to POST .../projects/import (multer
+           upload.single('file') server-side, see server/routes/projects.js).
+           accept list mirrors the extensions actually handled by the
+           conversion skills (chorus-pdf/word/excel) + inline md/txt + raw
+           machine-readable JSON (e.g. CBOM/CycloneDX — chorus-import-project.md
+           § Phase -0.1 sandbox-local extension discovery explicitly supports
+           this as a source format, no conversion skill needed: the file is
+           read directly as structured data). -->
+      <input class="form-input" id="import-file" type="file"
+             accept=".pdf,.docx,.xlsx,.csv,.md,.txt,.json"
+             oninput="updateImportFileHint()" onchange="updateImportFileHint()">
+      <div id="import-file-hint" style="font-size:11px;margin-top:4px;min-height:14px;color:var(--text-muted)">Aucun fichier sélectionné</div>
+      <!-- import-path kept as a hidden legacy field: the re-import branch
+           (startImport() § reimportId path) still reads/writes it to carry
+           the original project's sourceFile across modal re-opens — never
+           displayed to the user anymore (real import always uses
+           import-file above). -->
+      <input type="hidden" id="import-path">
     </div>
     <div class="form-group" id="import-context-group">
       <label class="form-label">Entity (obligatoire)</label>

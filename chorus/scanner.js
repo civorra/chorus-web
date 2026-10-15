@@ -186,7 +186,24 @@ function scanFlatProject(entityPath, slug, jsonFile, runReportIndex) {
   try {
     const projJson = JSON.parse(readFileSafe(jsonFile) || '{}');
     const imp = projJson._import || {};
-    sourceFile = imp._source_fichier || imp.source || imp._source
+    // `source_file` (underscore, no leading `_`) is the key actually and
+    // consistently produced by chorus-import-project in every real JSON
+    // observed (confirmed across 3 independent imports: the original
+    // eviden/projet-import-cbom-001-Cosmian-KMS.json, the test/ import, and
+    // a later eviden re-import — all three use `source_file`, none ever
+    // used the other candidate keys below). It is tried FIRST; the other
+    // candidates are kept only as a defensive fallback for any older/other
+    // JSON shape not yet seen. Before this fix, `source_file` was absent
+    // from the candidate list entirely, so sourceFile silently resolved to
+    // null for every real import — the concrete, observed consequence: the
+    // re-import command built from this value (chorus-web.js § startImport
+    // reimportId branch) was generated with an EMPTY source argument
+    // (`chorus-import-project <sbId>  --context ...`, double space, no
+    // path), forcing the ECA agent to guess/reconstruct the source path on
+    // its own rather than being told it explicitly — a real incident
+    // encountered when re-importing workspace/eviden/projet-import-cbom-001-
+    // Cosmian-KMS.json, 2026-10-16.
+    sourceFile = imp.source_file || imp._source_fichier || imp.source || imp._source
       || (Array.isArray(imp.sources)  ? imp.sources[0]  : null)
       || (Array.isArray(imp._sources) ? imp._sources[0] : null)
       || null;
@@ -309,7 +326,22 @@ function scanEntity(sbPath, entityId, runReportIndex) {
     scanFlatProject(entityPath, slug, path.join(entityPath, `${slug}.json`), runReportIndex)
   );
 
-  const nestedIds = listDirs(sourcesPath).filter(id => !flatSlugs.has(id));
+  // A `sources/<id>/` directory is excluded from the "nested legacy project"
+  // scan below not only when `<id>` itself is a flat slug, but also when
+  // `project-<id>`/`projet-<id>` is — i.e. when this source folder is simply
+  // the upload staging directory of a project that was later written under
+  // the "flat" naming convention (cf. server/routes/projects.js § POST
+  // .../projects/import: `srcDir = sources/<projId>`, `destFile` is later
+  // written as the flat `project-<projId>.json`, never as `<projId>.json`).
+  // Without this check, every project imported through the real import
+  // route re-appeared as a second, phantom "available (not imported)" entry
+  // — its source folder id (`import-<ts>`) never equals the flat slug
+  // (`project-import-<ts>`), so a plain `flatSlugs.has(id)` check always
+  // missed it. Confirmed in practice: sandbox 08-ANSSI-PG-083-CENTRIC,
+  // entity test, project "Import 1792076770305" (2026-10-16).
+  const isCoveredByFlatProject = (id) =>
+    flatSlugs.has(id) || flatSlugs.has(`project-${id}`) || flatSlugs.has(`projet-${id}`);
+  const nestedIds = listDirs(sourcesPath).filter(id => !isCoveredByFlatProject(id));
   const nestedProjects = nestedIds.map(id => scanNestedProject(entityPath, id));
 
   return { id: entityId, label, path: entityPath, projects: [...flatProjects, ...nestedProjects] };

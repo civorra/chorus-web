@@ -266,6 +266,79 @@ async function runCompleteReport(reportIndex, _directReport) {
 
 ---
 
+## 5. Import de projet — `runImportSession` branché sur la session ECA réelle
+
+Contrairement aux sections 2 à 4, l'import de projet utilise un `fetch` +
+`ReadableStream` manuel (pas `EventSource`) pour permettre un `POST`
+`multipart/form-data` (le fichier source est un vrai upload binaire, pas un
+chemin — voir `multer` côté serveur), sur le modèle exact de `runPipeline()`
+dans `chorus-web.js`.
+
+Le formulaire (`chorus-web.html` § modal `#modal-overlay`) comporte un vrai
+`<input type="file" id="import-file">` (plus de champ texte `import-path`) ;
+`startImport()` lit `input.files[0]` et le passe à `openImportSession()` →
+`runImportSession(proj, sbId, file, model)`.
+
+```js
+async function runImportSession(proj, sbId, file, model) {
+  const entityId = proj.entity;
+  const form = new FormData();
+  form.append('file', file);
+  form.append('projId', proj.id);
+
+  const url = `${API}/api/sandboxes/${sbId}/entities/${entityId}/projects/import`;
+
+  const r = await fetch(url, { method: 'POST', body: form });
+  if (!r.ok || !r.body) throw new Error(`HTTP ${r.status}`);
+  const reader  = r.body.getReader();
+  const decoder = new TextDecoder();
+  let buf = '';
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buf += decoder.decode(value, { stream: true });
+    const parts = buf.split('\n\n');
+    buf = parts.pop();
+    for (const part of parts) {
+      const eMatch = part.match(/^event: (\w+)/m);
+      const dMatch = part.match(/^data: (.+)/m);
+      if (!eMatch || !dMatch) continue;
+      const data = JSON.parse(dMatch[1]);
+
+      if (eMatch[1] === 'log') {
+        // Relayer la ligne réelle (tool-call ECA) dans l'UI — jamais de
+        // scénario scripté (termes/slots fictifs supprimés).
+      } else if (eMatch[1] === 'done') {
+        // data.project = { id, name, state, frames, ... } — valeurs
+        // réelles renvoyées par server/routes/projects.js § finish().
+        // frames: 0 est normal ici (ne se peuple qu'après run.pl, cf. §2).
+      } else if (eMatch[1] === 'error') {
+        // data.message — afficher, ne jamais bloquer silencieusement l'UI.
+      }
+    }
+  }
+}
+```
+
+**Différences clés avec les sections précédentes :**
+
+- Route backend : `POST /api/sandboxes/:sbId/entities/:entityId/projects/import`
+  (upload `multer`, puis session ECA headless réelle — skill
+  `chorus-import-project`, agent `code`, chatId
+  `eca-import-<sbId>-<projId>`). Voir `server/routes/projects.js` pour le
+  détail (copie du fichier uploadé vers `workspace/<entityId>/sources/<projId>/`,
+  `--out` forcé vers la convention `project-<projId>.json` reconnue par
+  `chorus/scanner.js::scanEntity`).
+- Événements `log` reçus sont des résumés de tool-calls ECA réels
+  (`onToolLog`), pas une séquence de phases fixe — l'UI (`isp-phase`)
+  n'anime donc que `running`/`done`, sans simuler de phases intermédiaires
+  qui n'ont pas de contrepartie réelle dans le flux.
+- `data.project` à l'événement `done` est la seule source de vérité pour
+  mettre à jour `proj.state`/`proj.frames` — jamais de valeur aléatoire.
+
+---
+
 ## Mode hybride (recommandé)
 
 Le PoC détecte automatiquement si le serveur est disponible au démarrage.

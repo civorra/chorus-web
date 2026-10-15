@@ -1520,9 +1520,21 @@ function renderProjectsTab() {
   const projs = PROJECTS[sbId] || [];
   const entities = ENTITIES[sbId] || [];
 
-  // Bouton "+ Import project" : n'a de sens que dans le scope d'une entity.
+  // Bouton "+ Import project" : visible dès qu'au moins une entity existe
+  // dans ce sandbox — PAS conditionné à currentEntityId. Avant ce correctif,
+  // le bouton restait masqué tant qu'aucune entity n'était "sélectionnée",
+  // mais la seule façon de sélectionner une entity était de cliquer sur un
+  // groupe déjà affiché dans la liste — lui-même seulement rendu s'il
+  // contenait au moins un projet (cf. renderEntityGroup ci-dessous, appelé
+  // uniquement `if (grp.length)`). Une entity tout juste créée (dossier
+  // workspace/<entity>/{sources,reports} vides, cf. createEntity()) n'avait
+  // donc aucun point d'entrée pour y importer un premier projet — bug
+  // découvert en conditions réelles sur le sandbox 08 (entity "test").
+  // openImportModal() peuple déjà entièrement son <select id="import-context">
+  // depuis ENTITIES[sbId] (toutes les entities, y compris vides) — seul le
+  // bouton était en cause, pas la modal elle-même.
   const importBtnWrap = document.getElementById('import-project-btn-wrap');
-  if (importBtnWrap) importBtnWrap.style.display = currentEntityId ? 'inline-block' : 'none';
+  if (importBtnWrap) importBtnWrap.style.display = entities.length ? 'inline-block' : 'none';
 
   // Bandeau de scope — visible uniquement quand une entity est sélectionnée.
   // Les autres entities n'apparaissent alors plus du tout dans le panel.
@@ -1671,9 +1683,7 @@ function projCard(p) {
           </div>
           <span class="badge importing">⏳ Importing</span>
         </div>
-        <div class="pc-meta">chorus-import-project · opus-4</div>
-        <div class="import-progress"><div class="bar" style="width:${p.progress}%"></div></div>
-        <div style="font-size:11px;color:var(--warn);margin-top:4px">${p.progress}% — extracting SFRs...</div>
+        <div class="pc-meta">chorus-import-project — session ECA réelle en cours</div>
       </div>
     `;
   }
@@ -1736,10 +1746,7 @@ function projRow(p) {
       <div class="proj-row importing" style="cursor:pointer" onclick="selectProject('${p.id}')">
         <span class="pr-name">${icon} ${p.name}</span>
         <span class="pr-id">${p.id}</span>
-        <span class="pr-meta">
-          <span class="import-progress"><div class="bar" style="width:${p.progress}%"></div></span>
-          <span style="color:var(--warn)">${p.progress}%</span>
-        </span>
+        <span class="pr-meta">chorus-import-project — session ECA réelle en cours</span>
         <span class="badge importing">⏳ Importing</span>
       </div>
     `;
@@ -4646,181 +4653,144 @@ function ispAsk(question, placeholder) {
 
 function delay(ms) { return new Promise(r => setTimeout(r, ms)); }
 
-async function runImportSession(proj, sbId, source, model) {
+async function runImportSession(proj, sbId, file, model) {
   _ispRunning = true;
   _ispProj = proj;
 
-  const slug   = proj.name.toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'');
-  const srcLabel = { pdf:'PDF', docx:'Word', zip:'Archive ZIP', url:'URL' }[source] || source;
+  const entityId = proj.entity;
+  const entityObj = (ENTITIES[sbId] || []).find(c => c.id === entityId);
+  const entityPath = entityObj ? entityObj.path : `workspace/${entityId}`;
 
-  // ── Init ECA-web panel ────────────────────────────────────
+  // ── Init ECA-web panel + session header ────────────────────
   initEcaWebPanel(proj, sbId, model);
-
-  // ── Phase 1 : Parsing ──────────────────────────────────────
   ispSetPhase('iph-parse');
-  const _entityId2 = proj.entity;
-  const _entityObj2 = (ENTITIES[sbId] || []).find(c => c.id === _entityId2);
-  const _entityPath2 = _entityObj2 ? _entityObj2.path : `workspace/${_entityId2}`;
-  ispAddMsg('system', `Session démarrée · sandbox <strong>${sbId}</strong> · contexte <code>${_entityPath2}</code> · modèle <code>${model}</code> · <span style="color:var(--success)">ECA :7777 ✓</span>`);
-  await delay(400);
+  ispAddMsg('system', `Session démarrée · sandbox <strong>${sbId}</strong> · contexte <code>${entityPath}</code> · modèle <code>${model}</code>`);
+  ispAddMsg('agent',
+    `Import de <strong>${proj.name}</strong> (<code>${file.name}</code>) dans le sandbox <code>${sbId}</code> — session ECA headless réelle (skill <code>chorus-import-project</code>, agent <code>code</code>).`
+  );
   ispAddTyping();
-  await delay(1100);
-  ispRemoveTyping();
-  ispAddMsg('agent',
-    `Bonjour. Je suis l'agent <strong>architect</strong> du skill <code>chorus-import-project</code>.<br>
-     Je vais importer <strong>${proj.name}</strong> (${srcLabel}) dans le sandbox <code>${sbId}</code>.<br>
-     Début du parsing du dossier…`,
-    [
-      ['#4E9BF5', `chorus-import-project ${sbId} ${slug} --source ${source}`],
-      ['#10B981', `[parse] Dossier détecté : ${srcLabel} · ${Math.floor(Math.random()*60)+20} pages`],
-      ['#4E9BF5', `[parse] Extraction du texte brut…`],
-    ]
-  );
-  await delay(600);
 
-  // ── Phase 2: Thesaurus ────────────────────────────────────
-  ecaWebPhase('② Thésaurus — analyse terminologique');
-  ispSetPhase('iph-thes');
-  ispAddTyping();
-  await delay(900);
-  ispRemoveTyping();
-  ispAddMsg('agent',
-    `Parsing terminé. Je détecte <strong>${Math.floor(Math.random()*8)+4} termes</strong> non couverts par le thésaurus global.<br>
-     Je vais les soumettre au thésaurus entity <code>${sbId}.org</code> ou vous demander de confirmer.`,
-    [
-      ['#10B981', `[thes] global.org : ${Math.floor(Math.random()*6)+5} correspondances ✓`],
-      ['#F59E0B', `[thes] 3 termes ambigus → Q&A requis`],
-    ]
-  );
-  await delay(400);
+  const form = new FormData();
+  form.append('file', file);
+  form.append('projId', proj.id);
 
-  // Q1 : terme ambigu
-  const term1 = await ispAsk(
-    `Le terme <strong>"Certification Authority subsystem"</strong> n'est pas dans le thésaurus.<br>
-     Quel slot KB doit-il mapper ?<br>
-     <span style="color:var(--text-muted);font-size:11px">Exemples : <code>ca_component</code>, <code>ca_subsystem</code>, <code>pki_ca</code></span>`,
-    'ex: ca_component'
-  );
-  ispAddTyping(); await delay(700); ispRemoveTyping();
-  ispAddMsg('agent',
-    `✅ Mappé : <code>"Certification Authority subsystem"</code> → <code>${term1 || 'ca_component'}</code><br>
-     Ajouté dans <code>${sbId}.org</code> (scope <em>entity</em>).`
-  );
-  await delay(300);
+  const url = `${API}/api/sandboxes/${sbId}/entities/${entityId}/projects/import`;
 
-  // Q2 : scope
-  const term2 = await ispAsk(
-    `Le terme <strong>"HSM boundary"</strong> — ce mapping doit-il être <strong>global</strong> (partagé entre tous les projets) ou <strong>entity</strong> (limité à <code>${sbId}</code>) ?`,
-    'global / entity'
-  );
-  ispAddTyping(); await delay(600); ispRemoveTyping();
-  const scope2 = (term2 || 'entity').toLowerCase().includes('global') ? 'global' : 'entity';
-  ispAddMsg('agent',
-    `✅ Scope <strong>${scope2}</strong> retenu pour <code>"HSM boundary"</code> → <code>hsm_perimeter</code>.<br>
-     Fichier cible : <code>${scope2 === 'global' ? 'global.org' : sbId+'.org'}</code>.`
-  );
-  await delay(300);
+  // Real phase markers are not emitted individually by the backend route
+  // (a single ECA session streams free-form tool-call logs, not a fixed
+  // phase sequence) — the isp-phase UI is kept but only toggled between
+  // "running" (iph-parse, lit for the whole session) and "done"
+  // (iph-done, lit on the real `done` SSE event below), rather than
+  // simulating phases 2 to 5 that have no real counterpart to report.
+  let first = true;
 
-  // ── Phase 3 : KB ───────────────────────────────────────────
-  ecaWebPhase('③ Génération KB — injection des frames');
-  ispSetPhase('iph-kb');
-  ispAddTyping(); await delay(1200); ispRemoveTyping();
-  const frames = Math.floor(Math.random()*18)+14;
-  const evid   = Math.floor(Math.random()*8)+5;
-  ispAddMsg('agent',
-    `Génération de la base de connaissances en cours…`,
-    [
-      ['#4E9BF5', `[kb] Initialisation : ${frames} frames cibles`],
-      ['#4E9BF5', `[kb] Injection des slots evidence (${evid} valeurs)…`],
-      ['#10B981', `[kb] KB générée — ${frames} frames · ${evid} slots evidence ✓`],
-      ['#10B981', `[kb] → ${sbId}/kb/${slug}.org`],
-    ]
-  );
-  await delay(400);
-
-  // ── Phase 4 : Q&A KB ───────────────────────────────────────
-  ecaWebPhase('④ Q&A — résolution des slots manquants');
-  ispSetPhase('iph-qa');
-  ispAddTyping(); await delay(800); ispRemoveTyping();
-  ispAddMsg('agent',
-    `La KB présente <strong>1 valeur manquante</strong> (slot requis par les règles normatives) :`
-  );
-  await delay(200);
-
-  const qaAnswer = await ispAsk(
-    `Règle <strong>R-EAL4-07</strong> — <em>"The TOE shall specify the key generation algorithm"</em><br>
-     Slot : <code>key_gen_algo</code> · Valeur actuelle : <span style="color:var(--warn)">[ assignment ]</span><br><br>
-     Quelle valeur souhaitez-vous renseigner ? <span style="color:var(--text-muted);font-size:11px">(ou "skip" pour laisser en conditionnel)</span>`,
-    'ex: RSA-4096, ECDSA P-384, ou "skip"'
-  );
-  ispAddTyping(); await delay(600); ispRemoveTyping();
-  const skipped = !qaAnswer || qaAnswer.toLowerCase() === 'skip';
-  if (skipped) {
-    ispAddMsg('agent',
-      `Slot <code>key_gen_algo</code> laissé en <span style="color:var(--warn)">conditionnel</span>.<br>
-       La règle R-EAL4-07 sera marquée <code>_a_confirmer</code> dans le rapport.`
-    );
-  } else {
-    ispAddMsg('agent',
-      `✅ <code>key_gen_algo</code> = <strong>${qaAnswer}</strong> injecté dans la KB.<br>
-       La règle R-EAL4-07 sera évaluable à la prochaine exécution de <code>run.pl</code>.`
-    );
+  function fail(message) {
+    if (first) { ispRemoveTyping(); first = false; }
+    ispAddMsg('agent', `❌ <strong>Erreur</strong> — ${message}`);
+    ispAddMsg('system', 'Session en erreur · vous pouvez fermer cette fenêtre et réessayer.');
+    ecaWebDone();
+    _ispRunning = false;
+    proj.state = 'error';
+    if (currentSandbox && currentSandbox.id === sbId) {
+      renderProjectsTab();
+      renderGlobalDashboard();
+      renderSidebar();
+    }
   }
-  await delay(400);
 
-  // ── Phase 5 : import-report ────────────────────────────────
-  ecaWebPhase('⑤ Import-report — génération');
-  ispSetPhase('iph-report');
-  ispAddTyping(); await delay(1000); ispRemoveTyping();
-  ispAddMsg('agent',
-    `Génération de l'import-report…`,
-    [
-      ['#4E9BF5', `[report] Calcul des statistiques corpus…`],
-      ['#4E9BF5', `[report] Écriture thésaurus delta…`],
-      ['#10B981', `[report] → ${sbId}/workspace/import-report-${slug}-001.org ✓`],
-    ]
-  );
-  await delay(400);
+  try {
+    const r = await fetch(url, { method: 'POST', body: form });
+    if (!r.ok || !r.body) throw new Error(`HTTP ${r.status}`);
+    const reader  = r.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = '';
 
-  // ── Phase 6 : finalisation ─────────────────────────────────
-  ecaWebPhase('⑥ Finalisation — session close');
-  ecaWebDone();
-  ispSetPhase('iph-done');
-  ispAddTyping(); await delay(700); ispRemoveTyping();
-  ispAddMsg('agent',
-    `🎉 Import terminé avec succès.<br>
-     <strong>${proj.name}</strong> est maintenant disponible dans le sandbox <code>${sbId}</code>.<br>
-     <span style="color:var(--text-muted);font-size:11px">
-       ${frames} frames · ${evid} slots evidence · thésaurus mis à jour${skipped ? ' · 1 conditionnel' : ''}
-     </span><br><br>
-     Vous pouvez maintenant lancer <code>run.pl</code> depuis l'onglet <strong>Pipeline</strong>.`
-  );
-  ispAddMsg('system', 'Session terminée · vous pouvez fermer cette fenêtre.');
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      const parts = buf.split('\n\n');
+      buf = parts.pop();
+      for (const part of parts) {
+        const eMatch = part.match(/^event: (\w+)/m);
+        const dMatch = part.match(/^data: (.+)/m);
+        if (!eMatch || !dMatch) continue;
+        let data;
+        try { data = JSON.parse(dMatch[1]); } catch { continue; }
 
-  // Update the project
-  proj.state    = 'imported';
-  proj.frames   = frames;
-  proj.evidence = evid;
-  proj.compliance = Math.floor(Math.random()*20)+75;
-  proj.lastRun  = new Date().toISOString().slice(0,10);
-  if (currentSandbox && currentSandbox.id === sbId) {
-    renderProjectsTab();
-    renderGlobalDashboard();
-    renderSidebar();
+        if (eMatch[1] === 'log') {
+          if (first) { ispRemoveTyping(); first = false; }
+          ecaWebLog(`<span class="eca-web-streaming">${data.line}</span>`);
+          ispAddMsg('agent', data.line, null);
+        } else if (eMatch[1] === 'ping') {
+          // Keep-alive only — no UI effect, mirrors runPipeline()'s silent
+          // handling of events it does not act on.
+        } else if (eMatch[1] === 'done') {
+          if (first) { ispRemoveTyping(); first = false; }
+          ispSetPhase('iph-done');
+          ecaWebDone();
+
+          // Real project state from the backend (server/routes/projects.js
+          // § finish()) — never Math.random(). `frames: 0` right after a
+          // plain import is expected (frames only populate after run.pl,
+          // see TODO.org § [#K]) — surfaced explicitly below rather than
+          // silently, to avoid the user reading it as a failure.
+          //
+          // proj.id MUST be overwritten with real.id: the frontend creates
+          // the project with a provisional id (`'import-' + Date.now()`,
+          // cf. startImport()) before the backend even runs, but the
+          // backend's real file on disk is named using the "flat" naming
+          // convention (`project-<projId>.json`, cf. chorus/scanner.js §
+          // scanEntity regex) — i.e. prefixed with `project-`. Without this
+          // reassignment, proj.id kept the unprefixed provisional value,
+          // and any subsequent action using proj.id (e.g. "Lancer run.pl",
+          // selectProjectPipeline() → POST .../projects/:projId/run) sent
+          // the wrong id to the backend, which could not find the file
+          // on disk (bug observed in real session: "Projet introuvable :
+          // ni import-<ts>.json ni sources/import-<ts>/frames.pl").
+          const real = data.project || {};
+          if (real.id) proj.id = real.id;
+          proj.state      = real.state || 'imported';
+          proj.frames     = real.frames ?? 0;
+          proj.evidence   = real.evidence ?? proj.evidence ?? 0;
+          proj.sourcePath = real.sourcePath || proj.sourcePath;
+          proj.lastRun    = new Date().toISOString().slice(0,10);
+
+          const framesNote = (real.frames ?? 0) === 0
+            ? `<span style="color:var(--text-muted);font-size:11px">0 frames est normal à ce stade — elles ne sont extraites qu'à la prochaine exécution de <code>run.pl</code>.</span>`
+            : `<span style="color:var(--text-muted);font-size:11px">${real.frames} frames.</span>`;
+          ispAddMsg('agent',
+            `🎉 Import terminé.<br>
+             <strong>${proj.name}</strong> est maintenant disponible dans le sandbox <code>${sbId}</code>.<br>
+             ${framesNote}<br><br>
+             Vous pouvez maintenant lancer <code>run.pl</code> depuis l'onglet <strong>Pipeline</strong>.`
+          );
+          ispAddMsg('system', 'Session terminée · vous pouvez fermer cette fenêtre.');
+
+          if (currentSandbox && currentSandbox.id === sbId) {
+            renderProjectsTab();
+            renderGlobalDashboard();
+            renderSidebar();
+          }
+          _ispRunning = false;
+        } else if (eMatch[1] === 'error') {
+          fail(data.message);
+        }
+      }
+    }
+  } catch (err) {
+    fail(err.message);
   }
-  _ispRunning = false;
 }
 
-function openImportSession(proj, sbId, source, model) {
-  const modelLabel = { opus: 'claude-opus-4', sonnet: 'claude-sonnet-4' }[model] || model;
+function openImportSession(proj, sbId, file, model) {
   const entityId = proj.entity;
   const entities = ENTITIES[sbId] || [];
   const entityObj = entities.find(c => c.id === entityId);
-  const entityLabel = entityObj ? entityObj.label : entityId;
   const ctxPath = entityObj ? entityObj.path : `workspace/${entityId}`;
   document.getElementById('isp-title').textContent = proj.name;
   document.getElementById('isp-sub').textContent   =
-    `chorus-import-project · ${sbId}/${ctxPath} · ${modelLabel}`;
+    `chorus-import-project · ${sbId}/${ctxPath} · agent code (ECA headless)`;
   document.getElementById('isp-thread').innerHTML  = '';
   ispDisableReply();
   ISP_PHASES.forEach(p => {
@@ -4834,13 +4804,13 @@ function openImportSession(proj, sbId, source, model) {
   const toggleBtn = document.getElementById('eca-web-toggle-btn');
   if (toggleBtn) toggleBtn.textContent = '▼ collapse';
   const ecaLog = document.getElementById('eca-web-log');
-  if (ecaLog) ecaLog.innerHTML = `<div style="color:#1E3A5F">Connexion au serveur ECA (ws://localhost:7777)…</div>`;
+  if (ecaLog) ecaLog.innerHTML = `<div style="color:#1E3A5F">Connexion au serveur ECA (session réelle)…</div>`;
   const ecaDot = document.getElementById('eca-web-dot');
   if (ecaDot) { ecaDot.style.background = '#F59E0B'; ecaDot.style.animation = 'pulse 0.8s infinite'; }
   const ecaStatus = document.getElementById('eca-web-status');
   if (ecaStatus) ecaStatus.textContent = 'connecting';
   document.getElementById('import-session-overlay').hidden = false;
-  runImportSession(proj, sbId, source, modelLabel);
+  runImportSession(proj, sbId, file, 'code (ECA headless)');
 }
 
 function closeImportSession() {
@@ -4848,6 +4818,7 @@ function closeImportSession() {
   ispDisableReply();
   _ispWaitingReply = false;
   _ispResolveReply = null;
+
 }
 
 // ─── IMPORT ───────────────────────────────────────────────────
@@ -5734,7 +5705,9 @@ function openImportModal(reimportProjId) {
     contextGroup.hidden   = false;
 
     document.getElementById('import-name').value = '';
-    document.getElementById('import-path').value = '';
+    const fileInputReset = document.getElementById('import-file');
+    if (fileInputReset) fileInputReset.value = '';
+    updateImportFileHint();
 
     // Normal import flow: no specific name constraint (the slug is
     // computed/validated only on re-import) — empty hint, button active.
@@ -5744,8 +5717,11 @@ function openImportModal(reimportProjId) {
     if (btnEl) { btnEl.disabled = false; btnEl.title = ''; }
   }
 
-  // Populate context dropdown for current sandbox — pre-selects the currently
-  // scoped entity (the Import button is only visible in that case anyway).
+  // Populate context dropdown for current sandbox — pre-selects the
+  // currently scoped entity if there is one (currentEntityId), otherwise
+  // leaves the dropdown on its first option (no scope selected — the
+  // button is now visible as soon as the sandbox has at least one entity,
+  // scoped or not, see renderProjectsTab() § import-project-btn-wrap).
   // Unnecessary on re-import (group hidden) but the internal value is kept
   // for startImport() compat.
   const entitySel = document.getElementById('import-context');
@@ -5830,6 +5806,40 @@ function computeReimportSlug(newName, sbId, existingProj) {
     return { ok: false, reason: `Un projet nommé "${trimmed}" existe déjà dans ce sandbox — choisissez un autre nom.` };
   }
   return { ok: true, slug, id };
+}
+
+// Infers the import-source <select> value from a File's extension — keeps
+// the (now auto-derived, no longer user-facing) field consistent with
+// whatever file the user actually picked, without requiring a manual
+// selection in sync with the file picker.
+function inferImportSourceFromFilename(filename) {
+  const ext = (filename.split('.').pop() || '').toLowerCase();
+  if (ext === 'pdf') return 'pdf';
+  if (ext === 'docx') return 'docx';
+  if (ext === 'xlsx' || ext === 'csv') return 'xlsx';
+  if (ext === 'md' || ext === 'txt') return 'md';
+  if (ext === 'json') return 'json';
+  return 'pdf';
+}
+
+// Called on file picker change — updates the inline hint (filename + size)
+// and keeps import-source in sync (see inferImportSourceFromFilename above).
+// Mirrors the live-validation pattern of validateImportName() below.
+function updateImportFileHint() {
+  const input = document.getElementById('import-file');
+  const hint  = document.getElementById('import-file-hint');
+  const sourceSel = document.getElementById('import-source');
+  if (!input || !hint) return;
+  const file = input.files && input.files[0];
+  if (!file) {
+    hint.textContent = 'Aucun fichier sélectionné';
+    hint.style.color = 'var(--text-muted)';
+    return;
+  }
+  const sizeKb = Math.round(file.size / 1024);
+  hint.textContent = `✓ ${file.name} (${sizeKb} Ko)`;
+  hint.style.color = 'var(--success, #10B981)';
+  if (sourceSel) sourceSel.value = inferImportSourceFromFilename(file.name);
 }
 
 // Live validation (called on every keystroke + at modal open in re-import
@@ -5943,11 +5953,17 @@ function startImport() {
   }
 
   const name = document.getElementById('import-name').value.trim();
-  const path = document.getElementById('import-path').value.trim();
+  const fileInput = document.getElementById('import-file');
+  const file = fileInput && fileInput.files && fileInput.files[0];
   const source = document.getElementById('import-source').value;
   const context = document.getElementById('import-context').value;
   if (!name) {
     document.getElementById('import-name').focus();
+    return;
+  }
+  if (!file) {
+    fileInput.focus();
+    alert('Sélectionnez un fichier à importer.');
     return;
   }
   if (!context) {
@@ -5960,7 +5976,7 @@ function startImport() {
   const id = 'import-' + Date.now();
   const newProj = {
     id, name,
-    type: source === 'url' ? 'url' : source,
+    type: source,
     entity: context,
     frames: 0, evidence: 0,
     state: 'importing',
@@ -5972,8 +5988,13 @@ function startImport() {
   PROJECTS[currentSandbox.id].push(newProj);
   renderProjectsTab();
 
-  // Open interactive import session instead of silent quickImport
-  openImportSession(newProj, currentSandbox.id, source, 'opus');
+  // Open interactive import session instead of silent quickImport —
+  // the 4th arg (formerly a fake 'opus'/'sonnet' model selector, leftover
+  // from the fully-simulated mock UI) is no longer used: the real ECA
+  // headless session always routes to the 'code' agent server-side
+  // (server/routes/projects.js § setChatAgent(chatId, 'code')), never
+  // configurable from this form.
+  openImportSession(newProj, currentSandbox.id, file);
 }
 
 function openNewSandboxModal() {
@@ -6056,9 +6077,85 @@ function createSandbox() {
   selectSandbox(sbId);
 }
 
+// ─── NEW ENTITY MODAL ──────────────────────────────────────────
+// Unlike createSandbox() above (still fully client-side/in-memory —
+// out of scope here), entity creation is wired to a real backend route:
+// POST /api/sandboxes/:sbId/entities materialises workspace/<entity>/
+// with its two empty sources/ and reports/ subfolders on disk
+// (server/routes/scan.js). No simulation — the request can fail (name
+// collision, invalid sandbox) and the UI must reflect that.
+function openNewEntityModal() {
+  if (!currentSandbox) return;
+  document.getElementById('newentity-name').value = '';
+  document.getElementById('newentity-path-preview').textContent = '';
+  const hint = document.getElementById('newentity-hint');
+  if (hint) hint.textContent = '';
+  document.getElementById('newentity-modal-overlay').hidden = false;
+  document.getElementById('newentity-name').focus();
+}
+
+function closeNewEntityModal() {
+  document.getElementById('newentity-modal-overlay').hidden = true;
+}
+
+function updateNewEntityPathPreview() {
+  const name = document.getElementById('newentity-name').value;
+  const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+  document.getElementById('newentity-path-preview').textContent = slug;
+}
+
+async function createEntity() {
+  if (!currentSandbox) return;
+  const sbId = currentSandbox.id;
+  const label = document.getElementById('newentity-name').value.trim();
+  const hint  = document.getElementById('newentity-hint');
+  const btn   = document.getElementById('newentity-create-btn');
+
+  if (!label) {
+    document.getElementById('newentity-name').focus();
+    return;
+  }
+
+  btn.disabled = true;
+  btn.textContent = '⏳ Création…';
+  if (hint) { hint.textContent = ''; hint.style.color = ''; }
+
+  try {
+    const r = await fetch(`${API}/api/sandboxes/${sbId}/entities`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ label }),
+    });
+    const data = await r.json();
+    if (!r.ok || !data.ok) {
+      throw new Error(data.error || `HTTP ${r.status}`);
+    }
+
+    ENTITIES[sbId] = ENTITIES[sbId] || [];
+    ENTITIES[sbId].push(data.entity);
+    PROJECTS[sbId] = PROJECTS[sbId] || [];
+
+    closeNewEntityModal();
+    renderProjectsTab();
+    renderSidebar();
+  } catch (err) {
+    if (hint) {
+      hint.style.color = 'var(--error, #EF4444)';
+      hint.textContent = `✗ ${err.message}`;
+    }
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "Créer l'entity";
+  }
+}
+
 // Close modal on overlay click
 document.getElementById('modal-overlay').addEventListener('click', function(e) {
   if (e.target === this) closeModal();
+});
+
+document.getElementById('newentity-modal-overlay').addEventListener('click', function(e) {
+  if (e.target === this) closeNewEntityModal();
 });
 
 // ─── ECA LOGIN FLOW ──────────────────────────────────────────
@@ -6659,44 +6756,41 @@ function ecaWebLog(html) {
 }
 
 async function initEcaWebPanel(proj, sbId, model) {
-  const sessionId = 'demo-' + Math.random().toString(36).slice(2,8);
-  const latency   = Math.floor(Math.random()*8)+2;
-
-  document.getElementById('eca-web-addr').textContent = 'aperçu simulé — non connecté';
-  document.getElementById('eca-web-session-id').textContent = 'session: ' + sessionId;
+  // Formerly a fully scripted "demo" preview (random sessionId/latency,
+  // no real request) — now reflects a genuinely spawned ECA headless
+  // session (chatId `eca-import-${sbId}-${projId}`, see
+  // server/routes/projects.js § POST .../projects/import). Session id
+  // shown here is a display label only (the real chatId lives server-side
+  // and is never exposed to the frontend) — latency is not meaningfully
+  // measurable client-side for a multi-event SSE stream, so it is omitted
+  // rather than faked.
+  document.getElementById('eca-web-addr').textContent = `session réelle · ${sbId}/${proj.entity}`;
+  document.getElementById('eca-web-session-id').textContent = `projet: ${proj.id}`;
   document.getElementById('eca-web-model-label').textContent = 'model: ' + model;
   document.getElementById('eca-web-skill').textContent = 'chorus-import-project';
-  document.getElementById('eca-web-latency').textContent = latency + 'ms (simulé)';
+  document.getElementById('eca-web-latency').textContent = 'streaming SSE';
 
   const log = document.getElementById('eca-web-log');
   if (log) log.innerHTML = '';
-
-  await delay(300);
-  ecaWebLog(`<span class="eca-web-streaming">[aperçu] Déroulé illustratif — aucune requête réelle envoyée au serveur ECA</span>`);
-  await delay(300);
-  ecaWebLog(`<span class="eca-web-streaming">[aperçu] Séquence : <span style="color:#4E9BF5">${sessionId}</span></span>`);
-  await delay(200);
-  ecaWebLog(`<span class="eca-web-ok">[aperçu] Skill illustré : <strong>chorus-import-project</strong> (agent architect)</span>`);
-  await delay(150);
-  ecaWebLog(`<span style="color:#2A5A8A">[aperçu] Modèle affiché à titre indicatif : ${model}</span>`);
+  ecaWebLog(`<span style="color:#2A5A8A">Session ECA headless réelle — agent code, skill chorus-import-project</span>`);
 
   // Update status dot
   document.getElementById('eca-web-dot').style.background = '#10B981';
   document.getElementById('eca-web-dot').style.animation  = 'pulse 2s infinite';
-  document.getElementById('eca-web-status').textContent = 'aperçu (démo)';
+  document.getElementById('eca-web-status').textContent = 'connecté';
 }
 
 function ecaWebPhase(phase) {
-  ecaWebLog(`<span class="eca-web-streaming">[aperçu] Phase: <strong style="color:#6AB0E0">${phase}</strong></span>`);
+  ecaWebLog(`<span class="eca-web-streaming">Phase: <strong style="color:#6AB0E0">${phase}</strong></span>`);
   const log = document.getElementById('eca-web-log');
   if (log) log.scrollTop = log.scrollHeight;
 }
 
 function ecaWebDone() {
-  ecaWebLog(`<span class="eca-web-ok">[aperçu] Fin du déroulé illustratif ✓ (aucune action réelle effectuée)</span>`);
+  ecaWebLog(`<span class="eca-web-ok">Session terminée ✓</span>`);
   document.getElementById('eca-web-dot').style.animation = 'none';
   document.getElementById('eca-web-dot').style.background = '#10B981';
-  document.getElementById('eca-web-status').textContent = 'terminé (démo)';
+  document.getElementById('eca-web-status').textContent = 'terminé';
 }
 
 // ─── PIPELINE ECA-DISPATCH LOGS ──────────────────────────────
