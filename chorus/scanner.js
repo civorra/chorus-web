@@ -334,12 +334,17 @@ function readLastCheckResults(sbPath) {
   let data;
   try { data = JSON.parse(raw); } catch { return null; }
 
-  // Normalisation : agent/.kb-hash (format sha256sum, double espace entre
-  // hash et chemin) vs. kb_hash stocké en JSON peuvent différer sur des
-  // détails d'espacement sans que le contenu ait réellement changé — on
-  // compare après écrasement des espaces/retours multiples pour éviter un
-  // faux "stale" qui discréditerait le badge de convergence.
-  const normalizeHash = (s) => (s || '').trim().replace(/[ \t]+/g, ' ');
+  // Normalisation : agent/.kb-hash est au format sha256sum
+  // ("<hash>  <chemin>"), où <chemin> peut être un chemin absolu ou relatif
+  // selon la machine/sandbox qui a produit le fichier (ex: sandbox cloné ou
+  // renommé après coup — le hash stocké dans .last-check-results.json peut
+  // alors référencer l'ancien chemin, ex. .../05-CC-3.1.4/... au lieu de
+  // .../05b-CC-3.1.4-NEW/...). Seul le hash sha256 (premier token, avant les
+  // espaces) est significatif pour détecter une KB réellement modifiée — le
+  // chemin qui suit est ignoré afin d'éviter un faux "stale" quand seul le
+  // chemin diffère mais que le contenu de la KB est identique (incident
+  // observé sur 05b-CC-3.1.4-NEW, 2026-10).
+  const normalizeHash = (s) => (s || '').trim().split(/\s+/)[0] || '';
   const currentKbHash = readFileSafe(path.join(sbPath, 'agent', '.kb-hash'));
   const stale = !!(currentKbHash && data.kb_hash && normalizeHash(currentKbHash) !== normalizeHash(data.kb_hash));
 
