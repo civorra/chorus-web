@@ -1910,9 +1910,13 @@ function renderConvergenceIndicator(testing, strengthenReport, kbModeled) {
 
   const withConvergence = slugs.filter(s => testing[s]?.convergence);
   if (!withConvergence.length) {
-    return `<div style="display:flex;align-items:center;gap:8px;padding:8px 12px;border-radius:6px;background:var(--bg-tertiary);margin-bottom:14px;font-size:12px">
+    return `<div style="display:flex;align-items:center;gap:8px;padding:8px 12px;border-radius:6px;background:var(--bg-tertiary);margin-bottom:14px;font-size:12px;flex-wrap:wrap">
       <span style="color:var(--text-muted)">⬜</span>
-      <span style="color:var(--text-muted)">Tests non exécutés — lancez <code>chorus-check --all</code></span>
+      <span style="color:var(--text-muted)">Tests non exécutés</span>
+      <button class="btn btn-ghost btn-sm" style="font-size:11px" onclick="runTestingSelection()"
+        title="Lance chorus-check --all sur tous les tests générés">
+        🖥️ chorus-check --all
+      </button>
     </div>`;
   }
 
