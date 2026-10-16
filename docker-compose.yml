@@ -50,7 +50,7 @@ services:
       # ECA OAuth credentials (host Pro/Max session) — read-only.
       # La webapp n'écrit plus dans db.transit.json (OAuth natif Node.js
       # écrit dans .webapp-auth.json sur le volume /chorus).
-      - ${OAUTH_CREDENTIALS}:/root/.cache/eca/db.transit.json:ro
+      # - ${OAUTH_CREDENTIALS}:/root/.cache/eca/db.transit.json:ro
       # eca-config.json monté en volume : override du COPY Dockerfile.eca,
       # évite un rebuild pour changer de provider (Anthropic ↔ Copilot).
       - ./eca-config.json:/etc/eca/config.json:ro

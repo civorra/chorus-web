@@ -338,7 +338,10 @@ function httpsPost(urlStr, body, headers) {
       hostname: u.hostname,
       path:     u.pathname + (u.search || ''),
       method:   'POST',
-      headers:  { ...headers, 'Content-Length': Buffer.byteLength(data) },
+      // ⚠️ User-Agent obligatoire : console.anthropic.com/v1/oauth/token retourne
+      // 400 "Invalid request format" sans User-Agent reconnu (curl/7.88+, Mozilla/5.0).
+      // Node.js n'en envoie pas par défaut, contrairement à curl.
+      headers:  { 'User-Agent': 'Mozilla/5.0 (chorus-web)', ...headers, 'Content-Length': Buffer.byteLength(data) },
     };
     const req = https.request(opts, (res) => {
       let d = '';
@@ -453,11 +456,16 @@ router.post('/api/auth/eca-login/:sessionId/submit', express.json(), async (req,
     return res.status(400).json({ ok: false, error: 'submit uniquement pour le provider anthropic (Copilot utilise /wait)' });
   }
 
-  const code = (req.body && req.body.data && req.body.data.code || '').trim();
+  // Anthropic OOB affiche "code#state" — l'utilisateur copie tout.
+  // On tronque au premier '#' pour n'envoyer que le code au token endpoint.
+  const rawCode = (req.body && req.body.data && req.body.data.code || '').trim();
+  const code = rawCode.split('#')[0].trim();
   if (!code) return res.status(400).json({ ok: false, error: 'code manquant' });
 
   try {
     // 1. Échanger le code contre un access_token
+    // ⚠️ L'endpoint console.anthropic.com/v1/oauth/token exige application/json
+    // (plus application/x-www-form-urlencoded) — "Invalid request format" sinon.
     const tokenRes = await httpsPost(
       ANTHROPIC_TOKEN_URL,
       {
@@ -467,7 +475,7 @@ router.post('/api/auth/eca-login/:sessionId/submit', express.json(), async (req,
         redirect_uri:  ANTHROPIC_REDIRECT,
         code_verifier: session.verifier,
       },
-      { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' }
+      { 'Content-Type': 'application/json', Accept: 'application/json' }
     );
     if (tokenRes.status !== 200 || !tokenRes.data.access_token) {
       return res.status(401).json({ ok: false, error: `Échange token échoué : ${JSON.stringify(tokenRes.data)}` });
