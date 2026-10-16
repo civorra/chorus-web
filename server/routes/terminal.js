@@ -153,6 +153,71 @@ router.post('/sandboxes/:sbId/terminal', (req, res) => {
         const content = chorus.readReport(sbId, entityId, projId, reportFile) || '';
         contextBlock = `Rapport ${reportFile} (${sbId}/${entityId}/${projId}) :\n${content.slice(0, 8000)}`;
       }
+
+      // ── Enrichissement spécialisé pour chorus-strengthen / chorus-fix ──
+      // Injecte les données déjà lues par scanSandbox() (convergence, rapport
+      // de gaps) pour éviter que l'agent ECA reparte de zéro. Ajouté en
+      // complément du contextBlock de base (pas en remplacement).
+      if (kind === 'strengthen' || kind === 'fix') {
+        const sbPath  = sb.path;
+        const lcr     = chorus.readLastCheckResults(sbPath);
+        const lsr     = chorus.readLastStrengthenReport(sbPath);
+        const testing = sb.testing || {};
+
+        // ── Convergence summary (from .last-check-results.json) ──────────
+        const STRATEGIES = ['iso', 'edges', 'cross', 'scale'];
+        const convergenceLines = STRATEGIES
+          .filter(s => testing[s])
+          .map(s => {
+            const entry = testing[s];
+            const cv    = entry.convergence;
+            if (!cv) return `  ${entry.file}: jamais exécuté en mode --all`;
+            const disc = cv.discordances || 0;
+            const unp  = cv.unprocessed  || 0;
+            const st   = cv.stale ? ' [STALE]' : '';
+            const ok   = disc === 0 && unp === 0 ? '✅' : '⚠️';
+            return `  ${ok} ${entry.file}: ${disc} discordance(s), ${unp} unprocessed${st}`;
+          });
+
+        let extra = '';
+
+        if (convergenceLines.length) {
+          extra += `\n\nÉtat de convergence (source: .last-check-results.json):\n${convergenceLines.join('\n')}`;
+          if (lcr?.stale) extra += `\n  ⚠️ Résultats périmés — KB modifiée depuis le dernier chorus-check --all.`;
+        } else {
+          extra += `\n\nAucun fichier project-*.json trouvé — lancez chorus-create-project --batch d'abord.`;
+        }
+
+        // ── Gap report summary (from .last-strengthen-report.json) ───────
+        if (kind === 'fix') {
+          if (!lsr) {
+            extra += `\n\nRapport chorus-strengthen : absent — lancez chorus-strengthen ${sbId} avant chorus-fix.`;
+          } else if (lsr.stale) {
+            extra += `\n\nRapport chorus-strengthen : PÉRIMÉ (KB modifiée depuis). Relancez chorus-strengthen avant chorus-fix.`;
+          } else {
+            const { bucket_b = 0, bucket_c = 0, bucket_a = 0 } = lsr.summary || {};
+            extra += `\n\nRapport chorus-strengthen (${lsr.timestamp?.slice(0, 16) || '?'}):\n`;
+            extra += `  Total gaps : ${lsr.totalGaps}  (B:${bucket_b} C:${bucket_c} A:${bucket_a})\n`;
+            if (lsr.gaps?.length) {
+              extra += `  Gaps détaillés :\n`;
+              for (const g of lsr.gaps) {
+                const blocked = g.blocked ? ' [BLOQUÉ — garde anti-régression]' : '';
+                extra += `  #${g.id} [${g.bucket}] ${g.gap_type} · ${g.element_id} · règle: ${g.rule_file || '—'} · agent: ${g.agent || '—'}${blocked}\n`;
+                if (g.hypothesis) extra += `     Hypothèse: ${g.hypothesis}\n`;
+                if (g.corpus_ref && g.corpus_ref !== 'null') extra += `     Réf corpus: ${g.corpus_ref}\n`;
+              }
+            }
+          }
+        } else {
+          // strengthen : indiquer si un rapport existe déjà (évite une relance inutile)
+          if (lsr && !lsr.stale && lsr.totalGaps > 0) {
+            const { bucket_b = 0, bucket_c = 0, bucket_a = 0 } = lsr.summary || {};
+            extra += `\n\nDernier rapport strengthen (${lsr.timestamp?.slice(0, 16) || '?'}): ${lsr.totalGaps} gap(s) (B:${bucket_b} C:${bucket_c} A:${bucket_a}) — toujours valide si la KB n'a pas changé.`;
+          }
+        }
+
+        contextBlock += extra;
+      }
     } catch (e) { contextBlock = `(contexte indisponible : ${e.message})`; }
 
     // ── chatId isolé par sessionId ─────────────────────────────────────
