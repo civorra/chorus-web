@@ -1548,10 +1548,10 @@ function renderProjectsTab() {
       const entPath = ent ? ent.path : `workspace/${currentEntityId}`;
       scopeBar.style.display = 'flex';
       scopeBar.innerHTML = `
+        <button class="btn btn-ghost btn-sm" onclick="clearEntitySelection()">← Sandbox</button>
         <span class="entity-folder">${label}</span>
         <span class="entity-path">${entPath}/</span>
         <button class="btn btn-ghost btn-sm" title="Terminal ECA — entity ${label}" onclick="openLevelTerminal('entity', {sbId:'${sbId}', entityId:'${currentEntityId}', entityLabel:'${label}'})">🖥️</button>
-        <button class="btn btn-ghost btn-sm" style="margin-left:auto" onclick="clearEntitySelection()">← Toutes les entities</button>
       `;
     } else {
       scopeBar.style.display = 'none';
