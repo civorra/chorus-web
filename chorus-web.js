@@ -1898,13 +1898,213 @@ function renderConvergenceBadge(slug, convergence) {
   return `<div style="font-size:11px;font-weight:700;color:var(--warn)">⚠️ ${detail}${staleTag}${sourceTag}</div>`;
 }
 
+// ─── CONVERGENCE LOOP INDICATOR ──────────────────────────────────────────
+// 4 états basés sur testing + strengthenReport :
+//   Converged       : tous les tests existants ont 0 discordance + 0 unprocessed
+//   Gaps detected   : discordances > 0 ET rapport strengthen présent (→ propose chorus-fix)
+//   Strengthen needed : discordances > 0 MAIS pas de rapport strengthen à jour
+//   Not run         : aucun test généré ou jamais exécuté
+function renderConvergenceIndicator(testing, strengthenReport, kbModeled) {
+  const slugs = Object.keys(testing).filter(s => testing[s]);
+  if (!slugs.length || !kbModeled) return '';
+
+  const withConvergence = slugs.filter(s => testing[s]?.convergence);
+  if (!withConvergence.length) {
+    return `<div style="display:flex;align-items:center;gap:8px;padding:8px 12px;border-radius:6px;background:var(--bg-tertiary);margin-bottom:14px;font-size:12px">
+      <span style="color:var(--text-muted)">⬜</span>
+      <span style="color:var(--text-muted)">Tests non exécutés — lancez <code>chorus-check --all</code></span>
+    </div>`;
+  }
+
+  const totalDisc = withConvergence.reduce((s, k) => s + (testing[k].convergence?.discordances || 0), 0);
+  const totalUnproc = withConvergence.reduce((s, k) => s + (testing[k].convergence?.unprocessed || 0), 0);
+  const anyStale = withConvergence.some(k => testing[k].convergence?.stale);
+
+  if (totalDisc === 0 && totalUnproc === 0 && !anyStale) {
+    return `<div style="display:flex;align-items:center;gap:8px;padding:8px 12px;border-radius:6px;background:rgba(34,197,94,.08);margin-bottom:14px;font-size:12px">
+      <span>✅</span>
+      <span style="color:var(--success);font-weight:600">Convergé</span>
+      <span style="color:var(--text-muted)">— 0 discordance, 0 unprocessed sur ${withConvergence.length} test(s)</span>
+    </div>`;
+  }
+
+  // Rapport strengthen présent et frais ?
+  const reportFresh = strengthenReport && !strengthenReport.stale && strengthenReport.totalGaps > 0;
+  const reportStale = strengthenReport && strengthenReport.stale;
+
+  if (reportFresh) {
+    const bB = strengthenReport.summary?.bucket_b || 0;
+    const bC = strengthenReport.summary?.bucket_c || 0;
+    const bA = strengthenReport.summary?.bucket_a || 0;
+    return `<div style="display:flex;align-items:center;gap:8px;padding:8px 12px;border-radius:6px;background:rgba(251,146,60,.08);margin-bottom:14px;font-size:12px;flex-wrap:wrap">
+      <span>⚠️</span>
+      <span style="color:var(--warn);font-weight:600">${strengthenReport.totalGaps} gap(s) détecté(s)</span>
+      <span style="color:var(--text-muted)">B:${bB} C:${bC} A:${bA}</span>
+      ${bB + bC > 0 ? `<button class="btn btn-ghost btn-sm" style="font-size:11px;margin-left:4px" onclick="confirmRunChorusFix('dry-run')" title="Prévisualise les patches YAML sans écrire">🛠️ Appliquer (dry-run)</button>` : ''}
+      <span style="color:var(--text-muted);font-size:10px;margin-left:auto">${(strengthenReport.timestamp || '').replace('T', ' ').slice(0, 16)}</span>
+    </div>`;
+  }
+
+  if (totalDisc > 0) {
+    const staleNote = reportStale ? ' (rapport strengthen périmé — relancez)' : '';
+    return `<div style="display:flex;align-items:center;gap:8px;padding:8px 12px;border-radius:6px;background:rgba(251,146,60,.08);margin-bottom:14px;font-size:12px">
+      <span>🔄</span>
+      <span style="color:var(--warn);font-weight:600">${totalDisc} discordance(s) détectée(s)${staleNote}</span>
+      <span style="color:var(--text-muted)">— lancez <code>chorus-strengthen</code> pour analyser</span>
+    </div>`;
+  }
+
+  // unprocessed > 0 uniquement
+  return `<div style="display:flex;align-items:center;gap:8px;padding:8px 12px;border-radius:6px;background:rgba(251,146,60,.08);margin-bottom:14px;font-size:12px">
+    <span>⚠️</span>
+    <span style="color:var(--warn);font-weight:600">${totalUnproc} élément(s) non traité(s)</span>
+    <span style="color:var(--text-muted)">— vérifiez Feed.pm %SLOTS_REQUIS</span>
+  </div>`;
+}
+
+// ─── STRENGTHEN GAP PANEL ─────────────────────────────────────────────────
+// Panneau affiché sous les cartes de test quand un rapport strengthen est présent.
+function renderStrengthenPanel(report, sbId) {
+  if (!report || report.totalGaps === 0) {
+    if (report && report.totalGaps === 0) {
+      return `<div class="pv-panel" style="margin-top:18px;font-size:12px">
+        <div style="font-weight:600;margin-bottom:6px">📋 Rapport de renforcement</div>
+        <div style="color:var(--success)">✅ Aucun gap détecté${report.stale ? ' <span style="color:var(--text-muted)">(périmé — relancez chorus-strengthen)</span>' : ''}.</div>
+      </div>`;
+    }
+    return '';
+  }
+
+  const bB = report.summary?.bucket_b || 0;
+  const bC = report.summary?.bucket_c || 0;
+  const bA = report.summary?.bucket_a || 0;
+  const staleNote = report.stale
+    ? `<span style="font-size:10px;color:var(--warn);margin-left:8px">⚠️ périmé — KB modifiée depuis</span>`
+    : '';
+  const ts = (report.timestamp || '').replace('T', ' ').slice(0, 16);
+
+  const gapRows = report.gaps.map(g => {
+    const bucketColor = g.bucket === 'B' ? 'var(--info)' : g.bucket === 'C' ? 'var(--warn)' : 'var(--text-muted)';
+    const blockedBadge = g.blocked
+      ? `<span style="font-size:9px;color:var(--error);margin-left:4px">🛑 bloqué</span>` : '';
+    return `<details style="font-size:11px;border-bottom:1px solid var(--border);padding:4px 0">
+      <summary style="cursor:pointer;display:flex;align-items:center;gap:6px">
+        <span style="color:${bucketColor};font-weight:700;min-width:14px">${g.bucket}</span>
+        <span style="color:var(--text-muted)">#${g.id}</span>
+        <span>${g.gap_type?.replace(/_/g, ' ') || '?'}</span>
+        <span style="color:var(--text-muted)">·</span>
+        <span style="font-family:'JetBrains Mono',monospace">${g.element_id || '?'}</span>
+        ${blockedBadge}
+      </summary>
+      <div style="padding:6px 0 2px 20px;color:var(--text-secondary)">
+        <div><strong>Règle :</strong> ${g.rule_file || '—'} <span style="color:var(--text-muted)">(${g.agent || '?'})</span></div>
+        <div><strong>Attendu :</strong> ${g.expected || '?'} → <strong>Obtenu :</strong> ${g.got || '?'}</div>
+        ${g.hypothesis ? `<div><strong>Hypothèse :</strong> ${g.hypothesis}</div>` : ''}
+        ${g.corpus_ref ? `<div><strong>Réf corpus :</strong> ${g.corpus_ref}</div>` : ''}
+      </div>
+    </details>`;
+  }).join('');
+
+  const blockedCount = report.gaps.filter(g => g.blocked).length;
+  const blockedWarning = blockedCount > 0
+    ? `<div style="font-size:11px;color:var(--warn);margin-bottom:8px">⚠️ ${blockedCount} patch(es) bloqué(s) par la garde anti-régression — révision manuelle requise.</div>`
+    : '';
+
+  const fixBtns = (bB + bC > 0) ? `
+    <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">
+      <button class="btn btn-ghost btn-sm" style="font-size:11px" onclick="confirmRunChorusFix('dry-run')"
+        title="Prévisualise les patches YAML et les corpus-correctif sans rien écrire">
+        🛠️ Dry-run (prévisualiser)
+      </button>
+      ${bB > 0 ? `<button class="btn btn-ghost btn-sm" style="font-size:11px" onclick="confirmRunChorusFix('bucket-b')"
+        title="Applique les patches YAML Bucket B après confirmation">
+        ⚡ Appliquer Bucket B (${bB} règle(s) YAML)
+      </button>` : ''}
+      ${bC > 0 ? `<button class="btn btn-ghost btn-sm" style="font-size:11px" onclick="confirmRunChorusFix('bucket-c')"
+        title="Génère corpus-correctif.txt et lance chorus-feed --enrich pour les gaps Bucket C">
+        📄 Générer corpus-correctif (${bC} règle(s) manquante(s))
+      </button>` : ''}
+    </div>` : '';
+
+  return `<div class="pv-panel" style="margin-top:18px">
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
+      <span style="font-weight:600;font-size:12px">📋 Rapport de renforcement</span>
+      ${staleNote}
+      <span style="font-size:10px;color:var(--text-muted);margin-left:auto">${ts}</span>
+    </div>
+    <div style="display:flex;gap:14px;margin-bottom:10px;font-size:12px">
+      <span title="Ajustements YAML directs">🔧 Bucket B : <strong>${bB}</strong></span>
+      <span title="Règles manquantes — chorus-feed --enrich">📄 Bucket C : <strong>${bC}</strong></span>
+      <span title="Clarification corpus requise — révision humaine">🔍 Bucket A : <strong>${bA}</strong></span>
+    </div>
+    ${blockedWarning}
+    <div style="max-height:260px;overflow-y:auto;border:1px solid var(--border);border-radius:4px;padding:4px 8px">
+      ${gapRows}
+    </div>
+    ${fixBtns}
+  </div>`;
+}
+
+// ─── CHORUS-FIX LAUNCHER ──────────────────────────────────────────────────
+function confirmRunChorusFix(mode) {
+  if (!currentSandbox) return;
+  const sb = currentSandbox;
+  const report = sb.strengthenReport;
+
+  if (!report || report.totalGaps === 0) {
+    alert('Aucun gap à corriger. Lancez chorus-strengthen d\'abord.');
+    return;
+  }
+  if (report.stale) {
+    if (!confirm('⚠️ Le rapport de renforcement est périmé (KB modifiée depuis).\nLancez chorus-strengthen à nouveau pour un diagnostic à jour.\n\nContinuer quand même ?')) return;
+  }
+
+  const bB = report.summary?.bucket_b || 0;
+  const bC = report.summary?.bucket_c || 0;
+  const blockedCount = (report.gaps || []).filter(g => g.blocked).length;
+  const blockedNote = blockedCount > 0
+    ? `\n\n⚠️ ${blockedCount} patch(es) sont bloqués par la garde anti-régression et ne seront PAS appliqués automatiquement.` : '';
+
+  if (mode === 'dry-run') {
+    openLevelTerminal('sandbox', { sbId: sb.id, kind: 'fix' },
+      `chorus-fix ${sb.id} --dry-run`);
+    return;
+  }
+
+  if (mode === 'bucket-b') {
+    if (bB === 0) { alert('Aucun gap Bucket B dans le rapport.'); return; }
+    if (!confirm(
+      `Appliquer ${bB} patch(es) YAML (Bucket B) sur le sandbox « ${sb.id} » ?\n\n` +
+      `⚡ Cette action modifie directement des fichiers YAML de règles.${blockedNote}\n\n` +
+      `Recommandé : effectuer un dry-run d'abord si ce n'est pas déjà fait.`
+    )) return;
+    openLevelTerminal('sandbox', { sbId: sb.id, kind: 'fix' },
+      `chorus-fix ${sb.id} --bucket-b`);
+    return;
+  }
+
+  if (mode === 'bucket-c') {
+    if (bC === 0) { alert('Aucun gap Bucket C dans le rapport.'); return; }
+    if (!confirm(
+      `Générer corpus-correctif.txt et lancer chorus-feed --enrich ` +
+      `pour ${bC} gap(s) Bucket C sur le sandbox « ${sb.id} » ?\n\n` +
+      `📄 Un fichier corpus-correctif-NNN.txt sera créé dans le sandbox, ` +
+      `puis chorus-feed --enrich sera lancé automatiquement.\n\n` +
+      `Cette opération peut être longue (chorus-feed sur un grand corpus).`
+    )) return;
+    openLevelTerminal('sandbox', { sbId: sb.id, kind: 'fix' },
+      `chorus-fix ${sb.id} --bucket-c`);
+  }
+}
+
 function renderTestingTab() {
   const sb = currentSandbox;
   const panel = document.getElementById('tab-tests');
   if (!sb || !panel) return;
 
-  const testing   = sb.testing || {};
-  const kbModeled = !!sb.kbModeled;
+  const testing           = sb.testing || {};
+  const kbModeled         = !!sb.kbModeled;
+  const strengthenReport  = sb.strengthenReport || null;
 
   const cards = Object.keys(TESTING_META).map(slug => {
     const meta  = TESTING_META[slug];
@@ -1970,6 +2170,7 @@ function renderTestingTab() {
 
   panel.innerHTML = `
     ${kbWarning}
+    ${renderConvergenceIndicator(testing, strengthenReport, kbModeled)}
     <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;flex-wrap:wrap">
       <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text-secondary);cursor:${nExisting ? 'pointer' : 'default'}">
         <input type="checkbox" ${allSelected ? 'checked' : ''} ${nExisting === 0 ? 'disabled' : ''} onchange="toggleSelectAllTests(this.checked)">
@@ -1982,6 +2183,7 @@ function renderTestingTab() {
     <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:12px">
       ${cards}
     </div>
+    ${renderStrengthenPanel(strengthenReport, sb.id)}
     <div id="testing-bugs-section" style="margin-top:18px"></div>
   `;
 

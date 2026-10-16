@@ -100,6 +100,23 @@ router.post('/sandboxes/:sbId/terminal', (req, res) => {
     }
   }
 
+  // ── Garde de concurrence — chorus-fix ──────────────────────────────
+  // chorus-fix peut modifier des fichiers YAML et déclencher chorus-feed
+  // --enrich (bucket-c) — interdit d'en avoir deux simultanément sur le même
+  // sandbox (risque de conflits d'écriture et de rapports de gaps incohérents).
+  if (kind === 'fix') {
+    const already = [...activeTerminals.values()]
+      .find(t => t.sbId === sbId && (t.kind === 'fix' || t.kind === 'strengthen'));
+    if (already) {
+      sseInit(res);
+      return sseError(
+        res,
+        `Un ${already.kind === 'fix' ? 'chorus-fix' : 'chorus-strengthen'} est déjà en cours sur ce sandbox — ` +
+        `attendez sa fin avant de lancer chorus-fix (risque de conflits sur les fichiers YAML).`
+      );
+    }
+  }
+
   sseInit(res);
   // Timeout configurable (panneau Config § ECA Server, défaut 60 min côté
   // frontend — voir chorus-web.js § SETTINGS.eca.terminalTimeoutMinutes).
@@ -109,7 +126,9 @@ router.post('/sandboxes/:sbId/terminal', (req, res) => {
   // par défaut au lieu de 60) pour limiter l'exposition en cas de boucle
   // infinie côté pipeline Perl — toujours modifiable explicitement par le
   // frontend via timeoutMinutes, jamais silencieusement étendu au-delà.
-  const DEFAULT_TIMEOUT_MINUTES = kind === 'strengthen' ? 45 : 60;
+  // chorus-fix (bucket-b seul) est rapide ; --bucket-c peut déclencher
+  // chorus-feed --enrich qui est long → timeout intermédiaire 30 min.
+  const DEFAULT_TIMEOUT_MINUTES = kind === 'strengthen' ? 45 : kind === 'fix' ? 30 : 60;
   let timeoutMs = Number(timeoutMinutes);
   if (!Number.isFinite(timeoutMs) || timeoutMs < 1) timeoutMs = DEFAULT_TIMEOUT_MINUTES;
   if (timeoutMs > 240) timeoutMs = 240;

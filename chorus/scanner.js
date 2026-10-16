@@ -403,6 +403,36 @@ function readLastCheckResults(sbPath) {
   };
 }
 
+// ── readLastStrengthenReport ───────────────────────────────────────────────
+//
+// Lit $SANDBOX/.last-strengthen-report.json, écrit par `chorus-strengthen`
+// en Phase 4.5 (cf. Engine/agent/skills/chorus-strengthen.md § Phase 4.5).
+// Contient la liste classifiée des gaps B/C/A détectés sur la suite de tests.
+//
+// Absent = strengthen jamais lancé (ou sandbox sans tests).
+// Stale = kb_hash diverge de agent/.kb-hash (KB modifiée depuis le dernier strengthen).
+function readLastStrengthenReport(sbPath) {
+  const raw = readFileSafe(path.join(sbPath, '.last-strengthen-report.json'));
+  if (!raw) return null;
+  let data;
+  try { data = JSON.parse(raw); } catch { return null; }
+
+  const normalizeHash = (s) => (s || '').trim().split(/\s+/)[0] || '';
+  const currentKbHash = readFileSafe(path.join(sbPath, 'agent', '.kb-hash'));
+  const stale = !!(currentKbHash && data.kb_hash &&
+    normalizeHash(currentKbHash) !== normalizeHash(data.kb_hash));
+
+  return {
+    timestamp:  data.timestamp  || null,
+    kbHash:     data.kb_hash    || null,
+    sandbox:    data.sandbox    || null,
+    totalGaps:  data.total_gaps ?? 0,
+    summary:    data.summary    || { bucket_b: 0, bucket_c: 0, bucket_a: 0 },
+    gaps:       Array.isArray(data.gaps) ? data.gaps : [],
+    stale,
+  };
+}
+
 // ── scanSandbox ────────────────────────────────────────────────────────────
 
 function scanSandbox(sbId) {
@@ -540,7 +570,9 @@ function scanSandbox(sbId) {
 
   const kbModeled = fileExists(path.join(sbPath, 'agent', 'chorus', 'index.org'));
 
-  return { id: sbId, name, norm, standard, desc, path: sbPath, entities, testing, kbModeled };
+  const strengthenReport = readLastStrengthenReport(sbPath);
+
+  return { id: sbId, name, norm, standard, desc, path: sbPath, entities, testing, kbModeled, strengthenReport };
 }
 
 // ── scanAll ───────────────────────────────────────────────────────────────
@@ -553,6 +585,7 @@ function scanAll() {
 module.exports = {
   readAgentOrgFile,
   readLastCheckResults,
+  readLastStrengthenReport,
   scanSandboxCorpus,
   scanFlatProject,
   scanNestedProject,
