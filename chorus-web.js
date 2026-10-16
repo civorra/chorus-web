@@ -852,25 +852,44 @@ function renderProjectPage(proj, entLabel) {
   // ── KPI cards ─────────────────────────────────────────────────
   document.getElementById('pv-kpi-frames').textContent    = proj.frames ?? '—';
   document.getElementById('pv-kpi-frames-sub').textContent = proj.frames ? 'corpus frames' : '';
-  document.getElementById('pv-kpi-evidence').textContent  = proj.evidence ?? '—';
-  document.getElementById('pv-kpi-evidence-sub').textContent = proj.evidence ? 'pièces justif.' : '';
-
-  if (proj.compliance != null) {
-    document.getElementById('pv-kpi-compliance').textContent    = proj.compliance + '%';
-    document.getElementById('pv-kpi-compliance').style.color    = compColor;
-    const conform = proj.frames ? Math.round(proj.compliance / 100 * proj.frames) : null;
-    document.getElementById('pv-kpi-compliance-sub').textContent =
-      conform != null ? `${conform} / ${proj.frames} conformes` : '';
+  // KPI "Non conformes" — dérivé du taux de conformité + nb de frames
+  if (proj.compliance != null && proj.frames) {
+    const conform  = Math.round(proj.compliance / 100 * proj.frames);
+    const nonconf  = proj.frames - conform;
+    const ncColor  = nonconf === 0 ? 'var(--success)' : nonconf <= 3 ? 'var(--warn)' : 'var(--error)';
+    document.getElementById('pv-kpi-nonconf').textContent       = nonconf;
+    document.getElementById('pv-kpi-nonconf').style.color       = ncColor;
+    document.getElementById('pv-kpi-nonconf-sub').textContent   = nonconf === 0 ? 'tout conforme ✓' : `sur ${proj.frames} exigences`;
   } else {
-    document.getElementById('pv-kpi-compliance').textContent    = '—';
-    document.getElementById('pv-kpi-compliance').style.color    = 'var(--text-muted)';
-    document.getElementById('pv-kpi-compliance-sub').textContent = 'aucun run';
+    document.getElementById('pv-kpi-nonconf').textContent       = '—';
+    document.getElementById('pv-kpi-nonconf').style.color       = 'var(--text-muted)';
+    document.getElementById('pv-kpi-nonconf-sub').textContent   = 'aucun run';
   }
 
-  const imports = proj.imports || [];
-  const lastImp = imports[imports.length - 1];
-  document.getElementById('pv-kpi-version').textContent     = lastImp ? lastImp.version : '—';
-  document.getElementById('pv-kpi-version-sub').textContent = lastImp ? lastImp.date : '';
+  // KPI "Runs" — nombre de rapports de type 'run' dans l'historique
+  const runReports = (proj.reports || []).filter(r => r.kind === 'run');
+  document.getElementById('pv-kpi-runs').textContent     = runReports.length || '—';
+  document.getElementById('pv-kpi-runs-sub').textContent = runReports.length === 1 ? 'exécution' : runReports.length > 1 ? 'exécutions' : 'pipeline non lancé';
+
+  // KPI "Dernier run" — date + verdict SOLVED/FAILED
+  const kpiLastRun = runReports[runReports.length - 1];
+  if (kpiLastRun) {
+    const isSolved   = (kpiLastRun.desc || '').toUpperCase().includes('SOLVED');
+    const verdictLbl = isSolved ? 'SOLVED' : 'FAILED';
+    const verdictClr = isSolved ? 'var(--success)' : 'var(--error)';
+    document.getElementById('pv-kpi-lastrun').textContent     = kpiLastRun.date || proj.lastRun || '—';
+    document.getElementById('pv-kpi-lastrun').style.color     = 'var(--text-secondary)';
+    document.getElementById('pv-kpi-lastrun-sub').textContent = verdictLbl;
+    document.getElementById('pv-kpi-lastrun-sub').style.color = verdictClr;
+  } else if (proj.lastRun) {
+    document.getElementById('pv-kpi-lastrun').textContent     = proj.lastRun;
+    document.getElementById('pv-kpi-lastrun').style.color     = 'var(--text-secondary)';
+    document.getElementById('pv-kpi-lastrun-sub').textContent = '';
+  } else {
+    document.getElementById('pv-kpi-lastrun').textContent     = '—';
+    document.getElementById('pv-kpi-lastrun').style.color     = 'var(--text-muted)';
+    document.getElementById('pv-kpi-lastrun-sub').textContent = 'jamais lancé';
+  }
 
   // ── Reset tabs ────────────────────────────────────────────────
   pvSwitchTab('apercu');
@@ -1640,10 +1659,8 @@ function renderProjectsTab() {
     return;
   }
 
-  // Vue multi-entities : la section "Available" reste toujours visible
-  // (utile pour voir d'un coup d'œil ce qu'il reste à importer, tous
-  // entities confondus).
-  document.getElementById('available-section').style.display = 'block';
+  // Vue multi-entities : masquer la section "Available" si la liste est vide.
+  document.getElementById('available-section').style.display = available.length ? 'block' : 'none';
 
   // Vue multi-entities (aucune sélection) — groupes collapsibles par entity
   const entityOrder = entities.map(c => c.id);
@@ -1661,13 +1678,9 @@ function renderProjectsTab() {
   document.getElementById('imported-list').innerHTML = importedHtml;
 
   let availableHtml = '';
-  if (available.length === 0) {
-    availableHtml = `<div style="color:var(--text-muted);font-size:13px;padding:8px 0">Tous les projets sont importés.</div>`;
-  } else {
-    for (const entityId of allEntityIds) {
-      const grp = available.filter(p => (p.entity || '_none') === entityId);
-      if (grp.length) availableHtml += renderEntityGroup(grp, entityId, 'avail');
-    }
+  for (const entityId of allEntityIds) {
+    const grp = available.filter(p => (p.entity || '_none') === entityId);
+    if (grp.length) availableHtml += renderEntityGroup(grp, entityId, 'avail');
   }
   document.getElementById('available-list').innerHTML = availableHtml;
 }
