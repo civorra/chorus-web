@@ -837,6 +837,8 @@ function renderProjectPage(proj, entLabel) {
   document.getElementById('pv-title').textContent      = proj.name;
   document.getElementById('pv-meta-sandbox').textContent = sb.icon + ' ' + sb.name;
   document.getElementById('pv-meta-entity').textContent  = entLabel || '—';
+  const backBtn = document.getElementById('pv-btn-back-entity');
+  if (backBtn) backBtn.textContent = '← ' + (entLabel || 'Entity');
   document.getElementById('pv-meta-id').textContent      = proj.id;
 
   // State badge removed from the header (redundant — the "Imported"/"Not imported"
