@@ -1946,11 +1946,14 @@ function renderConvergenceIndicator(testing, strengthenReport, kbModeled) {
   }
 
   if (totalDisc > 0) {
-    const staleNote = reportStale ? ' (rapport strengthen périmé — relancez)' : '';
-    return `<div style="display:flex;align-items:center;gap:8px;padding:8px 12px;border-radius:6px;background:rgba(251,146,60,.08);margin-bottom:14px;font-size:12px">
+    const staleNote = reportStale ? ' · rapport périmé' : '';
+    return `<div style="display:flex;align-items:center;gap:8px;padding:8px 12px;border-radius:6px;background:rgba(251,146,60,.08);margin-bottom:14px;font-size:12px;flex-wrap:wrap">
       <span>🔄</span>
-      <span style="color:var(--warn);font-weight:600">${totalDisc} discordance(s) détectée(s)${staleNote}</span>
-      <span style="color:var(--text-muted)">— lancez <code>chorus-strengthen</code> pour analyser</span>
+      <span style="color:var(--warn);font-weight:600">${totalDisc} discordance(s)${staleNote}</span>
+      <button class="btn btn-ghost btn-sm" style="font-size:11px" onclick="runStrengthenFull()"
+        title="Analyse toutes les discordances de la suite complète — opération longue (chorus-strengthen)">
+        🔧 Analyser avec chorus-strengthen
+      </button>
     </div>`;
   }
 
@@ -2043,6 +2046,34 @@ function renderStrengthenPanel(report, sbId) {
     </div>
     ${fixBtns}
   </div>`;
+}
+
+// ─── STRENGTHEN FULL-SUITE LAUNCHER ──────────────────────────────────────
+// Déclenché depuis l'indicateur de convergence (suite complète, pas un seul slug).
+function runStrengthenFull() {
+  if (!currentSandbox) return;
+  const sb = currentSandbox;
+
+  const already = (_activeTerminalsCache || [])
+    .find(t => t.sbId === sb.id && t.kind === 'strengthen');
+  if (already) {
+    alert(
+      `Un chorus-strengthen est déjà en cours sur ce sandbox ` +
+      `(depuis ${Math.round((already.elapsedMs || 0) / 60000)} min).\n\n` +
+      `Attendez sa fin avant d'en relancer un.`
+    );
+    return;
+  }
+
+  if (!confirm(
+    `Lancer chorus-strengthen sur la suite complète du sandbox « ${sb.id} » ?\n\n` +
+    `⚠️ Opération longue (plusieurs dizaines de minutes), très consommatrice de CPU.\n` +
+    `Un seul chorus-strengthen à la fois est autorisé par sandbox (timeout : 45 min).\n\n` +
+    `Continuer ?`
+  )) return;
+
+  openLevelTerminal('sandbox', { sbId: sb.id, kind: 'strengthen' },
+    `chorus-strengthen ${sb.id}`);
 }
 
 // ─── CHORUS-FIX LAUNCHER ──────────────────────────────────────────────────
