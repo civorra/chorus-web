@@ -69,8 +69,15 @@ router.post(
     const srcDir     = path.join(entityPath, 'sources', projId);
     fs.mkdirSync(srcDir, { recursive: true });
 
-    const ext      = path.extname(uploadedFile.originalname) || '.pdf';
-    const destFile = path.join(srcDir, `source${ext}`);
+    // Conserver le nom de fichier original (plus lisible dans sources/ et dans
+    // les rapports import-report-*.org qui y font référence).
+    // Sanitisation minimale : suppression des caractères non sûrs pour un
+    // chemin filesystem (garde alphanum, tirets, underscores, points, espaces).
+    const safeOrigName = uploadedFile.originalname
+      .replace(/[^a-zA-Z0-9._\- ]/g, '_')
+      .replace(/\s+/g, '_')
+      .slice(0, 200) || `source${path.extname(uploadedFile.originalname) || '.pdf'}`;
+    const destFile = path.join(srcDir, safeOrigName);
     // copyFileSync + unlinkSync plutôt que renameSync : multer écrit les
     // uploads sous os.tmpdir() (souvent un volume/device distinct de
     // SANDBOXES_DIR en environnement Docker — bind-mount vs tmpfs/overlay
