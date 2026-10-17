@@ -28,7 +28,7 @@ cd ~/Chorus/web
 #    → pour un chemin différent : CHORUS_ENGINE_HOME=/autre/chemin ./setup.sh
 
 # 3. Vérifier/éditer .env si nécessaire
-#    (setup.sh guide la configuration — voir § Configuration ci-dessous)
+#    setup.sh remplit automatiquement les chemins et guide la clé API
 nano .env
 
 # 4. Build et démarrage
@@ -40,8 +40,8 @@ open http://localhost:3000
 
 `setup.sh` effectue automatiquement :
 - Clone de `chorus-engine` dans `~/Chorus/engine` (si absent)
-- Création de `.env` depuis `.env.example`
-- Détection et configuration de `ANTHROPIC_API_KEY_FILE` si `~/.config/anthropic/api_key` existe
+- Création de `.env` depuis `.env.example` avec injection des chemins résolus
+- Détection de `~/.config/anthropic/api_key` et configuration de `ANTHROPIC_API_KEY_FILE`
 
 ---
 
@@ -78,25 +78,36 @@ dépendances npm depuis les volumes montés.
 
 ## Configuration (`.env`)
 
-Après `./setup.sh`, éditer `.env` pour ajuster :
+`setup.sh` crée `.env` depuis `.env.example` et injecte les chemins automatiquement.
+Seules les variables ci-dessous nécessitent une attention manuelle :
 
 ```bash
-# ── Chemins (remplis automatiquement par setup.sh) ──────────────────────────
-CHORUS_HOME=/home/<user>/Chorus
-# CHORUS_ENGINE_HOME=/home/<user>/Chorus/engine   # défaut : $CHORUS_HOME/engine
-# CHORUS_WEB_HOME=/home/<user>/Chorus/web         # défaut : $CHORUS_HOME/web
-# SANDBOXES=/home/<user>/Chorus/sandboxes/mon-sandbox  # défaut : $CHORUS_HOME/sandboxes
+# ── Chemins ──────────────────────────────────────────────────────────────────
+# Remplis automatiquement par setup.sh — vérifier si les repos sont ailleurs.
+CHORUS_HOME=~/Chorus
+# CHORUS_ENGINE_HOME=~/Chorus/engine   # défaut : $CHORUS_HOME/engine
+# CHORUS_WEB_HOME=~/Chorus/web         # défaut : $CHORUS_HOME/web
+# SANDBOXES=~/Chorus/sandboxes         # défaut : $CHORUS_HOME/sandboxes
 
-# ── Authentification LLM ────────────────────────────────────────────────────
+# ── Authentification LLM ─────────────────────────────────────────────────────
 # Option A — Mode OAuth (abonnement Pro/Max, recommandé) :
-#   Aucune variable requise. ECA utilise ses credentials OAuth natifs.
+#   Aucune variable à définir. setup.sh ne configure rien, ECA utilise OAuth.
 
-# Option B — Mode API key :
-ANTHROPIC_API_KEY_FILE=/home/<user>/.config/anthropic/api_key
+# Option B — Mode API key (pay-per-token) :
+#   Renseigné automatiquement par setup.sh si ~/.config/anthropic/api_key existe.
+#   Sinon, décommenter et renseigner :
+# ANTHROPIC_API_KEY_FILE=~/.config/anthropic/api_key
 
-# ── Réseau ───────────────────────────────────────────────────────────────────
+# ── Réseau ────────────────────────────────────────────────────────────────────
 PORT=3000
 ECA_REMOTE_PASSWORD=changeme-local-dev   # changer en production
+
+# ── Avancé (optionnel) ────────────────────────────────────────────────────────
+# OAuth client IDs — uniquement si vous enregistrez vos propres OAuth Apps.
+# Les valeurs par défaut (ECA officiel) fonctionnent pour la plupart des usages.
+# ANTHROPIC_OAUTH_CLIENT_ID=...
+# ANTHROPIC_OAUTH_SCOPE=...
+# COPILOT_OAUTH_CLIENT_ID=...
 ```
 
 ---
@@ -131,10 +142,12 @@ docker compose down --remove-orphans
 ### La webapp s'ouvre mais n'affiche aucun sandbox
 
 `SANDBOXES` pointe vers un répertoire vide ou inexistant.
-Vérifier dans `.env` :
+Vérifier dans `.env` que le chemin correspond bien à un dossier existant sur l'hôte :
 ```bash
-# Chemin vu depuis le conteneur — doit correspondre au volume monté
-SANDBOXES=/chorus/sandboxes/<nom-du-sandbox>
+# Exemple : un sandbox nommé "mon-projet"
+SANDBOXES=~/Chorus/sandboxes/mon-projet
+# ou pour exposer tous les sandboxes :
+SANDBOXES=~/Chorus/sandboxes
 ```
 
 ### Port 3000 déjà utilisé
@@ -142,23 +155,23 @@ SANDBOXES=/chorus/sandboxes/<nom-du-sandbox>
 ```bash
 # Identifier le processus
 ss -tlnp | grep 3000
-# Changer le port dans .env + docker-compose.yml
+# Changer le port dans .env
 PORT=3001
 ```
 
-### `cpanm` ou `make install` échoue au démarrage du conteneur
+### `make install` échoue au démarrage du conteneur
 
 ```bash
 # Vérifier les logs de l'entrypoint
-docker compose logs chorus | grep -A5 entrypoint
-# Si engine/ n'est pas monté correctement :
-ls -la ~/Chorus/engine/Makefile.PL
+docker compose logs chorus | grep -A5 "\[entrypoint\]"
+# Vérifier que engine/ est bien monté
+docker compose exec chorus ls /chorus/engine/Makefile.PL
 ```
 
 ### Rebuild total (from scratch)
 
 ```bash
-docker compose down --remove-orphans -v   # supprime volumes nommés
+docker compose down --remove-orphans -v   # supprime conteneurs + volumes nommés
 docker compose down --rmi local           # supprime images locales
 docker compose up --build -d
 ```
@@ -168,7 +181,7 @@ docker compose up --build -d
 ```bash
 mv ~/Chorus/engine ~/Chorus/engine.bak
 docker compose down -v --rmi local
-./setup.sh                        # re-clone engine
+./setup.sh                                # re-clone engine
 docker compose up --build -d
 # Restaurer l'original après test :
 # rm -rf ~/Chorus/engine && mv ~/Chorus/engine.bak ~/Chorus/engine
