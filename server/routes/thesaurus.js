@@ -12,7 +12,7 @@ const router = Router({ mergeParams: true });
 
 router.post('/sandboxes/:sbId/thesaurus/resolve', (req, res) => {
   const { shard, term, sourceImport, action,
-          typeElement, slot, value,
+          typeElement, slot, value, scope,
           projectId, entityId, projectName } = req.body || {};
   if (!shard || !term || !sourceImport || !action) {
     return res.status(400).json({ ok: false, error: 'shard, term, sourceImport, action requis' });
@@ -20,7 +20,7 @@ router.post('/sandboxes/:sbId/thesaurus/resolve', (req, res) => {
   try {
     const result = chorus.resolveThesaurusPending(
       req.params.sbId, shard, term, sourceImport, action,
-      { typeElement, slot, value, projectId, entityId, projectName }
+      { typeElement, slot, value, scope, projectId, entityId, projectName }
     );
     res.json(result);
   } catch (err) {

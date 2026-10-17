@@ -831,6 +831,7 @@ async function pvThesReject(i) {
   if (!confirm(`Classer "${p.term}" en hors-périmètre (Out-of-scope) ?`)) return;
   await _pvThesSubmitResolve({
     shard: p.shard, term: p.term, sourceImport: p.sourceImport, action: 'reject',
+    scope:       p.scope || undefined,   // colonne 4 de * Pending (null → 'global' côté serveur)
     projectId:   currentProject?.id,
     entityId:    currentProject?.entity,
     projectName: currentProject?.name,
@@ -847,6 +848,7 @@ async function pvThesConfirm(i) {
   await _pvThesSubmitResolve({
     shard: p.shard, term: p.term, sourceImport: p.sourceImport, action: 'confirm',
     typeElement, slot: slot || undefined, value: value || undefined,
+    scope:       p.scope || undefined,   // colonne 4 de * Pending (null → 'global' côté serveur)
     projectId:   currentProject?.id,
     entityId:    currentProject?.entity,
     projectName: currentProject?.name,
