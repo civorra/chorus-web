@@ -497,10 +497,20 @@ function renderProjectPage(proj, entLabel) {
     document.getElementById('pv-kpi-nonconf-sub').textContent   = 'aucun run';
   }
 
-  // KPI "Runs" — nombre de rapports de type 'run' dans l'historique
+  // KPI "À confirmer" — éléments _a_confirmer du dernier run
   const runReports = (proj.reports || []).filter(r => r.kind === 'run');
-  document.getElementById('pv-kpi-runs').textContent     = runReports.length || '—';
-  document.getElementById('pv-kpi-runs-sub').textContent = runReports.length === 1 ? 'exécution' : runReports.length > 1 ? 'exécutions' : 'pipeline non lancé';
+  const nAConf = proj.aConfirmer ?? null;
+  const aConfEl    = document.getElementById('pv-kpi-aconfirmer');
+  const aConfSub   = document.getElementById('pv-kpi-aconfirmer-sub');
+  if (nAConf != null) {
+    aConfEl.textContent     = nAConf || '0';
+    aConfEl.style.color     = nAConf > 0 ? 'var(--warn)' : 'var(--success)';
+    aConfSub.textContent    = nAConf === 0 ? 'tout résolu ✓' : `élément${nAConf > 1 ? 's' : ''} incertain${nAConf > 1 ? 's' : ''}`;
+  } else {
+    aConfEl.textContent     = '—';
+    aConfEl.style.color     = 'var(--text-muted)';
+    aConfSub.textContent    = 'aucun run';
+  }
 
   // KPI "Dernier run" — date + verdict SOLVED/FAILED
   const kpiLastRun = runReports[runReports.length - 1];
