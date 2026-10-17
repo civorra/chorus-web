@@ -453,6 +453,7 @@ function pvReportRow(r, proj, sbId) {
 
 function renderProjectPage(proj, entLabel) {
   const sb = currentSandbox;
+  const imports = proj.imports || [];
   const compColor = proj.compliance >= 80 ? 'var(--success)' : proj.compliance >= 50 ? 'var(--warn)' : 'var(--error)';
 
   // ── Header ───────────────────────────────────────────────────
