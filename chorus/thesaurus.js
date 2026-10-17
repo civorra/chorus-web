@@ -81,6 +81,34 @@ function _makeOrgRow(cells) {
 //
 // Backup dans agent/.backups/<shard>.org.bak-<ts> avant toute écriture.
 
+// ── Écriture du journal de décisions terminologiques ─────────────────────
+//
+// workspace/<entityId>/reports/thesaurus-log-<projectId>.md
+// Créé à la première résolution, mis à jour ensuite (ajout d'une ligne).
+// Appelé après chaque confirm/reject réussi.
+
+function _appendThesaurusLog(sbPath, entityId, projectId, projectName, entry) {
+  if (!entityId || !projectId) return; // pas de contexte projet → skip silencieux
+  const reportsDir = path.join(sbPath, 'workspace', entityId, 'reports');
+  fs.mkdirSync(reportsDir, { recursive: true });
+  const logPath = path.join(reportsDir, `thesaurus-log-${projectId}.md`);
+
+  const isNew = !fs.existsSync(logPath);
+  const header = isNew
+    ? `# Journal de décisions terminologiques\n\n` +
+      `**Sandbox** : \`${path.basename(sbPath)}\` &nbsp;·&nbsp; ` +
+      `**Projet** : ${projectName || projectId} (\`${projectId}\`)\n\n` +
+      `| Date | Terme | Action | type_element | slot | Valeur | Shard | Import source |\n` +
+      `|------|-------|--------|--------------|------|--------|-------|---------------|\n`
+    : '';
+
+  const row = `| ${entry.date} | \`${entry.term}\` | ${entry.action} | ` +
+    `${entry.typeElement || '—'} | ${entry.slot || '—'} | ${entry.value || '—'} | ` +
+    `${entry.shard} | ${entry.sourceImport || '—'} |\n`;
+
+  fs.appendFileSync(logPath, header + row, 'utf8');
+}
+
 function resolveThesaurusPending(sbId, shard, term, sourceImport, action, opts = {}) {
   const sbPath   = path.join(SANDBOXES_DIR(), sbId);
   const thesPath = path.join(sbPath, 'agent', 'thesaurus', `${shard}.org`);
@@ -171,6 +199,22 @@ function resolveThesaurusPending(sbId, shard, term, sourceImport, action, opts =
   }
 
   fs.writeFileSync(thesPath, lines.join('\n'), 'utf8');
+
+  // Journal de décisions terminologiques (best-effort — jamais bloquant).
+  try {
+    const actionLabel = action === 'confirm' ? '✅ Confirmé' : '❌ Rejeté';
+    _appendThesaurusLog(sbPath, opts.entityId, opts.projectId, opts.projectName, {
+      date:         today,
+      term:         cleanTerm,
+      action:       actionLabel,
+      typeElement:  action === 'confirm' ? (opts.typeElement || '').trim() : null,
+      slot:         action === 'confirm' ? (opts.slot  || '').trim() || null : null,
+      value:        action === 'confirm' ? (opts.value || '').trim() || null : null,
+      shard,
+      sourceImport,
+    });
+  } catch { /* ne jamais bloquer la résolution pour le log */ }
+
   return { ok: true };
 }
 

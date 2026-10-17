@@ -251,6 +251,18 @@ function buildSandboxEntry(sb, iconIndex) {
         };
       });
 
+    // Journal de décisions terminologiques (thesaurus-log-<slug>.md)
+    const thesLogEntry = p.thesaurusLog ? [{
+      icon:  '📒',
+      kind:  'thesaurus-log',
+      label: p.thesaurusLog,
+      desc:  'Journal de décisions terminologiques (résolutions depuis l\'onglet Thésaurus)',
+      path:  `sandboxes/${sb.id}/workspace/${e.id}/reports/${p.thesaurusLog}`,
+      date:  null,
+      dateTime: null,
+      run:   null,
+    }] : [];
+
     return {
       id: p.id,
       name: p.name,
@@ -263,7 +275,7 @@ function buildSandboxEntry(sb, iconIndex) {
       lastRun: p.reportData?.date || null,
       verdict: p.verdict,
       imports: p.imports || [],
-      reports: [...runReportEntry, ...checkReportEntries],
+      reports: [...runReportEntry, ...checkReportEntries, ...thesLogEntry],
       corpus: [],
     };
   }));
@@ -817,7 +829,12 @@ async function pvThesReject(i) {
   const p = _pvPendingRows[i];
   if (!p || !currentSandbox) return;
   if (!confirm(`Classer "${p.term}" en hors-périmètre (Out-of-scope) ?`)) return;
-  await _pvThesSubmitResolve({ shard: p.shard, term: p.term, sourceImport: p.sourceImport, action: 'reject' });
+  await _pvThesSubmitResolve({
+    shard: p.shard, term: p.term, sourceImport: p.sourceImport, action: 'reject',
+    projectId:   currentProject?.id,
+    entityId:    currentProject?.entity,
+    projectName: currentProject?.name,
+  });
 }
 
 async function pvThesConfirm(i) {
@@ -830,6 +847,9 @@ async function pvThesConfirm(i) {
   await _pvThesSubmitResolve({
     shard: p.shard, term: p.term, sourceImport: p.sourceImport, action: 'confirm',
     typeElement, slot: slot || undefined, value: value || undefined,
+    projectId:   currentProject?.id,
+    entityId:    currentProject?.entity,
+    projectName: currentProject?.name,
   });
 }
 

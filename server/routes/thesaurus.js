@@ -11,13 +11,16 @@ const chorus = require('../../chorus');
 const router = Router({ mergeParams: true });
 
 router.post('/sandboxes/:sbId/thesaurus/resolve', (req, res) => {
-  const { shard, term, sourceImport, action, typeElement, slot, value } = req.body || {};
+  const { shard, term, sourceImport, action,
+          typeElement, slot, value,
+          projectId, entityId, projectName } = req.body || {};
   if (!shard || !term || !sourceImport || !action) {
     return res.status(400).json({ ok: false, error: 'shard, term, sourceImport, action requis' });
   }
   try {
     const result = chorus.resolveThesaurusPending(
-      req.params.sbId, shard, term, sourceImport, action, { typeElement, slot, value }
+      req.params.sbId, shard, term, sourceImport, action,
+      { typeElement, slot, value, projectId, entityId, projectName }
     );
     res.json(result);
   } catch (err) {

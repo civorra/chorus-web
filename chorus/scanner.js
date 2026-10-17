@@ -142,6 +142,12 @@ function scanFlatProject(entityPath, slug, jsonFile, runReportIndex) {
     (f.startsWith('synthese-') || f.startsWith('explain-')) && f.endsWith('.md')
   );
 
+  // Journal de décisions terminologiques (écrit par chorus-web lors des résolutions)
+  const thesaurusLog = reportFiles.find(f =>
+    f === `thesaurus-log-${slug}.md` ||
+    f === `thesaurus-log-${reportSlug}.md`
+  ) || null;
+
   const runEntries = (runReportIndex && runReportIndex.get(`${slug}.json`)) || [];
 
   for (const entry of runEntries) {
@@ -238,6 +244,7 @@ function scanFlatProject(entityPath, slug, jsonFile, runReportIndex) {
     reportFile,
     reportData,
     checkReports,
+    thesaurusLog,
     runEntries,
     imports,
     norm:        reportData?.norm || null,
@@ -279,6 +286,15 @@ function scanNestedProject(entityPath, projId) {
       )
     : [];
 
+  // Journal terminologique — convention flat (workspace/<entity>/reports/)
+  const flatReportsDir = path.join(entityPath, 'reports');
+  const thesaurusLog = (() => {
+    try {
+      return fs.readdirSync(flatReportsDir)
+        .find(f => f === `thesaurus-log-${projId}.md`) || null;
+    } catch { return null; }
+  })();
+
   const name = projId.replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
 
   return {
@@ -295,6 +311,7 @@ function scanNestedProject(entityPath, projId) {
     reportFile: reportFile || null,
     reportData: reportData || null,
     checkReports,
+    thesaurusLog,
     norm:       reportData?.norm || null,
   };
 }
