@@ -349,7 +349,8 @@ function httpsPost(urlStr, body, headers) {
       res.on('end', () => {
         let parsed;
         try { parsed = JSON.parse(d); } catch { parsed = d; }
-        resolve({ status: res.statusCode, data: parsed });
+        // Capturer les headers de réponse (Retry-After, X-RateLimit-*, etc.)
+        resolve({ status: res.statusCode, data: parsed, headers: res.headers });
       });
     });
     req.on('error', reject);
@@ -478,7 +479,32 @@ router.post('/api/auth/eca-login/:sessionId/submit', express.json(), async (req,
       { 'Content-Type': 'application/json', Accept: 'application/json' }
     );
     if (tokenRes.status !== 200 || !tokenRes.data.access_token) {
-      return res.status(401).json({ ok: false, error: `Échange token échoué : ${JSON.stringify(tokenRes.data)}` });
+      // Cas rate limit (HTTP 429) : extraire Retry-After si disponible
+      const isRateLimit =
+        tokenRes.status === 429 ||
+        (tokenRes.data && tokenRes.data.error && tokenRes.data.error.type === 'rate_limit_error');
+      if (isRateLimit) {
+        const retryAfter = tokenRes.headers && (
+          tokenRes.headers['retry-after'] ||
+          tokenRes.headers['x-ratelimit-reset-requests'] ||
+          tokenRes.headers['x-ratelimit-reset']
+        );
+        const waitMsg = retryAfter
+          ? ` Réessayez dans ${retryAfter} seconde(s).`
+          : ' Réessayez dans quelques heures (limite par IP/client_id sur console.anthropic.com).';
+        return res.status(429).json({
+          ok:         false,
+          rateLimited: true,
+          error:      `Anthropic OAuth : trop de tentatives d'échange de token.${waitMsg}`,
+          detail:     tokenRes.data,
+          retryAfter: retryAfter || null,
+        });
+      }
+      return res.status(401).json({
+        ok:     false,
+        error:  `Échange token échoué (HTTP ${tokenRes.status}) : ${JSON.stringify(tokenRes.data)}`,
+        detail: tokenRes.data,
+      });
     }
     const accessToken = tokenRes.data.access_token;
 
@@ -489,7 +515,11 @@ router.post('/api/auth/eca-login/:sessionId/submit', express.json(), async (req,
       { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json', Accept: 'application/json' }
     );
     if (keyRes.status !== 200 || !keyRes.data.api_key) {
-      return res.status(502).json({ ok: false, error: `Création API key échouée : ${JSON.stringify(keyRes.data)}` });
+      return res.status(502).json({
+        ok:     false,
+        error:  `Création API key échouée (HTTP ${keyRes.status}) : ${JSON.stringify(keyRes.data)}`,
+        detail: keyRes.data,
+      });
     }
     const apiKey     = keyRes.data.api_key;
     const expiresAt  = tokenRes.data.expires_in
