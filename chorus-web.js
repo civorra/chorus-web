@@ -476,10 +476,12 @@ function renderProjectPage(proj, entLabel) {
   // ── KPI cards ─────────────────────────────────────────────────
   document.getElementById('pv-kpi-frames').textContent    = proj.frames ?? '—';
   document.getElementById('pv-kpi-frames-sub').textContent = proj.frames ? 'corpus frames' : '';
-  // KPI "Non conformes" — dérivé du taux de conformité + nb de frames
+  // KPI "Non conformes" — lu depuis reportData.nonConformes (direct, pas de back-calcul)
+  // Le back-calcul (frames - round(compliance% × frames)) était incorrect : il incluait
+  // les éléments _a_confirmer dans les non-conformes (ex: 47+4+5=56 frames, 84% → 9 au
+  // lieu de 4 car round(84%×56)=47, 56-47=9 ≠ n_non_conforme=4).
   if (proj.compliance != null && proj.frames) {
-    const conform  = Math.round(proj.compliance / 100 * proj.frames);
-    const nonconf  = proj.frames - conform;
+    const nonconf  = proj.reportData?.nonConformes ?? (proj.frames - Math.round(proj.compliance / 100 * proj.frames));
     const ncColor  = nonconf === 0 ? 'var(--success)' : nonconf <= 3 ? 'var(--warn)' : 'var(--error)';
     document.getElementById('pv-kpi-nonconf').textContent       = nonconf;
     document.getElementById('pv-kpi-nonconf').style.color       = ncColor;
