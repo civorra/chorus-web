@@ -51,17 +51,25 @@ services:
       # Same mount as chorus-web: ECA must see engine/AGENTS.md,
       # agent/skills/*.md and sandboxes/ to load the real skills.
       - ${CHORUS_HOME}:/chorus
-      # ECA OAuth credentials (host Pro/Max + GitHub Copilot session) — read-only.
-      # Réactivé 2026-10-17 : le mécanisme .webapp-auth.json →
-      # GITHUB_COPILOT_TOKEN (eca-bootstrap.sh) ne fonctionne avec aucun
-      # binaire ECA testé (0.164.0/0.165.0/0.165.1) — cette variable d'env
-      # n'est lue nulle part dans le binaire (confirmé par inspection
-      # binaire). ECA lit ses credentials OAuth Copilot exclusivement
-      # depuis ce fichier Transit natif (oauth_access_token/renew_token),
-      # qui contient déjà une session Copilot valide sur l'hôte
-      # (~:step ~:login/done). Voir eca-config.json § providers pour le
-      # détail de cette investigation.
-      - ${OAUTH_CREDENTIALS}:/root/.cache/eca/db.transit.json:ro
+      # ECA OAuth credentials (host Pro/Max session) — read-only, OPTIONNEL.
+      #
+      # Depuis le flow de login webapp natif (2026-10-17, voir auth.js §
+      # ECA LOGIN NATIF + eca-client.js § subscribeLoginFlow), ce mount
+      # n'est PLUS REQUIS pour GitHub Copilot : un utilisateur lambda peut
+      # s'authentifier intégralement via Config > Authentification dans la
+      # webapp (bouton "GitHub Copilot"), sans session Emacs/hôte préalable
+      # — validé de bout en bout, mount désactivé pendant le test. ECA crée
+      # alors lui-même son propre db.transit.json à l'intérieur du
+      # conteneur, de façon totalement autonome.
+      #
+      # Utilité résiduelle de ce mount : réutiliser une session OAuth
+      # Anthropic Pro/Max ou Copilot DÉJÀ active sur l'hôte (ex. session
+      # Emacs personnelle de l'opérateur), en fallback/raccourci pratique —
+      # sinon, piloter l'authentification uniquement via la webapp.
+      # Décommenter uniquement si ce raccourci est souhaité pour un poste
+      # de dev donné ; sinon laisser commenté par défaut (déploiement
+      # portable, zéro dépendance à l'environnement hôte).
+      # - ${OAUTH_CREDENTIALS}:/root/.cache/eca/db.transit.json:ro
       # eca-config.json monté en volume : override du COPY Dockerfile.eca,
       # évite un rebuild pour changer de provider (Anthropic ↔ Copilot).
       - ./eca-config.json:/etc/eca/config.json:ro

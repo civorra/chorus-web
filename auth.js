@@ -22,6 +22,7 @@ const https   = require('https');
 const path    = require('path');
 const crypto  = require('crypto');
 const express = require('express');
+const eca     = require('./eca-client');
 
 const router = express.Router();
 
@@ -290,18 +291,29 @@ router.post('/api/auth/reload-eca', express.json(), async (req, res) => {
 });
 
 // ══════════════════════════════════════════════════════════════
-// ECA LOGIN — OAuth natif Node.js (zéro dépendance ECA locale)
+// ECA LOGIN — Anthropic : OAuth natif Node.js (zéro dépendance ECA locale).
+//            GitHub Copilot : pilotage du flow conversationnel natif
+//            d'ECA (`/login github`) — voir eca-client.js §
+//            subscribeLoginFlow pour le détail du protocole et son
+//            avertissement critique (connexion SSE à garder ouverte).
 //
-// Réplique exactement le workflow /login d'Emacs ECA en appelant
-// directement les endpoints OAuth des providers. Aucun binaire ECA,
-// aucun Emacs, aucune dépendance externe — http/https/crypto Node.js natifs.
-//
-// Providers et flows :
-//   anthropic     → PKCE + OOB (code affiché sur console.anthropic.com)
-//   github-copilot → Device Flow RFC 8628 (code + polling GitHub)
+// ⚠️ Historique (2026-10-17) : la première implémentation de ce fichier
+// réimplémentait le Device Flow GitHub (RFC 8628) en Node.js pur et stockait
+// le token obtenu dans .webapp-auth.json, relayé à eca-server via la
+// variable d'environnement GITHUB_COPILOT_TOKEN (eca-bootstrap.sh). Ce
+// mécanisme s'est avéré non fonctionnel : confirmé par inspection binaire
+// qu'aucune version d'ECA testée (0.164.0/0.165.0/0.165.1) ne lit cette
+// variable — le Device Flow aboutissait bien côté GitHub, mais ECA ne
+// voyait jamais la session et continuait de répondre
+// "No available model found". ECA attend ses credentials Copilot
+// exclusivement via son propre store OAuth natif (~/.cache/eca/db.transit.json,
+// écrit par ECA lui-même). Remplacé par le pilotage direct de la commande
+// `/login github` d'ECA, qui écrit cette session lui-même — validé de bout
+// en bout (device-code affiché → validation humaine → "Login successful!"
+// → db.transit.json peuplé dans le conteneur, sans dépendance à l'hôte).
 // ══════════════════════════════════════════════════════════════
 
-// ── OAuth constants ───────────────────────────────────────────
+// ── OAuth constants (anthropic uniquement — copilot n'en a plus besoin) ──
 
 // Valeurs par défaut = client_ids extraits du binaire ECA (eca.dev).
 // Surchargeables via .env si vous enregistrez vos propres OAuth Apps.
@@ -311,11 +323,6 @@ const ANTHROPIC_REDIRECT   = 'https://console.anthropic.com/oauth/code/callback'
 const ANTHROPIC_AUTH_URL   = 'https://claude.ai/oauth/authorize';
 const ANTHROPIC_TOKEN_URL  = 'https://console.anthropic.com/v1/oauth/token';
 const ANTHROPIC_APIKEY_URL = 'https://api.anthropic.com/api/oauth/claude_cli/create_api_key';
-
-const COPILOT_CLIENT_ID    = process.env.COPILOT_OAUTH_CLIENT_ID   || 'Iv1.b507a08c87ecfe98';
-const COPILOT_DEVICE_URL   = 'https://github.com/login/device/code';
-const COPILOT_TOKEN_URL    = 'https://github.com/login/oauth/access_token';
-const COPILOT_GRANT_TYPE   = 'urn:ietf:params:oauth:grant-type:device_code';
 
 // ── PKCE helpers ─────────────────────────────────────────────
 
@@ -371,7 +378,11 @@ function makeSession(id, provider, extra) {
 }
 function dropSession(id) {
   const s = ecaSessions.get(id);
-  if (s) { clearTimeout(s.ttl); ecaSessions.delete(id); }
+  if (s) {
+    clearTimeout(s.ttl);
+    if (s.ecaSub) { try { s.ecaSub.destroy(); } catch {} }
+    ecaSessions.delete(id);
+  }
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -418,21 +429,61 @@ router.post('/api/auth/eca-login/start', express.json(), async (req, res) => {
       });
     }
 
-    // ── GitHub Copilot Device Flow ──────────────────────────
-    const r = await httpsPost(
-      COPILOT_DEVICE_URL,
-      { client_id: COPILOT_CLIENT_ID, scope: '' },
-      { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' }
-    );
-    if (r.status !== 200 || !r.data.device_code) {
-      return res.status(502).json({ ok: false, error: `GitHub device/code : HTTP ${r.status} — ${JSON.stringify(r.data)}` });
-    }
-    const { device_code, user_code, verification_uri, expires_in, interval } = r.data;
-    makeSession(sessionId, provider, { device_code, interval: (interval || 5) * 1000, expiresAt: Date.now() + expires_in * 1000 });
+    // ── GitHub Copilot — pilotage du flow conversationnel ECA natif ──
+    // Ouvre un chat système dédié, lance '/login github', répond à la
+    // question ask-question avec le label exact 'github-copilot', puis
+    // s'abonne au flux SSE (subscribeLoginFlow) pour intercepter le
+    // user_code + verification_uri dès qu'ECA les affiche. La connexion
+    // SSE est maintenue ouverte et transmise au store de session : c'est
+    // elle qui portera ensuite le polling jusqu'à /wait (voir avertissement
+    // critique dans eca-client.js § subscribeLoginFlow — NE JAMAIS la
+    // fermer avant succès/échec confirmé).
+    const chatId = `eca-login-copilot-${sessionId}`;
+
+    const codeReady = await new Promise((resolve, reject) => {
+      const timeoutHandle = setTimeout(() => {
+        sub.destroy();
+        reject(new Error('Délai dépassé en attente du code GitHub (20s)'));
+      }, 20000);
+
+      const sub = eca.subscribeLoginFlow(chatId, {
+        onQuestion: ({ options }) => {
+          // Répond uniquement à la 1ère question (choix du provider) —
+          // github-copilot n'a pas de sous-question supplémentaire,
+          // contrairement à anthropic (max/console/manual).
+          const match = options.find(o => o.label === 'github-copilot');
+          if (match) eca.sendLoginStep(chatId, 'github-copilot').catch(() => {});
+        },
+        onCodeReady: ({ url, code }) => {
+          clearTimeout(timeoutHandle);
+          resolve({ url, code, sub });
+        },
+        onError: (e) => {
+          clearTimeout(timeoutHandle);
+          reject(e);
+        },
+        onCancelled: () => {
+          clearTimeout(timeoutHandle);
+          reject(new Error('Login annulé côté ECA'));
+        },
+      });
+
+      // Démarre le flow — la réponse à la ask-question est envoyée par
+      // onQuestion ci-dessus dès qu'elle arrive sur le flux SSE.
+      eca.sendLoginStep(chatId, '/login github').catch((e) => {
+        clearTimeout(timeoutHandle);
+        sub.destroy();
+        reject(e);
+      });
+    });
+
+    // Conserve la souscription SSE active dans la session — /wait la
+    // réutilisera pour attendre onSuccess (ne pas la détruire ici).
+    makeSession(sessionId, provider, { chatId, ecaSub: codeReady.sub });
     return res.json({
       ok: true, sessionId, action: 'device-code',
-      url:      verification_uri,
-      userCode: user_code,
+      url:      codeReady.url,
+      userCode: codeReady.code,
       message:  'Ouvrez ce lien et entrez le code ci-dessous :',
     });
 
@@ -546,9 +597,12 @@ router.post('/api/auth/eca-login/:sessionId/submit', express.json(), async (req,
 // ═══════════════════════════════════════════════════════════════
 // ROUTE — GET /api/auth/eca-login/:sessionId/wait  (SSE)
 //
-// GitHub Copilot Device Flow : poll jusqu'à obtention du token.
-// Écrit dans .webapp-auth.json + restart eca-server.
-// Events SSE : ping · done { provider } · error { message }
+// GitHub Copilot : relaie les événements de la souscription ECA déjà
+// active (session.ecaSub, créée par /start — voir subscribeLoginFlow).
+// N'effectue plus de polling GitHub direct : c'est ECA qui poll en
+// interne tant que la connexion /api/v1/events qu'on a ouverte depuis
+// /start reste vivante (voir avertissement critique eca-client.js).
+// Events SSE renvoyés au frontend (inchangé) : ping · done { provider } · error { message }
 // ═══════════════════════════════════════════════════════════════
 
 router.get('/api/auth/eca-login/:sessionId/wait', (req, res) => {
@@ -559,13 +613,21 @@ router.get('/api/auth/eca-login/:sessionId/wait', (req, res) => {
   res.setHeader('Connection',    'keep-alive');
   res.flushHeaders();
 
-  if (!session) {
-    res.write(`event: error\ndata: ${JSON.stringify({ message: 'Session introuvable ou expirée' })}\n\n`);
+  if (!session || !session.ecaSub) {
+    res.write(`event: error\ndata: ${JSON.stringify({ message: 'Session introuvable, expirée, ou sans flow ECA actif' })}\n\n`);
     return res.end();
   }
 
   const ping = setInterval(() => res.write('event: ping\ndata: {}\n\n'), 15000);
   let   done = false;
+
+  // Timeout de sécurité — la session device-code GitHub expire généralement
+  // sous 15 min ; on borne ici à 10 min pour rester cohérent avec le TTL de
+  // session déjà en place (makeSession).
+  const expTimer = setTimeout(
+    () => finish(false, { message: 'Délai d\'autorisation expiré — relancez le flow' }),
+    9 * 60 * 1000
+  );
 
   const finish = (ok, payload) => {
     if (done) return;
@@ -573,50 +635,29 @@ router.get('/api/auth/eca-login/:sessionId/wait', (req, res) => {
     clearInterval(ping);
     clearTimeout(expTimer);
     if (ok) {
-      dropSession(session.id);
       dockerRestart(ECA_CONTAINER_NAME()).catch(() => {});
       res.write(`event: done\ndata: ${JSON.stringify(payload)}\n\n`);
     } else {
       res.write(`event: error\ndata: ${JSON.stringify(payload)}\n\n`);
     }
     res.end();
+    dropSession(session.id); // ferme aussi session.ecaSub (voir dropSession)
   };
 
-  const expTimer = setTimeout(
-    () => finish(false, { message: 'Délai d\'autorisation expiré — relancez le flow' }),
-    session.expiresAt - Date.now()
-  );
+  // Ré-attache les handlers onSuccess/onCancelled/onError de la souscription
+  // déjà ouverte depuis /start — subscribeLoginFlow ne les a pas fixés à la
+  // création (seuls onQuestion/onCodeReady l'étaient, voir route /start),
+  // donc on complète ici en patchant les callbacks exposés par l'objet sub.
+  // (subscribeLoginFlow garde une référence interne aux handlers passés à
+  // sa création ; comme /start n'a fourni ni onSuccess ni onCancelled, il
+  // faut les attacher maintenant pour que le flux déjà actif les déclenche.)
+  session.ecaSub.setHandlers?.({
+    onSuccess: () => finish(true, { provider: session.provider }),
+    onCancelled: () => finish(false, { message: 'Login annulé côté ECA' }),
+    onError: (e) => finish(false, { message: e.message }),
+  });
 
-  // Polling GitHub
-  const poll = async () => {
-    if (done) return;
-    try {
-      const r = await httpsPost(
-        COPILOT_TOKEN_URL,
-        { client_id: COPILOT_CLIENT_ID, device_code: session.device_code, grant_type: COPILOT_GRANT_TYPE },
-        { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' }
-      );
-      if (r.data.access_token) {
-        writeWebappAuth(WEBAPP_AUTH_FILE(), 'github-copilot', {
-          access_token: r.data.access_token,
-          token_type:   r.data.token_type || 'bearer',
-          scope:        r.data.scope || '',
-          source:       'device-flow',
-        });
-        return finish(true, { provider: 'github-copilot' });
-      }
-      // authorization_pending ou slow_down → continuer à poller
-      if (!r.data.error || r.data.error === 'authorization_pending' || r.data.error === 'slow_down') {
-        const interval = r.data.error === 'slow_down' ? session.interval * 2 : session.interval;
-        setTimeout(poll, interval);
-      } else {
-        finish(false, { message: `GitHub OAuth : ${r.data.error_description || r.data.error}` });
-      }
-    } catch (e) {
-      setTimeout(poll, session.interval); // erreur réseau → retry
-    }
-  };
-  setTimeout(poll, session.interval);
+  if (req.socket) req.socket.on('close', () => { clearInterval(ping); clearTimeout(expTimer); });
 });
 
 // ═══════════════════════════════════════════════════════════════

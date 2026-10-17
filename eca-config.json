@@ -56,17 +56,11 @@
             "cacheRetention": "long"
         }
         // "copilot" provider key intentionally omitted here — ECA's native
-        // Copilot support (eca.llm_providers.copilot, confirmed by binary
-        // inspection of 0.164.0/0.165.0/0.165.1) expects OAuth credentials
-        // from ~/.cache/eca/db.transit.json (oauth_access_token/
-        // oauth_renew_token), NOT a GITHUB_COPILOT_TOKEN env var — that var
-        // is read by nothing in the eca binary. See eca-bootstrap.sh
-        // investigation (2026-10-17): the custom .webapp-auth.json →
-        // GITHUB_COPILOT_TOKEN injection path never worked against the
-        // real binary. Fix pending: either (a) remount db.transit.json
-        // (docker-compose.yml currently has this commented out) populated
-        // via a real `eca login`, or (b) have the webapp write directly
-        // into db.transit.json's Transit format instead of .webapp-auth.json.
+        // Copilot support reads its session from ~/.cache/eca/db.transit.json,
+        // populated automatically by ECA itself once a user authenticates
+        // via Config > Authentification in the webapp (auth.js § ECA LOGIN
+        // NATIF — the /login github conversational flow, validated
+        // end-to-end 2026-10-17, no manual provider config entry needed).
     },
 
     "agent": {

@@ -469,6 +469,149 @@ function subscribeEcaEvents(chatId, { onChunk, onAsk, onToolLog, onSubagentToolL
 }
 
 /**
+ * Pilote le flow conversationnel natif `/login <provider>` d'ECA (Engine
+ * AGENTS.md § investigation 2026-10-17 — auth.js § ECA LOGIN NATIF).
+ *
+ * Contrairement à `subscribeEcaEvents` (conçu pour un prompt normal :
+ * texte assistant + tool calls + idle final), ce flow est un dialogue
+ * système multi-tour piloté par `chat:ask-question` (ECA attend une
+ * réponse texte exacte, ex. "github-copilot", "max") et se termine par un
+ * `chat:content-received` texte contenant soit un couple
+ * (user_code, verification_uri) pour un provider device-flow (ex.
+ * github-copilot), soit une URL + instruction de coller un code retour
+ * pour un provider authorization-code manuel (ex. anthropic "max").
+ *
+ * ⚠️ CRITIQUE (confirmé empiriquement 2026-10-17, 2 échecs avant succès) :
+ * la connexion SSE `/api/v1/events` DOIT rester ouverte pendant toute la
+ * durée de l'attente de validation humaine côté provider (ex. tant que
+ * l'utilisateur n'a pas validé le code sur github.com/login/device) — le
+ * polling interne d'ECA vers le provider semble lié au cycle de vie de
+ * cette connexion HTTP. La fermer prématurément (même après avoir reçu le
+ * code) fait que le chat reste bloqué en status "login" indéfiniment, sans
+ * jamais recevoir la confirmation "Login successful!".
+ *
+ * Usage (provider device-flow, ex. github-copilot) :
+ *   1. sendLoginStep(chatId, '/login github')
+ *   2. onQuestion → répondre avec le label exact demandé (ex. 'github-copilot')
+ *   3. onCodeReady({ url, code }) → afficher à l'utilisateur
+ *   4. (attente — NE PAS fermer le stream) onSuccess() quand la validation
+ *      humaine aboutit côté provider
+ *
+ * Usage (provider authorization-code manuel, ex. anthropic max) :
+ *   1. sendLoginStep(chatId, '/login') puis répondre 'anthropic' puis 'max'
+ *   2. onUrlReady({ url }) → l'utilisateur ouvre l'URL, s'authentifie,
+ *      récupère un code affiché par le provider
+ *   3. sendLoginStep(chatId, '<code collé par l'utilisateur>')
+ *   4. onSuccess()
+ *
+ * @param {string} chatId — identifiant de chat dédié à cette session de login
+ * @param {object} handlers
+ *   onQuestion({ question, options, requestId }) — ECA attend une réponse
+ *   onCodeReady({ url, code })  — device-flow : code + URL à afficher
+ *   onUrlReady({ url })         — authorization-code : URL à ouvrir
+ *   onSuccess()                 — "Login successful!" détecté
+ *   onCancelled()                — login annulé/expiré côté ECA
+ *   onError(err)
+ * @returns {{ req: object, destroy: function }} — req = requête HTTPS SSE
+ *   sous-jacente ; appeler destroy() seulement après onSuccess/onError/
+ *   onCancelled (jamais avant, voir avertissement ci-dessus).
+ */
+function subscribeLoginFlow(chatId, initialHandlers = {}) {
+  const base = new URL(ECA_SERVER_URL);
+  let destroyed = false;
+  // Handlers mutables : /start fournit onQuestion/onCodeReady/onUrlReady,
+  // puis /wait (route HTTP séparée, appelée plus tard par le frontend)
+  // complète avec onSuccess/onCancelled/onError via setHandlers() —
+  // nécessaire car la connexion SSE est ouverte une seule fois dans /start
+  // (voir avertissement critique ci-dessus) mais ses callbacks de
+  // complétion ne sont connus/utiles qu'au moment de /wait.
+  const h = { ...initialHandlers };
+
+  const req = https.request(
+    {
+      hostname: base.hostname, port: base.port || 7777,
+      path: '/api/v1/events', method: 'GET',
+      headers: { Authorization: `Bearer ${ECA_REMOTE_PASSWORD}` },
+      rejectUnauthorized: false, agent: false,
+    },
+    (res) => {
+      let buf = '';
+      res.on('data', (d) => {
+        buf += d;
+        const blocks = buf.split('\n\n');
+        buf = blocks.pop();
+        for (const block of blocks) {
+          if (!block.trim()) continue;
+          const evtMatch = block.match(/^event:\s*(.+)/m);
+          const datMatch = block.match(/^data:\s*(.+)/m);
+          if (!evtMatch || !datMatch) continue;
+          const eventType = evtMatch[1].trim();
+          let data;
+          try { data = JSON.parse(datMatch[1]); } catch { continue; }
+
+          if (data.chatId !== chatId) continue; // unrelated chat — ignore
+
+          if (eventType === 'chat:ask-question') {
+            if (h.onQuestion) h.onQuestion({ question: data.question, options: data.options || [], requestId: data.requestId });
+          }
+
+          if (eventType === 'chat:content-received' && data.role === 'system' && data.content?.type === 'text') {
+            const text = data.content.text || '';
+
+            // Device-flow (github-copilot) : "...code:\n\n`XXXX-XXXX`"
+            // + "...open your browser at [url](url)..."
+            const codeMatch = text.match(/code:\s*\n*\s*`([A-Z0-9-]+)`/);
+            const deviceUrlMatch = text.match(/open your browser at \[(https?:\/\/[^\]]+)\]/);
+            if (codeMatch && deviceUrlMatch && h.onCodeReady) {
+              h.onCodeReady({ url: deviceUrlMatch[1], code: codeMatch[1] });
+            }
+
+            // Authorization-code manuel (anthropic max) : "Open your browser
+            // at: [Anthropic login](<url>)" sans code immédiat — l'user doit
+            // coller un code retour ensuite.
+            const authUrlMatch = text.match(/Open your browser at:\s*\[[^\]]+\]\((https?:\/\/[^)]+)\)/);
+            if (authUrlMatch && !codeMatch && h.onUrlReady) {
+              h.onUrlReady({ url: authUrlMatch[1] });
+            }
+
+            // Succès — texte exact confirmé empiriquement : "Login successful!"
+            if (/Login successful!/i.test(text) && h.onSuccess) {
+              h.onSuccess();
+            }
+
+            // Annulation / expiration
+            if (/cancelled|canceled|expired|délai d'autorisation expiré/i.test(text) && h.onCancelled) {
+              h.onCancelled();
+            }
+          }
+        }
+      });
+      res.on('end', () => { if (!destroyed && h.onError) h.onError(new Error('eca-server: connexion SSE login fermée')); });
+      res.on('error', (e) => { if (!destroyed && h.onError) h.onError(e); });
+    }
+  );
+  req.on('error', (e) => { if (!destroyed && h.onError) h.onError(e); });
+  req.end();
+
+  return {
+    req,
+    destroy: () => { destroyed = true; try { req.destroy(); } catch {} },
+    // Fusionne de nouveaux handlers (ex. onSuccess/onCancelled/onError
+    // attachés plus tard par la route /wait) sans perdre ceux déjà en place.
+    setHandlers: (more) => { Object.assign(h, more); },
+  };
+}
+
+/**
+ * Envoie un message dans un chat de login en cours (répond à une
+ * ask-question, ou lance la commande initiale `/login <provider>`).
+ * Simple alias sémantique de ecaRequest pour la lisibilité côté auth.js.
+ */
+function sendLoginStep(chatId, message) {
+  return ecaRequest(`/api/v1/chats/${encodeURIComponent(chatId)}/prompt`, 'POST', { message });
+}
+
+/**
  * Force l'agent ECA (architect/code/fast/…) d'un chat existant
  * (Engine/TODO.org [#J] Axe 1 — routage explicite skill → agent).
  *
@@ -507,4 +650,4 @@ async function setChatAgent(chatId, agentName) {
   }
 }
 
-module.exports = { ecaRequest, pingTcp, promptAndWait, promptAndWaitSSE, lastAssistantText, subscribeEcaEvents, setChatAgent };
+module.exports = { ecaRequest, pingTcp, promptAndWait, promptAndWaitSSE, lastAssistantText, subscribeEcaEvents, setChatAgent, subscribeLoginFlow, sendLoginStep };
