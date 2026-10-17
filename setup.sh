@@ -23,7 +23,10 @@ if [ -f "$SCRIPT_DIR/.env" ]; then
 fi
 
 # ── Valeurs par défaut ───────────────────────────────────────────────────────
-CHORUS_HOME="${CHORUS_HOME:-$(dirname "$SCRIPT_DIR")}"
+# CHORUS_HOME : dossier parent conventionnel qui contiendra engine/ et web/.
+# Défaut : ~/Chorus (indépendant de l'endroit où web/ est cloné).
+# Surcharger dans .env ou via : CHORUS_HOME=/autre/chemin ./setup.sh
+CHORUS_HOME="${CHORUS_HOME:-$HOME/Chorus}"
 CHORUS_ENGINE_HOME="${CHORUS_ENGINE_HOME:-$CHORUS_HOME/engine}"
 CHORUS_ENGINE_REPO="${CHORUS_ENGINE_REPO:-https://github.com/maelink/Chorus-Engine.git}"
 CHORUS_ENGINE_BRANCH="${CHORUS_ENGINE_BRANCH:-devel}"
@@ -33,8 +36,23 @@ echo "╔═══════════════════════�
 echo "║         Chorus — Bootstrap setup         ║"
 echo "╚══════════════════════════════════════════╝"
 echo ""
+echo "  web/    (ce repo)  : $SCRIPT_DIR"
+echo "  engine/ (à cloner) : $CHORUS_ENGINE_HOME"
 echo "  CHORUS_HOME        : $CHORUS_HOME"
-echo "  CHORUS_ENGINE_HOME : $CHORUS_ENGINE_HOME"
+echo ""
+
+# ── Confirmation si engine irait ailleurs que ~/Chorus/engine ────────────────
+if [ "$CHORUS_ENGINE_HOME" != "$HOME/Chorus/engine" ] && [ ! -d "$CHORUS_ENGINE_HOME/.git" ]; then
+  echo "  ⚠️  engine/ sera cloné dans : $CHORUS_ENGINE_HOME"
+  printf "  Confirmer ? [o/N] "
+  read -r confirm
+  if [[ ! "$confirm" =~ ^[oOyY]$ ]]; then
+    echo ""
+    echo "  Annulé. Pour choisir un autre chemin :"
+    echo "  CHORUS_ENGINE_HOME=/mon/chemin/engine ./setup.sh"
+    exit 0
+  fi
+fi
 echo ""
 
 # ── 1. Clone engine si absent ─────────────────────────────────────────────────

@@ -17,11 +17,15 @@
 
 ```bash
 # 1. Cloner la webapp (point d'entrée)
+#    Le dossier de destination peut être quelconque — setup.sh clone engine
+#    dans ~/Chorus/engine par défaut, indépendamment de l'emplacement de web/.
 git clone https://github.com/maelink/chorus-web ~/Chorus/web
 
 # 2. Bootstrap : clone engine + crée .env
 cd ~/Chorus/web
 ./setup.sh
+#    → clone engine dans ~/Chorus/engine (défaut conventionnel)
+#    → pour un chemin différent : CHORUS_ENGINE_HOME=/autre/chemin ./setup.sh
 
 # 3. Vérifier/éditer .env si nécessaire
 #    (setup.sh guide la configuration — voir § Configuration ci-dessous)
