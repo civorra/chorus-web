@@ -19,7 +19,7 @@
 # 1. Cloner la webapp (point d'entrée)
 #    Le dossier de destination peut être quelconque — setup.sh clone engine
 #    dans ~/Chorus/engine par défaut, indépendamment de l'emplacement de web/.
-git clone --branch devel https://github.com/maelink/chorus-web ~/Chorus/web
+git clone --branch devel https://github.com/civorra/chorus-web ~/Chorus/web
 
 # 2. Bootstrap : clone engine + crée .env
 cd ~/Chorus/web

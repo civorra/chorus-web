@@ -28,7 +28,7 @@ fi
 # Surcharger dans .env ou via : CHORUS_HOME=/autre/chemin ./setup.sh
 CHORUS_HOME="${CHORUS_HOME:-$HOME/Chorus}"
 CHORUS_ENGINE_HOME="${CHORUS_ENGINE_HOME:-$CHORUS_HOME/engine}"
-CHORUS_ENGINE_REPO="${CHORUS_ENGINE_REPO:-https://github.com/maelink/Chorus-Engine.git}"
+CHORUS_ENGINE_REPO="${CHORUS_ENGINE_REPO:-https://github.com/civorra/Chorus.git}"
 CHORUS_ENGINE_BRANCH="${CHORUS_ENGINE_BRANCH:-devel}"
 
 echo ""
