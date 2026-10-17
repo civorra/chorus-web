@@ -274,7 +274,10 @@ function buildSandboxEntry(sb, iconIndex) {
       compliance: p.compliance,
       nonConformes: p.reportData?.nonConformes ?? null,
       aConfirmer:   p.reportData?.aConfirmer   ?? null,
-      lastRun: p.reportData?.date || null,
+      lastRun:    p.reportData?.date || null,
+      importDate: (p.imports && p.imports.length)
+        ? [...p.imports].sort((a,b) => (b.date||'') > (a.date||'') ? 1 : -1)[0].date || null
+        : null,
       verdict: p.verdict,
       imports: p.imports || [],
       reports: [...runReportEntry, ...checkReportEntries, ...thesLogEntry],
@@ -1278,12 +1281,15 @@ function renderProjectsTab() {
   // rather than a grid of tall cards: avoids unnecessary vertical scrolling
   // when there is plenty of horizontal space but grid cards were tall
   // (multiple action rows).
-  // Tri par date de dernier run décroissante (projets sans run en dernier)
+  // Tri par date d'import décroissante (le plus récemment importé en premier)
+  // Fallback : lastRun si importDate absent, puis en dernier si aucun
   const sortByLastRun = list => [...list].sort((a, b) => {
-    if (!a.lastRun && !b.lastRun) return 0;
-    if (!a.lastRun) return  1;
-    if (!b.lastRun) return -1;
-    return b.lastRun > a.lastRun ? 1 : b.lastRun < a.lastRun ? -1 : 0;
+    const da = a.importDate || a.lastRun || null;
+    const db = b.importDate || b.lastRun || null;
+    if (!da && !db) return 0;
+    if (!da) return  1;
+    if (!db) return -1;
+    return db > da ? 1 : db < da ? -1 : 0;
   });
 
   if (currentEntityId) {
