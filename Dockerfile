@@ -55,9 +55,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
        openpyxl \
        beautifulsoup4
 
-# ── Modules Perl CPAN complémentaires ─────────────────────────────────────────
-RUN cpanm --notest JSON Digest::MD5 File::Temp
-
 # ── npm — dépendances installées dans le volume node_modules_chorus ───────────
 # package.json est COPYé uniquement pour que `npm install` soit
 # reproductible dans l'entrypoint sans accès réseau si le layer est déjà
