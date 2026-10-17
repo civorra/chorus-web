@@ -1,369 +1,171 @@
-# Intégration frontend MVP0
+# Chorus — Guide d'installation
 
-Ce document décrit les **3 adaptations** à faire dans `chorus-web.html`
-pour le brancher sur le serveur Node.js MVP0.
+## Prérequis
 
----
+| Outil | Version minimale | Vérification |
+|---|---|---|
+| Docker | 24+ | `docker --version` |
+| Docker Compose | v2.20+ | `docker compose version` |
+| Git | 2+ | `git --version` |
 
-## 1. Initialisation — remplacer les données JS hardcodées
-
-Au chargement de la page, appeler `/api/scan` et injecter les résultats
-à la place des constantes `SANDBOXES` / `PROJECTS` / `CONTEXTS`.
-
-```js
-// Ajouter en haut de <script>, avant toute utilisation de SANDBOXES
-const API = 'http://localhost:3000'; // adapter si le serveur est distant
-
-async function initFromServer() {
-  try {
-    const r = await fetch(`${API}/api/scan`);
-    if (!r.ok) throw new Error(await r.text());
-    const { sandboxes } = await r.json();
-
-    // Remplacer les données simulées
-    SANDBOXES.length = 0;
-    Object.keys(PROJECTS).forEach(k => delete PROJECTS[k]);
-    Object.keys(CONTEXTS).forEach(k => delete CONTEXTS[k]);
-
-    for (const sb of sandboxes) {
-      SANDBOXES.push({
-        id:       sb.id,
-        name:     sb.name,
-        standard: sb.standard || sb.norm,
-        desc:     sb.desc || '',
-      });
-      CONTEXTS[sb.id] = sb.contexts || [];
-      PROJECTS[sb.id] = sb.projects.map(p => ({
-        id:         p.id,
-        name:       p.name,
-        state:      p.state,       // 'imported' | 'available'
-        frames:     p.frames || 0,
-        compliance: p.compliance,  // null si pas encore traité
-        verdict:    p.verdict,
-        context:    'default',
-        type:       'pdf',
-        reports:    p.reportFile ? [{
-          icon:  '📋',
-          kind:  'run',
-          label: p.reportFile,
-          desc:  `${p.verdict || '?'} · ${p.reportData?.conformes || 0}/${p.frames} CONFORMES`,
-          path:  `sandboxes/${sb.id}/workspace/${p.id}/${p.reportFile}`,
-          date:  p.reportData?.date || new Date().toISOString().slice(0,10),
-        }] : [],
-      }));
-    }
-
-    // Ré-afficher
-    renderSandboxList();
-    if (SANDBOXES.length > 0) selectSandbox(SANDBOXES[0].id);
-
-  } catch (err) {
-    console.warn('Serveur MVP0 non disponible — mode simulation', err.message);
-    // Silencieux : le PoC continue avec les données JS simulées
-  }
-}
-
-// Appeler au démarrage (remplacer ou compléter l'appel existant à initApp())
-document.addEventListener('DOMContentLoaded', () => {
-  initApp();       // initialisation skin, etc.
-  initFromServer(); // surcharge avec données réelles si serveur dispo
-});
-```
+> **Clé API Anthropic (optionnel)** : nécessaire uniquement en mode API pay-per-token.
+> En mode OAuth (abonnement Pro/Max), aucune clé n'est requise.
 
 ---
 
-## 2. Lancement du pipeline — brancher `run.pl` réel
-
-Dans `runPipeline()`, remplacer la simulation par un appel SSE réel :
-
-```js
-async function runPipeline() {
-  if (pipelineRunning || !currentProject || !currentSandbox) return;
-  pipelineRunning = true;
-  // ... reset UI existant ...
-
-  const url = `${API}/api/sandboxes/${currentSandbox.id}/projects/${currentProject.id}/run`;
-
-  const es = new EventSource(url); // GET avec SSE
-  // Note : pour POST, utiliser fetch + ReadableStream (voir ci-dessous)
-
-  es.addEventListener('log', e => {
-    const { line, level } = JSON.parse(e.data);
-    appendLog(line, level); // fonction existante du PoC
-  });
-
-  es.addEventListener('done', e => {
-    const { reportFile, reportData } = JSON.parse(e.data);
-    es.close();
-    // Mettre à jour currentProject.reports avec le vrai rapport
-    if (reportFile) {
-      _lastReports = [{
-        icon:  '📋',
-        label: reportFile,
-        desc:  `${reportData?.verdict} · ${reportData?.conformes}/${reportData?.totalFrames} CONFORMES`,
-        path:  `sandboxes/${currentSandbox.id}/workspace/${currentProject.id}/${reportFile}`,
-        _reportData: reportData, // pour la modale rapport
-      }];
-      renderReportsList(_lastReports);
-    }
-    finishPipeline(currentProject, `sandboxes/${currentSandbox.id}/workspace`, 'pipeline-run-btn');
-  });
-
-  es.addEventListener('error', e => {
-    const { message } = JSON.parse(e.data);
-    es.close();
-    appendLog(`❌ ${message}`, 'error');
-    pipelineRunning = false;
-  });
-}
-
-// Pour un POST SSE (run.pl nécessite POST) :
-async function ssePost(url, body, onLog, onDone, onError) {
-  const r = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
-  const reader = r.body.getReader();
-  const decoder = new TextDecoder();
-  let buf = '';
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buf += decoder.decode(value, { stream: true });
-    const parts = buf.split('\n\n');
-    buf = parts.pop();
-    for (const part of parts) {
-      const eMatch = part.match(/^event: (\w+)/m);
-      const dMatch = part.match(/^data: (.+)/m);
-      if (!eMatch || !dMatch) continue;
-      const data = JSON.parse(dMatch[1]);
-      if      (eMatch[1] === 'log')   onLog(data);
-      else if (eMatch[1] === 'done')  onDone(data);
-      else if (eMatch[1] === 'error') onError(data);
-    }
-  }
-}
-```
-
----
-
-## 3. Brancher chorus-check sur le LLM réel
-
-Dans `runChorusCheckAction(action)`, remplacer la simulation par :
-
-```js
-async function runChorusCheckAction(action) {
-  if (pipelineRunning || !currentProject || !currentSandbox) return;
-
-  const ecaWrap = document.getElementById('eca-wrap');
-  ecaWrap.style.display = 'block';
-  document.getElementById('pipeline-log').innerHTML = '';
-
-  const url = `${API}/api/sandboxes/${currentSandbox.id}/projects/${currentProject.id}/check?action=${action}`;
-
-  // EventSource pour GET SSE
-  const es = new EventSource(url);
-
-  es.addEventListener('log', e => {
-    const { line } = JSON.parse(e.data);
-    appendLog(line);
-  });
-
-  es.addEventListener('chunk', e => {
-    const { text } = JSON.parse(e.data);
-    // Ajouter le texte au terminal ECA existant
-    const log = document.getElementById('pipeline-log');
-    log.textContent += text;
-    log.scrollTop = log.scrollHeight;
-  });
-
-  es.addEventListener('done', e => {
-    const { filename } = JSON.parse(e.data);
-    es.close();
-    // Afficher le trigger ECA session
-    const trigger = document.getElementById('eca-session-trigger');
-    if (trigger) trigger.style.display = 'block';
-    // Ajouter le rapport généré à la liste
-    if (filename && _lastReports) {
-      _lastReports.push({
-        icon:  action === 'summary' ? '📄' : '🔍',
-        label: filename,
-        desc:  action === 'summary' ? 'Synthèse LLM — 1 page' : 'Explications règle par règle',
-        path:  `sandboxes/${currentSandbox.id}/workspace/${currentProject.id}/${filename}`,
-      });
-      renderReportsList(_lastReports);
-    }
-  });
-
-  es.addEventListener('error', e => {
-    const { message } = JSON.parse(e.data);
-    es.close();
-    appendLog(`❌ ${message}`, 'error');
-  });
-}
-```
-
----
-
----
-
-## 4. Bouton chorus-complete-report sur les rapports --explain
-
-Le PoC affiche un bouton **📝 Complete** sur chaque rapport de type `--explain` dans la liste des rapports.
-Pour le brancher sur le serveur MVP0, modifier `runCompleteReport` dans `chorus-web.html` :
-
-```js
-async function runCompleteReport(reportIndex, _directReport) {
-  // ... (setup identique à runChorusCheckAction) ...
-
-  const report = _directReport || (window._lastReports || [])[reportIndex];
-  const url = `${API}/api/sandboxes/${currentSandbox.id}/projects/${currentProject.id}/check`
-            + `?action=complete-report&input=${encodeURIComponent(report.label)}`;
-
-  const es = new EventSource(url);
-
-  es.addEventListener('log', e => {
-    const { line } = JSON.parse(e.data);
-    appendLog(line);
-  });
-
-  es.addEventListener('chunk', e => {
-    const { text } = JSON.parse(e.data);
-    const log = document.getElementById('pipeline-log');
-    log.textContent += text;
-    log.scrollTop = log.scrollHeight;
-  });
-
-  es.addEventListener('done', e => {
-    const { filename } = JSON.parse(e.data);
-    es.close();
-    if (filename) {
-      const allReports = [...(window._lastReports || [])];
-      const srcIdx = allReports.findIndex(r => r.label === report.label);
-      const newReport = {
-        icon:  '📝',
-        kind:  'complete-report',
-        label: filename,
-        desc:  `Rapport complet · issu de ${report.label}`,
-        path:  `sandboxes/${currentSandbox.id}/workspace/${currentProject.id}/${filename}`,
-        date:  new Date().toISOString().slice(0, 10),
-        run:   'chorus-complete-report',
-      };
-      if (srcIdx >= 0) allReports.splice(srcIdx + 1, 0, newReport);
-      else allReports.push(newReport);
-      renderReportsList(allReports);
-    }
-  });
-
-  es.addEventListener('error', e => {
-    const { message } = JSON.parse(e.data);
-    es.close();
-    appendLog(`❌ ${message}`, 'error');
-  });
-}
-```
-
----
-
-## 5. Import de projet — `runImportSession` branché sur la session ECA réelle
-
-Contrairement aux sections 2 à 4, l'import de projet utilise un `fetch` +
-`ReadableStream` manuel (pas `EventSource`) pour permettre un `POST`
-`multipart/form-data` (le fichier source est un vrai upload binaire, pas un
-chemin — voir `multer` côté serveur), sur le modèle exact de `runPipeline()`
-dans `chorus-web.js`.
-
-Le formulaire (`chorus-web.html` § modal `#modal-overlay`) comporte un vrai
-`<input type="file" id="import-file">` (plus de champ texte `import-path`) ;
-`startImport()` lit `input.files[0]` et le passe à `openImportSession()` →
-`runImportSession(proj, sbId, file, model)`.
-
-```js
-async function runImportSession(proj, sbId, file, model) {
-  const entityId = proj.entity;
-  const form = new FormData();
-  form.append('file', file);
-  form.append('projId', proj.id);
-
-  const url = `${API}/api/sandboxes/${sbId}/entities/${entityId}/projects/import`;
-
-  const r = await fetch(url, { method: 'POST', body: form });
-  if (!r.ok || !r.body) throw new Error(`HTTP ${r.status}`);
-  const reader  = r.body.getReader();
-  const decoder = new TextDecoder();
-  let buf = '';
-
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buf += decoder.decode(value, { stream: true });
-    const parts = buf.split('\n\n');
-    buf = parts.pop();
-    for (const part of parts) {
-      const eMatch = part.match(/^event: (\w+)/m);
-      const dMatch = part.match(/^data: (.+)/m);
-      if (!eMatch || !dMatch) continue;
-      const data = JSON.parse(dMatch[1]);
-
-      if (eMatch[1] === 'log') {
-        // Relayer la ligne réelle (tool-call ECA) dans l'UI — jamais de
-        // scénario scripté (termes/slots fictifs supprimés).
-      } else if (eMatch[1] === 'done') {
-        // data.project = { id, name, state, frames, ... } — valeurs
-        // réelles renvoyées par server/routes/projects.js § finish().
-        // frames: 0 est normal ici (ne se peuple qu'après run.pl, cf. §2).
-      } else if (eMatch[1] === 'error') {
-        // data.message — afficher, ne jamais bloquer silencieusement l'UI.
-      }
-    }
-  }
-}
-```
-
-**Différences clés avec les sections précédentes :**
-
-- Route backend : `POST /api/sandboxes/:sbId/entities/:entityId/projects/import`
-  (upload `multer`, puis session ECA headless réelle — skill
-  `chorus-import-project`, agent `code`, chatId
-  `eca-import-<sbId>-<projId>`). Voir `server/routes/projects.js` pour le
-  détail (copie du fichier uploadé vers `workspace/<entityId>/sources/<projId>/`,
-  `--out` forcé vers la convention `project-<projId>.json` reconnue par
-  `chorus/scanner.js::scanEntity`).
-- Événements `log` reçus sont des résumés de tool-calls ECA réels
-  (`onToolLog`), pas une séquence de phases fixe — l'UI (`isp-phase`)
-  n'anime donc que `running`/`done`, sans simuler de phases intermédiaires
-  qui n'ont pas de contrepartie réelle dans le flux.
-- `data.project` à l'événement `done` est la seule source de vérité pour
-  mettre à jour `proj.state`/`proj.frames` — jamais de valeur aléatoire.
-
----
-
-## Mode hybride (recommandé)
-
-Le PoC détecte automatiquement si le serveur est disponible au démarrage.
-Si `/api/scan` répond → mode réel.
-Sinon → mode simulation (comportement actuel du PoC, inchangé).
-
-Cela permet de continuer à utiliser le PoC standalone (sans serveur)
-pour les démos, tout en ayant le mode réel quand le serveur tourne.
-
----
-
-## Commandes de démarrage
+## Installation rapide
 
 ```bash
-# Installer les dépendances
-npm install
+# 1. Cloner la webapp (point d'entrée)
+git clone https://github.com/maelink/chorus-web ~/Chorus/web
 
-# Configurer
-cp .env.example .env
-# Éditer .env : CHORUS_HOME, ANTHROPIC_API_KEY
+# 2. Bootstrap : clone engine + crée .env
+cd ~/Chorus/web
+./setup.sh
 
-# Copier le PoC
-cp /path/to/chorus-web.html .
+# 3. Vérifier/éditer .env si nécessaire
+#    (setup.sh guide la configuration — voir § Configuration ci-dessous)
+nano .env
 
+# 4. Build et démarrage
+docker compose up --build -d
+
+# 5. Ouvrir la webapp
+open http://localhost:3000
+```
+
+`setup.sh` effectue automatiquement :
+- Clone de `chorus-engine` dans `~/Chorus/engine` (si absent)
+- Création de `.env` depuis `.env.example`
+- Détection et configuration de `ANTHROPIC_API_KEY_FILE` si `~/.config/anthropic/api_key` existe
+
+---
+
+## Architecture
+
+```
+┌─────────────────────────────────────────────┐
+│  Host : ~/Chorus/                           │
+│    engine/    ← repo Chorus Engine (Perl)   │
+│    web/       ← ce repo (Node.js)           │
+│    sandboxes/ ← données utilisateur         │
+└──────────────┬──────────────────────────────┘
+               │  volumes
+    ┌──────────▼──────────────────────────────┐
+    │  Docker Compose                         │
+    │                                         │
+    │  ┌─────────────┐   ┌─────────────────┐ │
+    │  │ eca-server  │   │    chorus       │ │
+    │  │ (ECA, :7777)│◄──│ (Node.js, :3000)│ │
+    │  │ GraalVM     │   │ + tooling Perl/ │ │
+    │  │ headless    │   │   Python/LO     │ │
+    │  └─────────────┘   └─────────────────┘ │
+    └─────────────────────────────────────────┘
+```
+
+**`eca-server`** : agent ECA headless (binaire GraalVM). Charge les skills
+depuis `engine/AGENTS.md`. Accessible uniquement depuis `chorus` (réseau interne).
+
+**`chorus`** : serveur Node.js (Express). Expose l'interface web sur le port 3000.
+Au démarrage, installe automatiquement les modules `Chorus::*` (Perl) et les
+dépendances npm depuis les volumes montés.
+
+---
+
+## Configuration (`.env`)
+
+Après `./setup.sh`, éditer `.env` pour ajuster :
+
+```bash
+# ── Chemins (remplis automatiquement par setup.sh) ──────────────────────────
+CHORUS_HOME=/home/<user>/Chorus
+# CHORUS_ENGINE_HOME=/home/<user>/Chorus/engine   # défaut : $CHORUS_HOME/engine
+# CHORUS_WEB_HOME=/home/<user>/Chorus/web         # défaut : $CHORUS_HOME/web
+# SANDBOXES=/home/<user>/Chorus/sandboxes/mon-sandbox  # défaut : $CHORUS_HOME/sandboxes
+
+# ── Authentification LLM ────────────────────────────────────────────────────
+# Option A — Mode OAuth (abonnement Pro/Max, recommandé) :
+#   Aucune variable requise. ECA utilise ses credentials OAuth natifs.
+
+# Option B — Mode API key :
+ANTHROPIC_API_KEY_FILE=/home/<user>/.config/anthropic/api_key
+
+# ── Réseau ───────────────────────────────────────────────────────────────────
+PORT=3000
+ECA_REMOTE_PASSWORD=changeme-local-dev   # changer en production
+```
+
+---
+
+## Opérations courantes
+
+```bash
 # Démarrer
-node server.js
-# → http://localhost:3000
+docker compose up -d
+
+# Arrêter
+docker compose down
+
+# Voir les logs
+docker compose logs -f chorus
+docker compose logs -f eca-server
+
+# Rebuild après modification du Dockerfile
+docker compose up --build -d
+
+# Réinitialiser node_modules (si dépendances bloquées)
+docker compose down -v && docker compose up -d
+
+# Supprimer les conteneurs orphelins (après renommage de service)
+docker compose down --remove-orphans
+```
+
+---
+
+## Dépannage
+
+### La webapp s'ouvre mais n'affiche aucun sandbox
+
+`SANDBOXES` pointe vers un répertoire vide ou inexistant.
+Vérifier dans `.env` :
+```bash
+# Chemin vu depuis le conteneur — doit correspondre au volume monté
+SANDBOXES=/chorus/sandboxes/<nom-du-sandbox>
+```
+
+### Port 3000 déjà utilisé
+
+```bash
+# Identifier le processus
+ss -tlnp | grep 3000
+# Changer le port dans .env + docker-compose.yml
+PORT=3001
+```
+
+### `cpanm` ou `make install` échoue au démarrage du conteneur
+
+```bash
+# Vérifier les logs de l'entrypoint
+docker compose logs chorus | grep -A5 entrypoint
+# Si engine/ n'est pas monté correctement :
+ls -la ~/Chorus/engine/Makefile.PL
+```
+
+### Rebuild total (from scratch)
+
+```bash
+docker compose down --remove-orphans -v   # supprime volumes nommés
+docker compose down --rmi local           # supprime images locales
+docker compose up --build -d
+```
+
+### Tester un bootstrap complet (simuler host vierge)
+
+```bash
+mv ~/Chorus/engine ~/Chorus/engine.bak
+docker compose down -v --rmi local
+./setup.sh                        # re-clone engine
+docker compose up --build -d
+# Restaurer l'original après test :
+# rm -rf ~/Chorus/engine && mv ~/Chorus/engine.bak ~/Chorus/engine
 ```

@@ -5,7 +5,10 @@
 # for the export to ANTHROPIC_API_KEY.
 secrets:
   anthropic_api_key:
-    file: ${ANTHROPIC_API_KEY_FILE}
+    # Si ANTHROPIC_API_KEY_FILE est absent ou vide, /dev/null est utilisé :
+    # le secret est monté vide et le conteneur bascule sur ANTHROPIC_API_KEY
+    # (variable d'env) ou démarre sans clé (mode OAuth uniquement).
+    file: ${ANTHROPIC_API_KEY_FILE:-/dev/null}
 
 services:
   eca-server:

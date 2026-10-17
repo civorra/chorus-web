@@ -2,19 +2,21 @@
 # setup.sh — Bootstrap sur host vierge.
 # À exécuter UNE SEULE FOIS après avoir cloné ce repo (web/).
 #
-# Ce script clone le repo chorus-engine dans CHORUS_ENGINE_HOME si le
-# dossier est absent ou ne contient pas encore de repo git.
+# Ce script :
+#   1. Clone chorus-engine dans CHORUS_ENGINE_HOME si absent.
+#   2. Crée .env depuis .env.example si absent.
+#   3. Guide la configuration de la clé API Anthropic.
 #
 # Usage :
 #   git clone <url-web> ~/Chorus/web
 #   cd ~/Chorus/web
 #   ./setup.sh
-#   docker compose up -d
+#   docker compose up --build -d
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# ── Chargement de .env si présent ────────────────────────────────────────────
+# ── Chargement de .env si déjà présent ───────────────────────────────────────
 if [ -f "$SCRIPT_DIR/.env" ]; then
   # shellcheck disable=SC1091
   set -a; source "$SCRIPT_DIR/.env"; set +a
@@ -26,31 +28,71 @@ CHORUS_ENGINE_HOME="${CHORUS_ENGINE_HOME:-$CHORUS_HOME/engine}"
 CHORUS_ENGINE_REPO="${CHORUS_ENGINE_REPO:-https://github.com/maelink/Chorus-Engine.git}"
 CHORUS_ENGINE_BRANCH="${CHORUS_ENGINE_BRANCH:-devel}"
 
-echo "=== Chorus bootstrap ==="
+echo ""
+echo "╔══════════════════════════════════════════╗"
+echo "║         Chorus — Bootstrap setup         ║"
+echo "╚══════════════════════════════════════════╝"
+echo ""
 echo "  CHORUS_HOME        : $CHORUS_HOME"
 echo "  CHORUS_ENGINE_HOME : $CHORUS_ENGINE_HOME"
+echo ""
 
-# ── Clone engine si absent ────────────────────────────────────────────────────
+# ── 1. Clone engine si absent ─────────────────────────────────────────────────
 if [ -d "$CHORUS_ENGINE_HOME/.git" ]; then
-  echo "  engine repo        : ✅ déjà présent ($CHORUS_ENGINE_HOME)"
+  echo "  [1/3] engine repo  : ✅ déjà présent"
 else
-  echo "  engine repo        : clonage depuis $CHORUS_ENGINE_REPO (branche $CHORUS_ENGINE_BRANCH)…"
+  echo "  [1/3] engine repo  : clonage depuis $CHORUS_ENGINE_REPO (branche $CHORUS_ENGINE_BRANCH)…"
   git clone --branch "$CHORUS_ENGINE_BRANCH" "$CHORUS_ENGINE_REPO" "$CHORUS_ENGINE_HOME"
-  echo "  engine repo        : ✅ cloné"
+  echo "  [1/3] engine repo  : ✅ cloné dans $CHORUS_ENGINE_HOME"
 fi
 
-# ── Création de .env si absent ────────────────────────────────────────────────
-if [ ! -f "$SCRIPT_DIR/.env" ]; then
-  echo ""
-  echo "  Création de .env depuis .env.example…"
+# ── 2. Création de .env si absent ────────────────────────────────────────────
+if [ -f "$SCRIPT_DIR/.env" ]; then
+  echo "  [2/3] .env         : ✅ déjà présent"
+else
+  echo "  [2/3] .env         : création depuis .env.example…"
   cp "$SCRIPT_DIR/.env.example" "$SCRIPT_DIR/.env"
   # Injection des chemins résolus
-  sed -i "s|CHORUS_HOME=.*|CHORUS_HOME=$CHORUS_HOME|" "$SCRIPT_DIR/.env"
-  sed -i "s|CHORUS_ENGINE_HOME=.*|CHORUS_ENGINE_HOME=$CHORUS_ENGINE_HOME|" "$SCRIPT_DIR/.env"
-  sed -i "s|CHORUS_WEB_HOME=.*|CHORUS_WEB_HOME=$SCRIPT_DIR|" "$SCRIPT_DIR/.env"
-  echo "  .env               : ✅ créé — pensez à renseigner les secrets (ANTHROPIC_API_KEY_FILE, etc.)"
+  sed -i "s|^CHORUS_HOME=.*|CHORUS_HOME=$CHORUS_HOME|" "$SCRIPT_DIR/.env"
+  sed -i "s|^# CHORUS_ENGINE_HOME=.*|CHORUS_ENGINE_HOME=$CHORUS_ENGINE_HOME|" "$SCRIPT_DIR/.env"
+  sed -i "s|^# CHORUS_WEB_HOME=.*|CHORUS_WEB_HOME=$SCRIPT_DIR|" "$SCRIPT_DIR/.env"
+  echo "  [2/3] .env         : ✅ créé"
 fi
 
+# ── 3. Clé API Anthropic ─────────────────────────────────────────────────────
+DEFAULT_KEY_FILE="$HOME/.config/anthropic/api_key"
+CURRENT_KEY_FILE="${ANTHROPIC_API_KEY_FILE:-}"
+
 echo ""
-echo "✅ Setup terminé. Lancez :"
-echo "   docker compose up --build -d"
+if [ -n "$CURRENT_KEY_FILE" ] && [ -f "$CURRENT_KEY_FILE" ]; then
+  echo "  [3/3] API key      : ✅ configurée ($CURRENT_KEY_FILE)"
+elif [ -f "$DEFAULT_KEY_FILE" ]; then
+  echo "  [3/3] API key      : fichier trouvé à l'emplacement par défaut."
+  # Injection automatique dans .env si pas encore défini
+  if ! grep -q "^ANTHROPIC_API_KEY_FILE=" "$SCRIPT_DIR/.env"; then
+    echo "ANTHROPIC_API_KEY_FILE=$DEFAULT_KEY_FILE" >> "$SCRIPT_DIR/.env"
+  fi
+  echo "                       ✅ ANTHROPIC_API_KEY_FILE=$DEFAULT_KEY_FILE ajouté dans .env"
+else
+  echo "  [3/3] API key      : ⚠️  fichier de clé API Anthropic non trouvé."
+  echo ""
+  echo "         Deux options :"
+  echo "         A) Mode API key  : créez ~/.config/anthropic/api_key avec votre clé,"
+  echo "            puis ajoutez dans .env :"
+  echo "            ANTHROPIC_API_KEY_FILE=$DEFAULT_KEY_FILE"
+  echo ""
+  echo "         B) Mode OAuth    : aucune clé nécessaire si vous utilisez ECA via"
+  echo "            un abonnement Anthropic Pro/Max — laissez ANTHROPIC_API_KEY_FILE"
+  echo "            non défini (le conteneur démarre sans secret, OAuth seul actif)."
+fi
+
+# ── Résumé final ──────────────────────────────────────────────────────────────
+echo ""
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo "✅ Setup terminé."
+echo ""
+echo "  Prochaine étape :"
+echo "  → Vérifiez/éditez .env si nécessaire"
+echo "  → Lancez : docker compose up --build -d"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo ""
