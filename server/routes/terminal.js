@@ -232,7 +232,7 @@ router.post('/sandboxes/:sbId/terminal', (req, res) => {
         agentsPrefix =
           `[Chorus ECA Terminal — sandbox: ${sbId}]\n` +
           `Workspace: ${chorusHome}. ` +
-          `Engine AGENTS.md: ${path.join(chorusHome, 'Engine', 'AGENTS.md')}. ` +
+          `Engine AGENTS.md: ${path.join(chorusHome, 'engine', 'AGENTS.md')}. ` +
           `Read it via your tools when needed to answer Chorus commands.\n\n`;
       }
     } catch { /* proceed without prefix */ }

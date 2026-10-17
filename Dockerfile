@@ -1,20 +1,32 @@
 FROM node:22-slim
 
-# Perl + outils de build pour compiler/installer les modules Chorus::* via
-# ExtUtils::MakeMaker (Makefile.PL / make / make install).
-# Python3 + pip + libs système weasyprint (Pango/Cairo/GDK-PixBuf) : requis par
-# scripts/md2html.py et scripts/md2pdf.py (export "Save as" HTML/PDF des
-# rapports summary/explain depuis le panneau de visualisation — voir
-# server.js § ROUTE export-report). Ces deux scripts sont appelés directement
-# en subprocess (jamais via un skill ECA), donc le binaire python3 et ses
-# dépendances doivent être natifs à cette image, au même titre que perl
-# ci-dessus pour Chorus::*.
+# ── Tooling système ───────────────────────────────────────────────────────────
+# Perl + build tools : compile et installe les modules Chorus::* via l'entrypoint.
+# Python3/pip + weasyprint : scripts/md2pdf.py et scripts/md2html.py.
+# Tooling d'extraction documentaire (fusion depuis engine/Dockerfile) :
+#   poppler-utils    → chorus-pdf (pdftotext/pdfinfo)
+#   libxml2-utils    → chorus-xml
+#   libreoffice-*    → chorus-excel (XLSX→images), chorus-word (DOCX→images)
+#   fonts-*          → rendu LibreOffice correct
+# Tooling Python d'extraction :
+#   pdfminer.six, pypdf, pdfplumber → chorus-pdf
+#   python-docx, lxml               → chorus-word  (lxml requis par python-docx)
+#   openpyxl, Pillow                → chorus-excel
+#   beautifulsoup4                  → parsing HTML/XML annexe
+#
+# ⛔ Absents intentionnellement :
+#   - @anthropic-ai/claude-code    (Claude Code CLI — concurrent d'ECA)
+#   - @earendil-works/pi-coding-agent (Pi Coding Agent)
+#   - `n 22` / nvm                 (image de base déjà Node 22)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     perl \
     perl-modules \
+    cpanminus \
     make \
     libyaml-perl \
     libjson-perl \
+    libtest-simple-perl \
+    libtest-warn-perl \
     python3 \
     python3-pip \
     libpango-1.0-0 \
@@ -23,39 +35,45 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libcairo2 \
     libffi-dev \
     shared-mime-info \
+    poppler-utils \
+    libxml2-utils \
+    libreoffice-core \
+    libreoffice-calc \
+    libreoffice-writer \
+    fonts-dejavu \
+    fonts-liberation \
     && rm -rf /var/lib/apt/lists/* \
-    && pip3 install --no-cache-dir --break-system-packages markdown weasyprint
+    && pip3 install --no-cache-dir --break-system-packages \
+       markdown \
+       weasyprint \
+       pdfminer.six \
+       pypdf \
+       pdfplumber \
+       Pillow \
+       python-docx \
+       lxml \
+       openpyxl \
+       beautifulsoup4
 
-# ── Installation native des modules Chorus::* (CPAN local, depuis les sources) ──
-# Contexte de build = racine du dépôt Chorus (voir docker-compose.yml : build.context: ..)
-# Les modules sont installés dans l'arborescence perl standard du conteneur :
-# plus besoin de PERL5LIB pour que run.pl / Feed.pm / Expert.pm les trouvent.
-COPY engine/Makefile.PL engine/MANIFEST /usr/src/chorus-engine/
-COPY engine/lib/ /usr/src/chorus-engine/lib/
-RUN cd /usr/src/chorus-engine \
-    && perl Makefile.PL INSTALLDIRS=site \
-    && make \
-    && make install \
-    && cd / && rm -rf /usr/src/chorus-engine
+# ── Modules Perl CPAN complémentaires ─────────────────────────────────────────
+RUN cpanm --notest JSON Digest::MD5 File::Temp
 
-WORKDIR /app
+# ── npm — dépendances installées dans le volume node_modules_chorus ───────────
+# package.json est COPYé uniquement pour que `npm install` soit
+# reproductible dans l'entrypoint sans accès réseau si le layer est déjà
+# présent. Les fichiers serveur/frontend arrivent via le volume /chorus/web.
+COPY web/package.json /chorus-bootstrap/package.json
+RUN cd /chorus-bootstrap && npm install --omit=dev
 
-COPY web/package.json .
-RUN npm install --omit=dev
+# ── Entrypoint ────────────────────────────────────────────────────────────────
+# Effectue make install des modules Chorus::*, npm install si node_modules
+# est vide, puis lance node server.js depuis /chorus/web.
+COPY web/chorus-entrypoint.sh /usr/local/bin/chorus-entrypoint.sh
+RUN chmod +x /usr/local/bin/chorus-entrypoint.sh
 
-COPY web/server.js web/prompts.js web/eca-client.js web/auth.js web/chorus-web.html ./
-COPY web/chorus/ ./chorus/
-COPY web/server/ ./server/
-
-# CHORUS_HOME est monté en volume depuis l'hôte, uniquement pour les données
-# (sandboxes, scripts run.pl générés par sandbox, etc.) — plus pour les
-# modules Perl, installés nativement ci-dessus.
 ENV CHORUS_HOME=/chorus
 ENV PORT=3000
 
 EXPOSE 3000
 
-# Clé Anthropic fournie via secret Docker Compose (/run/secrets/anthropic_api_key,
-# jamais en variable d'env de conteneur) — repli sur ANTHROPIC_API_KEY si le
-# secret est absent (dev local sans secrets configurés).
-CMD ["sh", "-c", "export ANTHROPIC_API_KEY=\"$(cat /run/secrets/anthropic_api_key 2>/dev/null || printf '%s' \"$ANTHROPIC_API_KEY\")\"; exec node server.js"]
+CMD ["/usr/local/bin/chorus-entrypoint.sh"]

@@ -58,32 +58,30 @@ services:
     # network) needs to reach this service, via https://eca-server:7777.
     restart: unless-stopped
 
-  chorus-web:
+  chorus:
     build:
-      # Context = Chorus repo root, so the Dockerfile can COPY engine/
-      # (Makefile.PL + lib/) and install the Chorus::* modules natively
-      # via perl Makefile.PL && make && make install.
-      # chorus-web is now a real directory (no longer a symlink to
-      # chorus-mvp0-v43/) — BuildKit does not follow directory symlinks
-      # when building the context, which broke COPY web/*.
+      # Context = Chorus repo root (parent de web/) — le Dockerfile peut
+      # ainsi lire engine/Makefile.PL+lib/ pour la vérification de build,
+      # et web/ pour les métadonnées npm (package.json).
+      # Les fichiers serveur/frontend ne sont plus COPYés — ils arrivent
+      # via le volume /chorus/web (voir § volumes ci-dessous).
       context: ..
       dockerfile: web/Dockerfile
     ports:
       - "3000:3000"
     secrets:
       - anthropic_api_key
+    working_dir: /chorus/web
     environment:
       - ANTHROPIC_MODEL=${ANTHROPIC_MODEL:-claude-sonnet-5}
-      # Path as seen FROM THE CONTAINER (matches the volume mount point below),
-      # never the host path — otherwise chorus.js/run.pl look for a non-existent directory.
+      # Racine commune Chorus — contient engine/ et web/ comme sous-dossiers.
       - CHORUS_HOME=/chorus
-      # Sandbox root — separate from CHORUS_HOME to allow mounting the full
-      # repo. Points to $CHORUS/sandboxes/cyber-sec (host path
-      # $HOME/Documents/Chorus/sandboxes, seen from the
-      # container via the ${CHORUS_HOME}:/chorus volume below).
+      # Chemins des deux repos (vus depuis le conteneur).
+      - CHORUS_ENGINE_HOME=/chorus/engine
+      - CHORUS_WEB_HOME=/chorus/web
+      # Sandbox root — sous engine/.
       - SANDBOXES=${SANDBOXES:-/chorus/engine/sandboxes}
-      # No PERL5LIB: Chorus::* modules are installed natively in the image
-      # via Makefile.PL/make install (see Dockerfile).
+      # No PERL5LIB : modules Chorus::* installés via entrypoint make install.
       - PORT=3000
       # eca-server service (internal Compose network). HTTPS required —
       # the ECA remote server only listens over TLS (self-signed certificate
@@ -92,7 +90,7 @@ services:
       - ECA_REMOTE_PASSWORD=${ECA_REMOTE_PASSWORD:-changeme-local-dev}
       # Nom du conteneur eca-server (pour docker restart via socket).
       # Par défaut : <project>-eca-server-1 (nommage Compose automatique).
-      - ECA_CONTAINER_NAME=${ECA_CONTAINER_NAME:-chorus-web-eca-server-1}
+      - ECA_CONTAINER_NAME=${ECA_CONTAINER_NAME:-web-eca-server-1}
       # Dupliqué depuis le service eca-server — uniquement pour affichage
       # dans le panneau "Services" (GET /api/eca/info), lecture seule,
       # aucun impact sur le provider réellement utilisé par eca-server.
@@ -108,28 +106,20 @@ services:
       - ANTHROPIC_OAUTH_SCOPE=${ANTHROPIC_OAUTH_SCOPE:-org:create_api_key user:profile user:inference}
       - COPILOT_OAUTH_CLIENT_ID=${COPILOT_OAUTH_CLIENT_ID:-Iv1.b507a08c87ecfe98}
     volumes:
-      # Mount the entire existing Chorus repo read-write
-      # (run.pl writes reports under engine/sandboxes/*/workspace/)
-      - ${CHORUS_HOME}:/chorus
-      # Bind-mount frontend files so edits on the host sont visibles sans rebuild.
-      # Niveau 1.5 (2026-10-12): CSS et JS extraits de chorus-web.html.
-      - ./chorus-web.html:/app/chorus-web.html:ro
-      - ./chorus-web.css:/app/chorus-web.css:ro
-      - ./chorus-web.js:/app/chorus-web.js:ro
-      - ./chorus/:/app/chorus/:ro
-      - ./server/:/app/server/:ro
-      - ./auth.js:/app/auth.js:ro
-      - ./server.js:/app/server.js:ro
-      # eca-client.js — manquait jusqu'ici (incident 2026-10-14) : seul
-      # fichier serveur encore COPY-é au build (Dockerfile) sans bind-mount,
-      # ce qui faisait qu'un `docker restart chorus-web` rechargeait
-      # systématiquement l'ancienne version buildée malgré des modifications
-      # sur le disque hôte — symptôme observé : `eca.pingTcp is not a
-      # function` après ajout de cette fonction sans rebuild de l'image.
-      - ./eca-client.js:/app/eca-client.js:ro
+      # ── Repos montés en volume (remplacent tous les bind-mounts fichier-par-fichier) ──
+      # run.pl écrit dans engine/sandboxes/*/workspace/ → accès RW requis sur engine.
+      - ${CHORUS_ENGINE_HOME:-${CHORUS_HOME}/engine}:/chorus/engine
+      - ${CHORUS_WEB_HOME:-${CHORUS_HOME}/web}:/chorus/web
+      # Volume nommé pour node_modules : empêche le montage /chorus/web de
+      # masquer les dépendances npm installées au démarrage via l'entrypoint.
+      # Premier `compose up` : vide → npm install le remplit (~30s).
+      # `compose up` suivants : persisté → démarrage instantané.
+      - node_modules_chorus:/chorus/web/node_modules
       # Docker socket — nécessaire pour /api/auth/reload-eca (restart eca-server).
-      # Lecture seule insuffisante : POST /restart requiert accès RW au socket.
       - /var/run/docker.sock:/var/run/docker.sock
     depends_on:
       - eca-server
     restart: unless-stopped
+
+volumes:
+  node_modules_chorus:
