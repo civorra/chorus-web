@@ -166,12 +166,22 @@ function scanFlatProject(entityPath, slug, jsonFile, runReportIndex) {
     reportFile = runEntry.dir === reportsDir
       ? `reports/${runEntry.file}`
       : path.relative(entityPath, path.join(runEntry.dir, runEntry.file));
+    // aConfirmer : recomputed from elements[] to match the report view definition
+    // (rowsFromRunReport in chorus-web.js). run.pl's n_incertain only counts
+    // explicit _a_confirmer:1 flags; elements with unrecognised verdicts
+    // (UNKNOWN, null, etc.) are not included → KPI would under-count vs report.
+    const _CONF_VALS    = new Set(['CONFORME','YES','SOLVED',1,true]);
+    const _NONCONF_VALS = new Set(['NON_CONFORME','NO','FAILED',0]);
+    const _aConfirmer   = (j.elements || []).filter(e =>
+      e.a_confirmer ||
+      (!_CONF_VALS.has(e.verdict) && !_NONCONF_VALS.has(e.verdict))
+    ).length;
     reportData = {
       verdict:      j.pipeline_solved ? 'SOLVED' : 'FAILED',
       totalFrames:  j.n_total ?? 0,
       conformes:    j.n_conforme ?? 0,
       nonConformes: j.n_non_conforme ?? 0,
-      aConfirmer:   j.n_incertain ?? 0,
+      aConfirmer:   _aConfirmer,
       avgConf:      null,
       norm:         null,
       date:         (j.generated_at || '').slice(0, 10) || null,
