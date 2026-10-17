@@ -272,6 +272,8 @@ function buildSandboxEntry(sb, iconIndex) {
       evidence: 0,
       state: p.state,
       compliance: p.compliance,
+      nonConformes: p.reportData?.nonConformes ?? null,
+      aConfirmer:   p.reportData?.aConfirmer   ?? null,
       lastRun: p.reportData?.date || null,
       verdict: p.verdict,
       imports: p.imports || [],
