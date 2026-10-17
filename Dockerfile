@@ -86,8 +86,16 @@ CMD ["/usr/local/bin/chorus-entrypoint.sh"]
 FROM base AS eca-server
 
 # Binaire ECA (GraalVM, statiquement lié — pas de JVM requise).
+# ⚠️ PINNED — 0.164.0 is the last known-good version for this stack.
+# 0.165.0 and 0.165.1 both break ECA terminal SSE streaming: "No matching
+# field found: getOutputStream for class org.eclipse.jetty.ee9.nested.Response"
+# on GET /api/v1/events and POST /api/v1/chats/:id/agent (confirmed via
+# bisection 2026-10-17 — not reported upstream yet as of this pin). Do not
+# bump past 0.164.0 without re-running this bisection against the target
+# version first.
+ARG ECA_VERSION=0.164.0
 RUN curl -fsSL -o /tmp/eca.zip \
-      https://github.com/editor-code-assistant/eca/releases/latest/download/eca-native-static-linux-amd64.zip \
+      https://github.com/editor-code-assistant/eca/releases/download/${ECA_VERSION}/eca-native-static-linux-amd64.zip \
     && unzip /tmp/eca.zip -d /usr/local/bin/ \
     && chmod +x /usr/local/bin/eca \
     && rm /tmp/eca.zip

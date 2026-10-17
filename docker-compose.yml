@@ -51,10 +51,17 @@ services:
       # Same mount as chorus-web: ECA must see engine/AGENTS.md,
       # agent/skills/*.md and sandboxes/ to load the real skills.
       - ${CHORUS_HOME}:/chorus
-      # ECA OAuth credentials (host Pro/Max session) — read-only.
-      # La webapp n'écrit plus dans db.transit.json (OAuth natif Node.js
-      # écrit dans .webapp-auth.json sur le volume /chorus).
-      # - ${OAUTH_CREDENTIALS}:/root/.cache/eca/db.transit.json:ro
+      # ECA OAuth credentials (host Pro/Max + GitHub Copilot session) — read-only.
+      # Réactivé 2026-10-17 : le mécanisme .webapp-auth.json →
+      # GITHUB_COPILOT_TOKEN (eca-bootstrap.sh) ne fonctionne avec aucun
+      # binaire ECA testé (0.164.0/0.165.0/0.165.1) — cette variable d'env
+      # n'est lue nulle part dans le binaire (confirmé par inspection
+      # binaire). ECA lit ses credentials OAuth Copilot exclusivement
+      # depuis ce fichier Transit natif (oauth_access_token/renew_token),
+      # qui contient déjà une session Copilot valide sur l'hôte
+      # (~:step ~:login/done). Voir eca-config.json § providers pour le
+      # détail de cette investigation.
+      - ${OAUTH_CREDENTIALS}:/root/.cache/eca/db.transit.json:ro
       # eca-config.json monté en volume : override du COPY Dockerfile.eca,
       # évite un rebuild pour changer de provider (Anthropic ↔ Copilot).
       - ./eca-config.json:/etc/eca/config.json:ro
