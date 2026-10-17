@@ -1267,7 +1267,7 @@ function renderProjectsTab() {
           <button class="btn btn-ghost btn-sm" style="padding:2px 7px;font-size:10px" title="Terminal ECA — entity ${label}" onclick="event.stopPropagation(); openLevelTerminal('entity', {sbId:'${sbId}', entityId:'${entityId}', entityLabel:'${label}'})">🖥️</button>
         </div>
         <div class="entity-proj-grid">
-          ${list.map(p => projCard(p)).join('')}
+          ${sortByLastRun(list).map(p => projCard(p)).join('')}
         </div>
       </div>
     `;
@@ -1278,16 +1278,24 @@ function renderProjectsTab() {
   // rather than a grid of tall cards: avoids unnecessary vertical scrolling
   // when there is plenty of horizontal space but grid cards were tall
   // (multiple action rows).
+  // Tri par date de dernier run décroissante (projets sans run en dernier)
+  const sortByLastRun = list => [...list].sort((a, b) => {
+    if (!a.lastRun && !b.lastRun) return 0;
+    if (!a.lastRun) return  1;
+    if (!b.lastRun) return -1;
+    return b.lastRun > a.lastRun ? 1 : b.lastRun < a.lastRun ? -1 : 0;
+  });
+
   if (currentEntityId) {
     document.getElementById('imported-list').innerHTML = imported.length
-      ? `<div class="proj-list">${imported.map(p => projRow(p)).join('')}</div>`
+      ? `<div class="proj-list">${sortByLastRun(imported).map(p => projRow(p)).join('')}</div>`
       : `<div class="empty-state"><div class="es-icon">📂</div><div class="es-title">Aucun projet importé</div><div class="es-sub">Cliquez "Import project" pour commencer</div></div>`;
 
     const availableSection = document.getElementById('available-section');
     if (available.length) {
       availableSection.style.display = 'block';
       document.getElementById('available-list').innerHTML =
-        `<div class="proj-list">${available.map(p => projRow(p)).join('')}</div>`;
+        `<div class="proj-list">${sortByLastRun(available).map(p => projRow(p)).join('')}</div>`;
     } else {
       // Rien à afficher : on masque toute la section (titre inclus) pour
       // ne pas gaspiller d'espace vertical avec une info redondante.
