@@ -58,7 +58,7 @@ router.get('/info', async (req, res) => {
     modelArchitect:    process.env.ECA_MODEL_ARCHITECT || null,
     modelCode:         process.env.ECA_MODEL_CODE || null,
     modelFast:         process.env.ECA_MODEL_FAST || null,
-    workspaceFolders:  ['/chorus/Engine (chorus-engine)', '/chorus (chorus)'],
+    workspaceFolders:  ['/chorus/engine (chorus-engine)', '/chorus (chorus)'],
     activeChatCount:   chatCount,
     containerName:     process.env.ECA_CONTAINER_NAME || null,
   });

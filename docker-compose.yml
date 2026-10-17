@@ -44,7 +44,7 @@ services:
     # API key fallback: eca-bootstrap.sh injects it automatically when
     # OAuth credentials are absent AND the secret is configured.
     volumes:
-      # Same mount as chorus-web: ECA must see Engine/AGENTS.md,
+      # Same mount as chorus-web: ECA must see engine/AGENTS.md,
       # agent/skills/*.md and sandboxes/ to load the real skills.
       - ${CHORUS_HOME}:/chorus
       # ECA OAuth credentials (host Pro/Max session) — read-only.
@@ -60,7 +60,7 @@ services:
 
   chorus-web:
     build:
-      # Context = Chorus repo root, so the Dockerfile can COPY Engine/
+      # Context = Chorus repo root, so the Dockerfile can COPY engine/
       # (Makefile.PL + lib/) and install the Chorus::* modules natively
       # via perl Makefile.PL && make && make install.
       # chorus-web is now a real directory (no longer a symlink to
@@ -81,7 +81,7 @@ services:
       # repo. Points to $CHORUS/sandboxes/cyber-sec (host path
       # $HOME/Documents/Chorus/sandboxes, seen from the
       # container via the ${CHORUS_HOME}:/chorus volume below).
-      - SANDBOXES=${SANDBOXES:-/chorus/Engine/sandboxes}
+      - SANDBOXES=${SANDBOXES:-/chorus/engine/sandboxes}
       # No PERL5LIB: Chorus::* modules are installed natively in the image
       # via Makefile.PL/make install (see Dockerfile).
       - PORT=3000
@@ -109,7 +109,7 @@ services:
       - COPILOT_OAUTH_CLIENT_ID=${COPILOT_OAUTH_CLIENT_ID:-Iv1.b507a08c87ecfe98}
     volumes:
       # Mount the entire existing Chorus repo read-write
-      # (run.pl writes reports under Engine/sandboxes/*/workspace/)
+      # (run.pl writes reports under engine/sandboxes/*/workspace/)
       - ${CHORUS_HOME}:/chorus
       # Bind-mount frontend files so edits on the host sont visibles sans rebuild.
       # Niveau 1.5 (2026-10-12): CSS et JS extraits de chorus-web.html.

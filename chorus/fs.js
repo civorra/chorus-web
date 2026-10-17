@@ -18,9 +18,9 @@ const CHORUS_HOME = () => {
 };
 
 // Répertoire racine des sandboxes — distinct de CHORUS_HOME pour permettre
-// de monter tout le dépôt Chorus (y compris Engine/lib pour PERL5LIB) tout
-// en pointant précisément vers Engine/sandboxes.
-const SANDBOXES_DIR = () => process.env.SANDBOXES || '/chorus/Engine/sandboxes';
+// de monter tout le dépôt Chorus (y compris engine/lib pour PERL5LIB) tout
+// en pointant précisément vers engine/sandboxes.
+const SANDBOXES_DIR = () => process.env.SANDBOXES || '/chorus/engine/sandboxes';
 
 function readFileSafe(p) {
   try { return fs.readFileSync(p, 'utf8'); } catch { return null; }
