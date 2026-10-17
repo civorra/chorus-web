@@ -1,23 +1,31 @@
-FROM node:22-slim
+# Dockerfile multi-stage — contexte de build : racine du dépôt Chorus (..)
+#
+# Stages :
+#   base       — tooling système partagé (Perl, Python, LibreOffice, poppler…)
+#   chorus     — service webapp Node.js (port 3000)
+#   eca-server — agent ECA headless (port 7777)
+#
+# Les deux services héritent du stage base : eca-server dispose ainsi de tous
+# les outils d'extraction (pdfplumber, python-docx, libreoffice…) nécessaires
+# à l'exécution des skills chorus-pdf / chorus-word / chorus-excel via
+# eca__shell_command.
 
-# ── Tooling système ───────────────────────────────────────────────────────────
-# Perl + build tools : compile et installe les modules Chorus::* via l'entrypoint.
-# Python3/pip + weasyprint : scripts/md2pdf.py et scripts/md2html.py.
-# Tooling d'extraction documentaire (fusion depuis engine/Dockerfile) :
-#   poppler-utils    → chorus-pdf (pdftotext/pdfinfo)
-#   libxml2-utils    → chorus-xml
-#   libreoffice-*    → chorus-excel (XLSX→images), chorus-word (DOCX→images)
-#   fonts-*          → rendu LibreOffice correct
-# Tooling Python d'extraction :
-#   pdfminer.six, pypdf, pdfplumber → chorus-pdf
-#   python-docx, lxml               → chorus-word  (lxml requis par python-docx)
-#   openpyxl, Pillow                → chorus-excel
-#   beautifulsoup4                  → parsing HTML/XML annexe
+# ── Stage base : tooling partagé ─────────────────────────────────────────────
+FROM node:22-slim AS base
+
+# Perl + build tools : Chorus::* installés via l'entrypoint (make install).
+# Python3/pip + weasyprint : scripts/md2pdf.py et md2html.py.
+# Tooling d'extraction documentaire :
+#   poppler-utils  → chorus-pdf (pdftotext / pdfinfo)
+#   libxml2-utils  → chorus-xml
+#   libreoffice-*  → chorus-excel (XLSX→images), chorus-word (DOCX→images)
+#   fonts-*        → rendu LibreOffice correct
+# curl + unzip : téléchargement du binaire ECA dans le stage eca-server.
 #
 # ⛔ Absents intentionnellement :
-#   - @anthropic-ai/claude-code    (Claude Code CLI — concurrent d'ECA)
-#   - @earendil-works/pi-coding-agent (Pi Coding Agent)
-#   - `n 22` / nvm                 (image de base déjà Node 22)
+#   @anthropic-ai/claude-code    (Claude Code CLI — concurrent d'ECA)
+#   @earendil-works/pi-coding-agent
+#   n 22 / nvm  (image de base déjà Node 22)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     perl \
     perl-modules \
@@ -42,6 +50,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libreoffice-writer \
     fonts-dejavu \
     fonts-liberation \
+    curl \
+    unzip \
+    ca-certificates \
     && rm -rf /var/lib/apt/lists/* \
     && pip3 install --no-cache-dir --break-system-packages \
        markdown \
@@ -55,22 +66,38 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
        openpyxl \
        beautifulsoup4
 
-# ── npm — dépendances installées dans le volume node_modules_chorus ───────────
-# package.json est COPYé uniquement pour que `npm install` soit
-# reproductible dans l'entrypoint sans accès réseau si le layer est déjà
-# présent. Les fichiers serveur/frontend arrivent via le volume /chorus/web.
+# ── Stage chorus : service webapp Node.js ────────────────────────────────────
+FROM base AS chorus
+
+# package.json COPYé pour que npm install soit reproductible dans l'entrypoint.
+# Les fichiers serveur/frontend arrivent via le volume /chorus/web.
 COPY web/package.json /chorus-bootstrap/package.json
 RUN cd /chorus-bootstrap && npm install --omit=dev
 
-# ── Entrypoint ────────────────────────────────────────────────────────────────
-# Effectue make install des modules Chorus::*, npm install si node_modules
-# est vide, puis lance node server.js depuis /chorus/web.
 COPY web/chorus-entrypoint.sh /usr/local/bin/chorus-entrypoint.sh
 RUN chmod +x /usr/local/bin/chorus-entrypoint.sh
 
 ENV CHORUS_HOME=/chorus
 ENV PORT=3000
-
 EXPOSE 3000
-
 CMD ["/usr/local/bin/chorus-entrypoint.sh"]
+
+# ── Stage eca-server : agent ECA headless ────────────────────────────────────
+FROM base AS eca-server
+
+# Binaire ECA (GraalVM, statiquement lié — pas de JVM requise).
+RUN curl -fsSL -o /tmp/eca.zip \
+      https://github.com/editor-code-assistant/eca/releases/latest/download/eca-native-static-linux-amd64.zip \
+    && unzip /tmp/eca.zip -d /usr/local/bin/ \
+    && chmod +x /usr/local/bin/eca \
+    && rm /tmp/eca.zip
+
+COPY web/eca-config.json /etc/eca/config.json
+COPY web/eca-bootstrap.sh /usr/local/bin/eca-bootstrap.sh
+RUN chmod +x /usr/local/bin/eca-bootstrap.sh
+
+# Racine de travail = tout le dépôt Chorus monté en volume, pour que ECA voie
+# engine/AGENTS.md, agent/skills/*.md et sandboxes/.
+WORKDIR /chorus
+EXPOSE 7777
+ENTRYPOINT ["/usr/local/bin/eca-bootstrap.sh"]

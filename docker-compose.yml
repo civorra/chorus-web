@@ -13,8 +13,9 @@ secrets:
 services:
   eca-server:
     build:
-      context: .
-      dockerfile: Dockerfile.eca
+      context: ..
+      dockerfile: web/Dockerfile
+      target: eca-server
     # ⚠️ Pas de `dns:` figé ici — abandonné après incident (2026-10-14).
     # Un premier incident (résolveur Docker embarqué 127.0.0.11 intermittent
     # pour les lookups applicatifs vers tls.eca.dev/models.dev/
@@ -63,13 +64,12 @@ services:
 
   chorus:
     build:
-      # Context = Chorus repo root (parent de web/) — le Dockerfile peut
-      # ainsi lire engine/Makefile.PL+lib/ pour la vérification de build,
-      # et web/ pour les métadonnées npm (package.json).
-      # Les fichiers serveur/frontend ne sont plus COPYés — ils arrivent
-      # via le volume /chorus/web (voir § volumes ci-dessous).
+      # Context = racine Chorus. Dockerfile multi-stage : target chorus
+      # hérite du stage base (tooling Perl/Python/LibreOffice partagé avec
+      # eca-server) et ajoute npm bootstrap + chorus-entrypoint.sh.
       context: ..
       dockerfile: web/Dockerfile
+      target: chorus
     ports:
       - "3000:3000"
     secrets:
