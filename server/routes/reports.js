@@ -56,7 +56,10 @@ router.get(`${BASE}/:filename/export/:format`, (req, res) => {
   try { chorusHome = chorus.CHORUS_HOME(); }
   catch (e) { return res.status(500).json({ ok: false, error: e.message }); }
 
-  const script = path.join(chorusHome, 'Engine', 'scripts', format === 'pdf' ? 'md2pdf.py' : 'md2html.py');
+  // ⚠️ "engine" en minuscule — le vrai dossier dans /chorus est "engine",
+  // pas "Engine" (confirmé 2026-10-17, même piège que CHORUS_ENGINE_HOME
+  // dans docker-compose.yml/.env — voir investigation badge engine OFFLINE).
+  const script = path.join(chorusHome, 'engine', 'scripts', format === 'pdf' ? 'md2pdf.py' : 'md2html.py');
   const cleanup = () => { try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {} };
 
   try {
