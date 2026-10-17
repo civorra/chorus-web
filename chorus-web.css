@@ -1445,6 +1445,8 @@ input, select, textarea { font-family: inherit; }
   font-family: 'JetBrains Mono', monospace;
 }
 .pv-kpi-sub { font-size: 10px; color: var(--text-muted); margin-top: 4px; }
+.pv-kpi-clickable { cursor: pointer; transition: background 0.15s, box-shadow 0.15s; }
+.pv-kpi-clickable:hover { background: rgba(255,255,255,0.06); box-shadow: inset 0 0 0 1px var(--border); border-radius: 8px; }
 /* Tabs (project level) */
 .pv-tabs {
   display: flex; gap: 0; padding: 0 24px;

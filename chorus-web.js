@@ -2867,10 +2867,21 @@ function rowsFromRunReport(data) {
 }
 
 // Optional `ctx` { sbId, sbName, entityId, projId, projName } allows calling
+// Ouvre le dernier rapport run du projet courant avec un filtre pré-activé.
+// Appelé par les KPI cards "Non conformes" et "À confirmer" du projet.
+function pvKpiOpenReport(filter) {
+  if (!currentProject) return;
+  const runReports = sortReportsByDateDesc(
+    (currentProject.reports || []).filter(r => r.kind === 'run')
+  );
+  if (!runReports.length) return; // aucun run disponible — KPI card affiche "—"
+  openReportView(runReports[0], undefined, filter);
+}
+
 // this viewer outside of the pipeline modal context (e.g. from the report
 // history of a project that is not necessarily currentProject) —
 // falls back to currentProject/currentSandbox otherwise.
-async function openReportView(reportInfo, ctx) {
+async function openReportView(reportInfo, ctx, initialFilter = 'ALL') {
   const sbId      = ctx?.sbId      ?? currentSandbox?.id;
   const sbName    = ctx?.sbName    ?? currentSandbox?.name;
   const entityId  = ctx?.entityId  ?? currentProject?.entity;
@@ -2934,6 +2945,7 @@ async function openReportView(reportInfo, ctx) {
 
   updateRvFooter(rows);
   filterReport('ALL');
+  if (initialFilter !== 'ALL') filterReport(initialFilter);
 
   // Show "chorus-complete-report" button only for --explain reports —
   // et seulement si ce rapport n'a pas déjà été croisé (chorus-complete-report
