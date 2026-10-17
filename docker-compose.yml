@@ -65,9 +65,9 @@ services:
       # via perl Makefile.PL && make && make install.
       # chorus-web is now a real directory (no longer a symlink to
       # chorus-mvp0-v43/) — BuildKit does not follow directory symlinks
-      # when building the context, which broke COPY chorus-web/*.
+      # when building the context, which broke COPY web/*.
       context: ..
-      dockerfile: chorus-web/Dockerfile
+      dockerfile: web/Dockerfile
     ports:
       - "3000:3000"
     secrets:

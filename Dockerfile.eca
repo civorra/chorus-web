@@ -24,7 +24,7 @@ RUN chmod +x /usr/local/bin/eca-bootstrap.sh
 
 # Racine de travail = tout le dépôt Chorus monté en volume (voir
 # docker-compose.yml : ${CHORUS_HOME}:/chorus), pour que ECA voie
-# Engine/AGENTS.md, agent/skills/*.md et sandboxes/.
+# engine/AGENTS.md, agent/skills/*.md et sandboxes/.
 WORKDIR /chorus
 
 EXPOSE 7777

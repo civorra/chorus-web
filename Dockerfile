@@ -30,8 +30,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Contexte de build = racine du dépôt Chorus (voir docker-compose.yml : build.context: ..)
 # Les modules sont installés dans l'arborescence perl standard du conteneur :
 # plus besoin de PERL5LIB pour que run.pl / Feed.pm / Expert.pm les trouvent.
-COPY Engine/Makefile.PL Engine/MANIFEST /usr/src/chorus-engine/
-COPY Engine/lib/ /usr/src/chorus-engine/lib/
+COPY engine/Makefile.PL engine/MANIFEST /usr/src/chorus-engine/
+COPY engine/lib/ /usr/src/chorus-engine/lib/
 RUN cd /usr/src/chorus-engine \
     && perl Makefile.PL INSTALLDIRS=site \
     && make \
@@ -40,12 +40,12 @@ RUN cd /usr/src/chorus-engine \
 
 WORKDIR /app
 
-COPY chorus-web/package.json .
+COPY web/package.json .
 RUN npm install --omit=dev
 
-COPY chorus-web/server.js chorus-web/prompts.js chorus-web/eca-client.js chorus-web/auth.js chorus-web/chorus-web.html ./
-COPY chorus-web/chorus/ ./chorus/
-COPY chorus-web/server/ ./server/
+COPY web/server.js web/prompts.js web/eca-client.js web/auth.js web/chorus-web.html ./
+COPY web/chorus/ ./chorus/
+COPY web/server/ ./server/
 
 # CHORUS_HOME est monté en volume depuis l'hôte, uniquement pour les données
 # (sandboxes, scripts run.pl générés par sandbox, etc.) — plus pour les
