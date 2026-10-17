@@ -2,7 +2,7 @@
 
 Interface web pour **Chorus** — moteur de conformité neuro-symbolique
 (moteur d'inférence à base de règles + construction de base de connaissances
-assistée par IA, voir [`Chorus::Engine`](../Engine)).
+assistée par IA, voir [`Chorus::Engine`](../engine)).
 
 `chorus-web` permet à un opérateur de piloter le pipeline Chorus depuis un
 navigateur plutôt qu'un terminal : import de documents sources
@@ -35,31 +35,35 @@ chantiers en cours.
 - **`server/`** — routeurs Express (`routes/`) et fonctions utilitaires
   (`helpers/`, `state.js`) pour l'API HTTP/SSE.
 
-Voir [`INTEGRATION.md`](./INTEGRATION.md) pour le détail du câblage
-frontend↔backend (endpoints API utilisés par `chorus-web.js`, formats des
-événements SSE).
+Voir [`INTEGRATION.md`](./INTEGRATION.md) pour le détail de l'installation,
+du déploiement et de la configuration.
 
 ## Démarrage rapide (Docker — recommandé)
 
 ```bash
-cp .env.example .env
-# éditer .env : CHORUS_HOME, SANDBOXES, ANTHROPIC_API_KEY_FILE ou
-# identifiants OAuth, ECA_REMOTE_PASSWORD, ...
+# 1. Cloner ce dépôt
+git clone --branch devel https://github.com/civorra/chorus-web ~/Chorus/web
 
-docker compose up -d
+# 2. Bootstrap : clone chorus-engine + crée .env
+cd ~/Chorus/web
+./setup.sh
+
+# 3. Build et démarrage
+docker compose up --build -d
 # → http://localhost:3000
 ```
 
 Deux services sont démarrés : `eca-server` (agent ECA headless, réseau
-interne uniquement) et `chorus-web` (l'application elle-même, port 3000).
+interne uniquement) et `chorus` (l'application elle-même, port 3000). Voir
+[`INTEGRATION.md`](./INTEGRATION.md) pour les instructions complètes et la
+référence de configuration.
 
 ## Démarrage rapide (Node.js local, sans Docker)
 
 ```bash
 npm install
 cp .env.example .env
-# éditer .env (mêmes variables que ci-dessus — CHORUS_HOME doit pointer vers
-# la racine du dépôt Chorus telle que vue par ce processus)
+# éditer .env : CHORUS_HOME, SANDBOXES, et optionnellement ANTHROPIC_API_KEY_FILE
 
 node server.js
 # → http://localhost:3000
@@ -67,8 +71,8 @@ node server.js
 
 Nécessite Node.js ≥ 20. Une instance `eca-server` (ECA headless) doit être
 joignable à l'URL configurée dans `ECA_SERVER_URL` pour que les opérations
-pilotées par IA fonctionnent ; le reste (scan des sandboxes, consultation des
-rapports) fonctionne indépendamment.
+pilotées par IA fonctionnent ; le scan des sandboxes et la consultation des
+rapports fonctionnent indépendamment.
 
 ## Organisation du dépôt
 
@@ -78,8 +82,12 @@ server.js, server/             Application Express backend (routeurs, helpers)
 chorus/                        Modules de scan et de parsing des sandboxes
 eca-client.js                  Client de l'agent ECA headless (SSE, sessions chat)
 auth.js, prompts.js            Authentification, templates de prompts LLM
-docker-compose.yml, Dockerfile*  Déploiement conteneurisé
-INTEGRATION.md                 Référence du câblage frontend/backend
+docker-compose.yml             Déploiement conteneurisé (services : eca-server, chorus)
+Dockerfile                     Image du service chorus (Node + Perl + Python + LibreOffice)
+Dockerfile.eca                 Image du service eca-server (binaire ECA GraalVM)
+chorus-entrypoint.sh           Démarrage conteneur : make install + npm install + node
+setup.sh                       Bootstrap hôte : clone engine, création .env
+INTEGRATION.md                 Guide d'installation, configuration et dépannage
 LICENSE                        Artistic License 2.0
 ```
 
