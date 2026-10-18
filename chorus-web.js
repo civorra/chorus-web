@@ -3556,7 +3556,15 @@ function openLevelTerminal(level, ctx, autoCmd = null) {
     t += 180;
   });
   setTimeout(() => {
-    lvlTermRestoreHistory(_lvlTermCtx);
+    // Historique NON restauré automatiquement à l'ouverture : chaque
+    // ouverture de terminal doit démarrer sur une session propre, sans
+    // texte/buffer de l'ancienne session pour ce contexte (cf. demande
+    // utilisateur — la restauration silencieuse de localStorage faisait
+    // réapparaître l'historique de la session précédente). La fonction
+    // lvlTermRestoreHistory() et le mécanisme de persistance restent en
+    // place (bouton 🗑 lvlTermClearHistoryConfirm, lvlTermSaveHistory)
+    // pour une réactivation future explicite si besoin, mais ne sont
+    // plus invoqués automatiquement ici.
     const input = document.getElementById('lvl-term-input');
     if (input) input.focus();
     // Auto-execute command if provided (chorus-check --summary/--explain)
