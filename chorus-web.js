@@ -4415,6 +4415,34 @@ function renderMarkdownInline(el) {
   t = t.replace(/^[ \t]*[-\*] (.+)$/gm, '<li class="md-li">$1</li>');
   t = t.replace(/(<li[^>]*>[\s\S]*?<\/li>\n?)+/g, '<ul class="md-ul">$&</ul>');
 
+  // Tableaux Markdown pipe (ex. "| Ordre | Règle | Référence corpus |" suivi
+  // d'une ligne séparatrice "|---|---|---|") — sans ce bloc, ces lignes
+  // n'étaient jamais reconnues comme un tableau et s'affichaient telles
+  // quelles (pipes littéraux) une fois les retours à la ligne convertis en
+  // <br> par le bloc suivant (cf. rapport chorus-check --explain, section
+  // "Chaîne de règles (_rule_trace)"). Un bloc de tableau = au moins 2
+  // lignes commençant par "|", la 2e étant une ligne séparatrice
+  // (uniquement des "-", "|", ":" et espaces).
+  t = t.replace(/^((?:\|.*\|[ \t]*\n){2,})/gm, (block) => {
+    const lines = block.replace(/\n$/, '').split('\n');
+    if (lines.length < 2) return block;
+    const isSep = (l) => /^\|?[ \t:|-]+\|?$/.test(l.trim()) && /-/.test(l);
+    if (!isSep(lines[1])) return block;
+    const splitRow = (l) => l.trim().replace(/^\|/, '').replace(/\|$/, '').split('|').map(c => c.trim());
+    const header = splitRow(lines[0]);
+    const bodyRows = lines.slice(2).map(splitRow);
+    let html = '<table class="md-table"><thead><tr>';
+    header.forEach(c => { html += `<th>${c}</th>`; });
+    html += '</tr></thead><tbody>';
+    bodyRows.forEach(row => {
+      html += '<tr>';
+      row.forEach(c => { html += `<td>${c}</td>`; });
+      html += '</tr>';
+    });
+    html += '</tbody></table>';
+    return html;
+  });
+
   // Sauts de ligne résiduels (hors blocs pre)
   // On préserve les newlines dans les pre ; on convertit les autres
   const parts = t.split(/(<pre[\s\S]*?<\/pre>)/);

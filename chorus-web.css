@@ -1322,6 +1322,17 @@ input, select, textarea { font-family: inherit; }
   margin: 4px 0; padding-left: 18px;
 }
 .eca-session-line.resp li.md-li { margin: 2px 0; }
+.eca-session-line.resp table.md-table {
+  border-collapse: collapse; margin: 6px 0; font-size: 11px;
+  font-family: 'JetBrains Mono', monospace;
+}
+.eca-session-line.resp table.md-table th,
+.eca-session-line.resp table.md-table td {
+  border: 1px solid #1A2535; padding: 3px 8px; text-align: left;
+}
+.eca-session-line.resp table.md-table th {
+  background: #0D1620; color: #58A6FF; font-weight: 700;
+}
 .eca-session-line.resp strong { color: #E6EDF3; font-weight: 700; }
 .eca-session-line.resp em { color: #C9D1D9; font-style: italic; }
 .eca-session-input {
