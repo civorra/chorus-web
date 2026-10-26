@@ -1903,11 +1903,14 @@ function renderTestingTab() {
   // README.org § Session notes — réutilisé depuis le panneau Corpus /
   // Knowledge Base si déjà chargé, sinon fetch dédié. Rendu asynchrone pour
   // ne pas bloquer l'affichage des cartes de tests ci-dessus.
+  // Capture strengthen + testing convergence pour le compteur auto
+  const _sbStrengthen = strengthenReport;
+  const _sbTesting    = testing;
   fetchTestingBugs(sb.id).then(readme => {
     // L'utilisateur a pu changer de sandbox/onglet entre-temps.
     if (currentSandbox?.id !== sb.id) return;
     const section = document.getElementById('testing-bugs-section');
-    if (section) section.innerHTML = renderTestingBugsSection(readme, sb.id);
+    if (section) section.innerHTML = renderTestingBugsSection(readme, sb.id, _sbStrengthen, _sbTesting);
   });
 }
 
@@ -1919,9 +1922,27 @@ function renderTestingTab() {
 // grouped by session to give a real debugging history.
 let _testingBugsOpen = false;
 
-function renderTestingBugsSection(readme, sbId) {
-  const n = readme?.bugsFixed || 0;
-  if (!n) return ''; // nothing to display — no resolved bug found in README.org
+// Auto-compute resolved bugs from strengthen report when all tests have converged.
+// Used as a fallback / supplement when README.org hasn't been updated yet.
+// Returns strengthen.totalGaps if: report is fresh (not stale), and every test
+// file's convergence shows 0 discordances + 0 unprocessed.
+function computeAutoResolvedBugs(strengthenReport, testing) {
+  if (!strengthenReport || strengthenReport.stale) return 0;
+  if (!strengthenReport.totalGaps) return 0;
+  const entries = Object.values(testing || {}).filter(Boolean);
+  if (!entries.length) return 0;
+  const allConverged = entries.every(e =>
+    e.convergence?.converged === true &&
+    (e.convergence?.discordances || 0) === 0 &&
+    (e.convergence?.unprocessed  || 0) === 0
+  );
+  return allConverged ? (strengthenReport.totalGaps || 0) : 0;
+}
+
+function renderTestingBugsSection(readme, sbId, strengthenReport, testing) {
+  const autoCount = computeAutoResolvedBugs(strengthenReport, testing);
+  const n = Math.max(readme?.bugsFixed || 0, autoCount);
+  if (!n) return ''; // nothing to display — no resolved bug found in README.org or reports
 
   const tbl = readme.bugsTable;
   const hasSessionCol = tbl && tbl.headers[0] === 'Session';
@@ -4209,6 +4230,14 @@ async function levelTerminalExec(cmd) {
             replyLine = null; // nouvelle réponse après la question
             lvlTermAskUser(ctx, data.question || '', data.toolId, data.isApproval);
 
+          } else if (evt === 'refresh') {
+            // Live refresh de l'onglet Tests (WEB-021) — déclenché par
+            // server/routes/terminal.js quand ECA écrit un fichier clé
+            // (.last-check-results.json, .last-strengthen-report.json)
+            // AVANT le DONE final. Met à jour les badges de convergence
+            // et le strengthen panel sans attendre la fin du terminal.
+            refreshSandboxReports(ctx.sbId);
+
           } else if (evt === 'ping') {
             // keepalive — update the "thinking" message if still visible
             if (!thinkingRemoved) thinking.textContent = `… ECA réfléchit … (${Math.round((Date.now() - _lvlTermStartTs) / 1000)}s)`;
@@ -6249,6 +6278,15 @@ async function ecaLoginSubmit() {
       ecaLoginStep(true, false);
       document.getElementById('sd-auth-login-input-block').style.display = 'block';
       showAuthMsg('error', '✗ ' + (d.error || 'Code invalide'));
+      if (d.detail) {
+        const msgEl = document.getElementById('sd-auth-msg');
+        if (msgEl) {
+          const pre = document.createElement('pre');
+          pre.style.cssText = 'margin:6px 0 0;font-size:11px;opacity:.75;white-space:pre-wrap;word-break:break-all;text-align:left;';
+          pre.textContent = 'Détail Anthropic : ' + (typeof d.detail === 'object' ? JSON.stringify(d.detail, null, 2) : String(d.detail));
+          msgEl.appendChild(pre);
+        }
+      }
     }
   } catch (e) {
     ecaLoginStep(true, false);

@@ -305,6 +305,25 @@ router.post('/sandboxes/:sbId/terminal', (req, res) => {
           if (t2) t2.taskboard = toolInfo.taskboard;
           sseSend(res, 'taskboard', toolInfo.taskboard);
         }
+        // Refresh live de l'onglet Tests (WEB-021) — détecte les écritures
+        // sur les fichiers clés de résultats (.last-check-results.json,
+        // .last-strengthen-report.json) et envoie un événement SSE 'refresh'
+        // pour que le frontend puisse mettre à jour les badges de convergence
+        // AVANT que le terminal n'ait reçu son DONE final.
+        // Heuristique : eca__write_file envoie le chemin cible dans toolInfo
+        // (extrait par classifyToolCall depuis les arguments de l'outil).
+        // On teste sur le basename uniquement pour rester robuste aux chemins
+        // absolus variables selon la machine/sandbox.
+        if (toolInfo.name === 'eca__write_file' && toolInfo.path) {
+          const base = require('path').basename(toolInfo.path);
+          const REFRESH_TRIGGERS = new Set([
+            '.last-check-results.json',
+            '.last-strengthen-report.json',
+          ]);
+          if (REFRESH_TRIGGERS.has(base)) {
+            sseSend(res, 'refresh', { sbId });
+          }
+        }
       },
       onDone:    ()         => { clearTimeout(timeoutHandle); finish(); },
       onError:   (err)      => { clearTimeout(timeoutHandle); finish(`ECA events: ${err.message}`); },

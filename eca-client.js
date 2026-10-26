@@ -311,6 +311,11 @@ function classifyToolCall(content) {
     agentMaxSteps:  isSubagent ? content.details.maxSteps : null,
     isSkillLoad,
     skillName: isSkillLoad ? (content.arguments?.name || null) : null,
+    // path — cible principale de l'outil (eca__write_file, eca__edit_file,
+    // eca__read_file, eca__move_file, eca__directory_tree, etc.)
+    // Utilisé par terminal.js § WEB-021 pour détecter les écritures sur
+    // les fichiers de résultats clés et déclencher un refresh SSE.
+    path: content.arguments?.path || content.arguments?.destination || null,
     isTaskUpdate,
     taskboard: isTaskUpdate ? {
       tasks:             content.details.tasks || [],
