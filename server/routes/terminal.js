@@ -237,6 +237,75 @@ router.post('/sandboxes/:sbId/terminal', (req, res) => {
       }
     } catch { /* proceed without prefix */ }
 
+    // ── Directive skill — chargement explicite pour les commandes Chorus connues ──
+    // ECA reçoit seulement le chemin de l'AGENTS.md, qu'il peut ne pas lire s'il
+    // connaît la commande de son entraînement. Sans appel à eca__skill(), nos
+    // améliorations (Phase 0-bis/2.0-bis/4-checkpoint, eca__task, eca__ask_user)
+    // sont ignorées. Solution : injecter une directive explicite pour forcer le
+    // chargement du skill depuis le disque (version à jour).
+    const CHORUS_SKILL_MAP = {
+      strengthen:       'chorus-strengthen',
+      fix:              'chorus-fix',
+      // les autres kinds n'ont pas de skill dédié ou sont gérés par le message lui-même
+    };
+    // Pour tout message contenant un déclencheur Chorus connu, forcer eca__skill
+    const knownSkillPatterns = [
+      { re: /\bchorus-strengthen\b/, skill: 'chorus-strengthen' },
+      { re: /\bchorus-check\b/,      skill: 'chorus-check'      },
+      { re: /\bchorus-feed\b/,       skill: 'chorus-feed'       },
+      { re: /\bchorus-create-project\b/, skill: 'chorus-create-project' },
+      { re: /\bchorus-fix\b/,        skill: 'chorus-fix'        },
+      { re: /\bchorus-stress\b/,     skill: 'chorus-stress'     },
+    ];
+    const detectedSkill = (() => {
+      if (CHORUS_SKILL_MAP[kind]) return CHORUS_SKILL_MAP[kind];
+      for (const { re, skill } of knownSkillPatterns) {
+        if (re.test(message)) return skill;
+      }
+      return null;
+    })();
+
+    // ── Directive skill — injection des instructions critiques ──────────
+    // La simple invite à charger le skill est insuffisante : ECA peut l'ignorer
+    // et exécuter la commande depuis son entraînement (comportement observé :
+    // scan de tous les run-report-*.json au lieu de lire .last-check-results.json).
+    // Solution : injecter les règles critiques directement dans le contexte.
+    const SKILL_CRITICAL_RULES = {
+      'chorus-strengthen': [
+        '⛔ NE JAMAIS scanner les fichiers run-report-*.json individuels — ils contiennent des données brutes potentiellement obsolètes.',
+        '✅ Phase 1.1 OBLIGATOIRE en premier : lire $SANDBOX/.last-check-results.json pour le cache (kb_hash + proj_hash).',
+        '✅ Si cache HIT (les deux hashes correspondent) : utiliser ces résultats DIRECTEMENT, NE PAS relancer chorus-check.',
+        '✅ Si cache MISS seulement : spawner des sous-agents via eca__spawn_agent pour chorus-check --all.',
+        '✅ Phase 0-bis : appeler eca__task(op="plan",...) pour afficher le taskboard de progression.',
+        '✅ Phase 2.0-bis : détecter les bugs C2-C5 dans les fichiers projet avant de classer comme gaps KB.',
+        '✅ Phase 4-checkpoint : appeler eca__ask_user() pour valider les hypothèses avant Phase 4.5.',
+      ],
+      'chorus-check': [
+        '✅ Mode --all : spawner un sous-agent par project-*.json via eca__spawn_agent.',
+        '✅ Phase 6.3 (mono-projet) : mettre à jour .last-check-results.json après chaque run.',
+        '✅ Phase 6-all.0-bis : appeler eca__task(op="plan",...) pour le taskboard.',
+      ],
+      'chorus-create-project': [
+        '✅ Phase 6.2 step 5 : mettre à jour .last-check-results.json avec proj_hash path-indépendant.',
+        '✅ proj_hash = sha256sum project-*.json | awk \'{print $1}\' | sha256sum (PAS sha256sum|sha256sum direct).',
+      ],
+      'chorus-feed': [
+        '✅ § 0-bis : appeler eca__task(op="plan",...) pour le taskboard au démarrage.',
+      ],
+    };
+
+    const skillDirective = detectedSkill
+      ? (() => {
+          const rules = SKILL_CRITICAL_RULES[detectedSkill] || [];
+          const rulesBlock = rules.length
+            ? '\nRègles critiques à respecter impérativement :\n' + rules.map(r => `  ${r}`).join('\n')
+            : '';
+          return `\n\n[SKILL OBLIGATOIRE — à exécuter EN PREMIER, avant tout autre outil]\n` +
+            `Charge le skill via : eca__skill("${detectedSkill}")${rulesBlock}\n` +
+            `⛔ NE commence JAMAIS à exécuter sans avoir d'abord chargé son skill — le skill contient les instructions à jour.`;
+        })()
+      : '';
+
     const DONE_INSTRUCTION =
       '\n\n[TERMINAL PROTOCOL — OBLIGATOIRE] ' +
       'Quand ta réponse est entièrement terminée — skill accompli, fichiers écrits, question répondue — ' +
@@ -244,10 +313,19 @@ router.post('/sandboxes/:sbId/terminal', (req, res) => {
 
     const fullMessage =
       `${agentsPrefix}[Contexte ECA — niveau ${level}]\n${contextBlock}\n\nQuestion : ${message}` +
+      skillDirective +
       DONE_INSTRUCTION;
 
     // ── Subscribe BEFORE sending ─────────────────────────────────────────
     let subReq = null, finished = false;
+    // ── Guard eca__ask_user — WEB-025 ─────────────────────────────────────
+    // When ECA calls eca__ask_user the chat status briefly goes 'idle' while
+    // waiting for the user's answer, which would trigger onDone → finish()
+    // and close the SSE stream before the user has responded.
+    // Fix: set waitingForUserInput = true in onAsk, clear it in /respond,
+    // and guard both onDone and the timeout against premature closure.
+    let waitingForUserInput = false;
+    let pendingTimeoutRestart = null; // stores remaining ms to restart timeout after respond
 
     const heartbeat = setInterval(() => {
       if (!finished) sseSend(res, 'ping', { t: Date.now() });
@@ -258,19 +336,36 @@ router.post('/sandboxes/:sbId/terminal', (req, res) => {
       finished = true;
       activeTerminals.delete(sessionId);
       clearInterval(heartbeat);
+      if (pendingTimeoutRestart) { clearTimeout(pendingTimeoutRestart); pendingTimeoutRestart = null; }
       if (subReq) { try { subReq.destroy(); } catch {} }
       if (errMsg) sseError(res, errMsg);
       else sseDone(res, {});
     };
 
-    const timeoutHandle = setTimeout(
-      () => finish(`timeout après ${Math.round(timeoutMs / 60_000)} min — skill encore en cours côté ECA`),
+    let timeoutHandle = setTimeout(
+      () => {
+        if (waitingForUserInput) {
+          // User hasn't answered yet — extend by the full configured timeout
+          // rather than closing the session mid-question.
+          pendingTimeoutRestart = setTimeout(
+            () => finish(`timeout après attente réponse utilisateur (${Math.round(timeoutMs / 60_000)} min supplémentaires)`),
+            timeoutMs
+          );
+        } else {
+          finish(`timeout après ${Math.round(timeoutMs / 60_000)} min — skill encore en cours côté ECA`);
+        }
+      },
       timeoutMs
     );
 
     const { req: sReq, done } = eca.subscribeEcaEvents(chatId, {
       onChunk:   (text)     => { if (!finished) sseSend(res, 'chunk', { text }); },
-      onAsk:     (payload)  => { if (!finished) sseSend(res, 'ask', payload); },
+      onAsk:     (payload)  => {
+        if (!finished) {
+          waitingForUserInput = true;
+          sseSend(res, 'ask', payload);
+        }
+      },
       onToolLog: (toolInfo) => {
         if (finished) return;
         sseSend(res, 'tool', toolInfo);
@@ -319,13 +414,21 @@ router.post('/sandboxes/:sbId/terminal', (req, res) => {
           const REFRESH_TRIGGERS = new Set([
             '.last-check-results.json',
             '.last-strengthen-report.json',
+            '.last-fix-history.json',
           ]);
           if (REFRESH_TRIGGERS.has(base)) {
             sseSend(res, 'refresh', { sbId });
           }
         }
       },
-      onDone:    ()         => { clearTimeout(timeoutHandle); finish(); },
+      onDone:    ()         => {
+        // Guard: if eca__ask_user is pending, the 'idle' event is transient
+        // (ECA waiting for user input) — do NOT finish here. The session will
+        // naturally complete after the user responds and ECA reaches idle again.
+        if (waitingForUserInput) return;
+        clearTimeout(timeoutHandle);
+        finish();
+      },
       onError:   (err)      => { clearTimeout(timeoutHandle); finish(`ECA events: ${err.message}`); },
       // Visualisation des sous-agents parallèles (Engine/TODO.org [#J]
       // Axe 5, étape 2) — relaie le détail capté par eca-client.js
@@ -357,6 +460,18 @@ router.post('/sandboxes/:sbId/terminal', (req, res) => {
       skillHistory: [],
       taskboard:    null,
       subagents:    {},
+      // WEB-025: exposed by /respond to clear the ask_user guard and reset timeout
+      clearAskWait: () => {
+        waitingForUserInput = false;
+        // Restart the timeout from zero so the agent has the full configured
+        // duration to complete its work after the user has answered.
+        clearTimeout(timeoutHandle);
+        if (pendingTimeoutRestart) { clearTimeout(pendingTimeoutRestart); pendingTimeoutRestart = null; }
+        timeoutHandle = setTimeout(
+          () => finish(`timeout après ${Math.round(timeoutMs / 60_000)} min — skill encore en cours côté ECA`),
+          timeoutMs
+        );
+      },
     });
 
     // ── Send the prompt ────────────────────────────────────────────────
@@ -417,6 +532,12 @@ router.post('/sandboxes/:sbId/terminal/respond', async (req, res) => {
   if (!message)   return res.status(400).json({ ok: false, error: 'message manquant' });
   if (!sessionId) return res.status(400).json({ ok: false, error: 'sessionId manquant' });
   const chatId = `eca-term-${sbId}-${sessionId}`;
+  // WEB-025: clear the ask_user guard BEFORE injecting the response so that
+  // the next 'idle' event (ECA resuming and completing normally) properly
+  // triggers onDone → finish() instead of being swallowed by the guard.
+  // Also resets the timeout so the agent has the full duration to finish.
+  const t = activeTerminals.get(sessionId);
+  if (t?.clearAskWait) t.clearAskWait();
   try {
     await eca.ecaRequest(`/api/v1/chats/${encodeURIComponent(chatId)}/prompt`, 'POST', { message });
     res.json({ ok: true });
