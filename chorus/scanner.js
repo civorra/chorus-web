@@ -453,10 +453,43 @@ function readLastStrengthenReport(sbPath) {
     timestamp:  data.timestamp  || null,
     kbHash:     data.kb_hash    || null,
     sandbox:    data.sandbox    || null,
-    totalGaps:  data.total_gaps ?? 0,
-    summary:    data.summary    || { bucket_b: 0, bucket_c: 0, bucket_a: 0 },
-    gaps:       Array.isArray(data.gaps) ? data.gaps : [],
+    totalGaps:   data.total_gaps ?? 0,
+    summary:     data.summary    || { bucket_b: 0, bucket_c: 0, bucket_a: 0 },
+    gaps:        Array.isArray(data.gaps)         ? data.gaps         : [],
+    // project_bugs: éléments exclus de la classification KB (bugs C2–C5 dans le JSON projet)
+    // Produit par chorus-strengthen Phase 2.0-bis. Absent = [] (aucun bug fichier détecté).
+    projectBugs: Array.isArray(data.project_bugs) ? data.project_bugs : [],
     stale,
+  };
+}
+
+// ── readLastFixHistory ─────────────────────────────────────────────────────
+//
+// Lit $SANDBOX/.last-fix-history.json, écrit par `chorus-fix` en Phase 4.1
+// (cf. Engine/agent/skills/chorus-fix.md § Phase 4.1).
+// Contient l'historique d'une exécution chorus-fix : patches appliqués/bloqués,
+// gaps_before/gaps_after, corpus-correctif généré.
+//
+// Absent = chorus-fix jamais lancé sur ce sandbox.
+// Stale = kb_hash absent (fix antérieur à la convention) ou fichier corrompu.
+function readLastFixHistory(sbPath) {
+  const raw = readFileSafe(path.join(sbPath, '.last-fix-history.json'));
+  if (!raw) return null;
+  let data;
+  try { data = JSON.parse(raw); } catch { return null; }
+
+  return {
+    timestamp:       data.timestamp       || null,
+    sandbox:         data.sandbox         || null,
+    dryRun:          !!data.dry_run,
+    gapsBefore:      data.gaps_before     ?? null,
+    gapsAfter:       data.gaps_after      ?? null,
+    gapsResolved:    data.gaps_resolved   ?? null,
+    patches:         Array.isArray(data.patches)         ? data.patches         : [],
+    corpusCorrectif: data.corpus_correctif               || null,
+    bucketACount:    data.bucket_a_count  ?? 0,
+    bucketAItems:    Array.isArray(data.bucket_a_items)  ? data.bucket_a_items  : [],
+    previousRuns:    Array.isArray(data.previous_runs)   ? data.previous_runs   : [],
   };
 }
 
@@ -598,8 +631,9 @@ function scanSandbox(sbId) {
   const kbModeled = fileExists(path.join(sbPath, 'agent', 'chorus', 'index.org'));
 
   const strengthenReport = readLastStrengthenReport(sbPath);
+  const fixHistory       = readLastFixHistory(sbPath);
 
-  return { id: sbId, name, norm, standard, desc, path: sbPath, entities, testing, kbModeled, strengthenReport };
+  return { id: sbId, name, norm, standard, desc, path: sbPath, entities, testing, kbModeled, strengthenReport, fixHistory };
 }
 
 // ── scanAll ───────────────────────────────────────────────────────────────
@@ -613,6 +647,7 @@ module.exports = {
   readAgentOrgFile,
   readLastCheckResults,
   readLastStrengthenReport,
+  readLastFixHistory,
   scanSandboxCorpus,
   scanFlatProject,
   scanNestedProject,

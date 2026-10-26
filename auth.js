@@ -540,6 +540,11 @@ router.post('/api/auth/eca-login/:sessionId/submit', express.json(), async (req,
           tokenRes.headers['x-ratelimit-reset-requests'] ||
           tokenRes.headers['x-ratelimit-reset']
         );
+        // Log complet pour diagnostic (visible dans `docker logs chorus-web`)
+        console.error('[auth] OAuth 429 rate-limit — status:', tokenRes.status,
+          '| retryAfter:', retryAfter || '(absent)',
+          '| headers:', JSON.stringify(tokenRes.headers),
+          '| body:', JSON.stringify(tokenRes.data));
         const waitMsg = retryAfter
           ? ` Réessayez dans ${retryAfter} seconde(s).`
           : ' Réessayez dans quelques heures (limite par IP/client_id sur console.anthropic.com).';
@@ -551,6 +556,9 @@ router.post('/api/auth/eca-login/:sessionId/submit', express.json(), async (req,
           retryAfter: retryAfter || null,
         });
       }
+      console.error('[auth] OAuth token exchange failed — status:', tokenRes.status,
+        '| headers:', JSON.stringify(tokenRes.headers),
+        '| body:', JSON.stringify(tokenRes.data));
       return res.status(401).json({
         ok:     false,
         error:  `Échange token échoué (HTTP ${tokenRes.status}) : ${JSON.stringify(tokenRes.data)}`,

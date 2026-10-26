@@ -169,8 +169,16 @@ function buildSandboxEntry(sb, iconIndex) {
     compliance_avg:   complianceAvg,
     last_run_entity:  lastRunEntity,
     last_run_project: lastRunProject,
-    testing:    sb.testing || { iso: null, edges: null, cross: null, scale: null },
-    kbModeled:  !!sb.kbModeled,
+    testing:         sb.testing         || { iso: null, edges: null, cross: null, scale: null },
+    kbModeled:       !!sb.kbModeled,
+    // strengthenReport — rapport chorus-strengthen (.last-strengthen-report.json)
+    // lu par scanner.js § readLastStrengthenReport. Absent du rebuild initial →
+    // renderKbConvergenceWorkflow affichait "Jamais analysé" après refreshSandboxReports.
+    strengthenReport: sb.strengthenReport || null,
+    // fixHistory — historique chorus-fix (.last-fix-history.json)
+    // lu par scanner.js § readLastFixHistory. Persiste après convergence (total_gaps=0)
+    // → permet d'afficher les corrections appliquées même quand strengthen montre 0 gap.
+    fixHistory: sb.fixHistory || null,
   };
 
   const entities = entityList.map(e => ({
@@ -1729,6 +1737,116 @@ function renderStrengthenPanel(report, sbId) {
   </div>`;
 }
 
+// ─── FIX HISTORY PANEL ───────────────────────────────────────────────────
+// Panneau affiché dans l'onglet Tests quand .last-fix-history.json existe.
+// Visible même après convergence (total_gaps=0) — conserve la traçabilité des
+// corrections appliquées par chorus-fix.
+function renderFixHistoryPanel(report) {
+  if (!report) return '';
+
+  const ts = (report.timestamp || '').replace('T', ' ').slice(0, 16);
+  const dryRunTag = report.dryRun
+    ? `<span style="font-size:10px;background:rgba(99,102,241,.15);color:var(--info);padding:1px 5px;border-radius:3px;margin-left:6px">dry-run</span>`
+    : '';
+
+  // ── Compteurs ──────────────────────────────────────────────────────────
+  const applied  = report.patches.filter(p => p.status === 'applied').length;
+  const blocked  = report.patches.filter(p => p.status === 'blocked').length;
+  const skipped  = report.patches.filter(p => p.status === 'skipped').length;
+
+  const deltaTxt = (report.gapsBefore != null && report.gapsAfter != null)
+    ? `<span style="color:var(--text-muted)">${report.gapsBefore} gap(s) → ${report.gapsAfter} gap(s)</span>
+       ${report.gapsResolved > 0 ? `<span style="color:var(--success);margin-left:4px">−${report.gapsResolved} résolus</span>` : ''}`
+    : `<span style="color:var(--text-muted)">dry-run — aucun résultat mesuré</span>`;
+
+  // ── Lignes de patches ──────────────────────────────────────────────────
+  const patchRows = report.patches.map(p => {
+    const statusColor = p.status === 'applied'  ? 'var(--success)'
+                      : p.status === 'blocked'  ? 'var(--error)'
+                      : 'var(--text-muted)';
+    const statusIcon  = p.status === 'applied'  ? '✅'
+                      : p.status === 'blocked'  ? '🛑'
+                      : '⏭';
+    return `<details style="font-size:11px;border-bottom:1px solid var(--border);padding:4px 0">
+      <summary style="cursor:pointer;display:flex;align-items:center;gap:6px;list-style:none">
+        <span style="color:${statusColor};min-width:16px">${statusIcon}</span>
+        <span style="color:var(--text-muted)">#${p.gap_id}</span>
+        <span>${(p.gap_type || '?').replace(/_/g, ' ')}</span>
+        <span style="color:var(--text-muted)">·</span>
+        <span style="font-family:'JetBrains Mono',monospace">${p.element_id || '?'}</span>
+      </summary>
+      <div style="padding:5px 0 2px 22px;color:var(--text-secondary)">
+        ${p.rule_file ? `<div><strong>Règle :</strong> ${p.rule_file}${p.agent ? ` <span style="color:var(--text-muted)">(${p.agent})</span>` : ''}</div>` : ''}
+        ${p.change    ? `<div><strong>Patch :</strong> <code style="font-size:10px">${p.change}</code></div>` : ''}
+        ${p.blocked_reason ? `<div style="color:var(--error)"><strong>Bloqué :</strong> ${p.blocked_reason}</div>` : ''}
+      </div>
+    </details>`;
+  }).join('') || `<div style="font-size:11px;color:var(--text-muted);padding:4px 0">Aucun patch enregistré.</div>`;
+
+  // ── Corpus-correctif ───────────────────────────────────────────────────
+  const ccHtml = report.corpusCorrectif
+    ? `<div style="font-size:11px;margin-top:6px">
+        📄 Corpus-correctif généré : <code>${report.corpusCorrectif}</code>
+       </div>`
+    : '';
+
+  // ── Bucket A ───────────────────────────────────────────────────────────
+  const bAHtml = report.bucketACount > 0
+    ? `<div style="font-size:11px;color:var(--text-muted);margin-top:4px">
+        🔍 ${report.bucketACount} item(s) Bucket A — clarification corpus requise (révision humaine).
+       </div>`
+    : '';
+
+  // ── Runs précédents ────────────────────────────────────────────────────
+  const prevRuns = report.previousRuns || [];
+  const prevHtml = prevRuns.length === 0 ? '' : `
+    <details style="margin-top:10px">
+      <summary style="cursor:pointer;font-size:11px;color:var(--text-muted);list-style:none;display:flex;align-items:center;gap:6px">
+        <span>🕓</span>
+        <span>${prevRuns.length} run(s) précédent(s)</span>
+      </summary>
+      <div style="margin-top:6px;display:flex;flex-direction:column;gap:4px">
+        ${prevRuns.map(r => {
+          const rTs  = (r.timestamp || '').replace('T', ' ').slice(0, 16);
+          const rApp = (r.patches || []).filter(p => p.status === 'applied').length;
+          const rBlk = (r.patches || []).filter(p => p.status === 'blocked').length;
+          const rDelta = (r.gaps_before != null && r.gaps_after != null)
+            ? `${r.gaps_before}→${r.gaps_after}` : '—';
+          const rDry = r.dry_run
+            ? `<span style="font-size:9px;color:var(--info);margin-left:4px">dry-run</span>` : '';
+          return `<div style="font-size:11px;padding:4px 8px;background:var(--bg-tertiary);border-radius:4px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+            <span style="color:var(--text-muted)">${rTs}</span>${rDry}
+            <span>gaps : <strong>${rDelta}</strong></span>
+            <span style="color:var(--text-muted)">✅ ${rApp} · 🛑 ${rBlk}</span>
+            ${r.corpus_correctif ? `<span style="color:var(--text-muted)">📄 ${r.corpus_correctif}</span>` : ''}
+          </div>`;
+        }).join('')}
+      </div>
+    </details>`;
+
+  return `<div class="pv-panel" style="margin-top:18px">
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;cursor:pointer"
+         onclick="this.closest('.pv-panel').querySelector('.fix-history-body').classList.toggle('hidden')">
+      <span style="font-weight:600;font-size:12px">🛠️ Historique des corrections (chorus-fix)</span>
+      ${dryRunTag}
+      <span style="font-size:10px;color:var(--text-muted);margin-left:auto">${ts}</span>
+      <span style="font-size:11px;color:var(--text-muted)">▾</span>
+    </div>
+    <div class="fix-history-body">
+      <div style="display:flex;gap:16px;font-size:12px;margin-bottom:8px;flex-wrap:wrap">
+        ${deltaTxt}
+        <span style="color:var(--text-muted);margin-left:auto">✅ ${applied} appliqué(s) · 🛑 ${blocked} bloqué(s) · ⏭ ${skipped} ignoré(s)</span>
+      </div>
+      <div style="max-height:220px;overflow-y:auto;border:1px solid var(--border);border-radius:4px;padding:4px 8px">
+        ${patchRows}
+      </div>
+      ${ccHtml}
+      ${bAHtml}
+      ${prevHtml}
+    </div>
+  </div>`;
+}
+
 // ─── STRENGTHEN FULL-SUITE LAUNCHER ──────────────────────────────────────
 // Déclenché depuis l'indicateur de convergence (suite complète, pas un seul slug).
 function runStrengthenFull() {
@@ -1753,9 +1871,23 @@ function runStrengthenFull() {
     `Continuer ?`
   )) return;
 
-  openLevelTerminal('sandbox', { sbId: sb.id, kind: 'strengthen' },
-    `chorus-strengthen ${sb.id}`);
-}
+    openLevelTerminal('sandbox', { sbId: sb.id, kind: 'strengthen' },
+      `chorus-strengthen ${sb.id}`);
+  }
+  
+  // Lance chorus-check --all sans dépendre de _testsSelected (utilisé par Zone 2
+  // boucle de convergence KB — étapes ① et ④). Si un seul projet existe, lance
+  // chorus-check sur ce fichier ; sinon toujours --all.
+  function runCheckAll() {
+    if (!currentSandbox) return;
+    const sb = currentSandbox;
+    const existingSlugs = Object.keys(TESTING_META).filter(s => (sb.testing || {})[s]);
+    if (!existingSlugs.length) return;
+    const cmd = existingSlugs.length === 1
+      ? `chorus-check ${sb.id} ${TESTING_FILES[existingSlugs[0]]}`
+      : `chorus-check ${sb.id} --all`;
+    openLevelTerminal('sandbox', { sbId: sb.id }, cmd);
+  }
 
 // ─── CHORUS-FIX LAUNCHER ──────────────────────────────────────────────────
 function confirmRunChorusFix(mode) {
@@ -1809,7 +1941,147 @@ function confirmRunChorusFix(mode) {
   }
 }
 
+// ─── ZONE 2 — BOUCLE DE CONVERGENCE KB ───────────────────────────────────
+// Remplace renderConvergenceIndicator() + renderStrengthenPanel().
+// Affiche 4 étapes linéaires avec état et bouton d'action contextuel.
+// Chaque étape n'est actionnable que si l'étape précédente est complétée.
+//
+//  ① Vérifier   chorus-check --all    ✅/⚠️/○
+//  ② Diagnostiquer chorus-strengthen  ✅/⚠️ périmé/○
+//  ③ Corriger KB  chorus-fix          ✅/B:N C:N/○
+//  ④ Re-vérifier  chorus-check --all  ✅/○  (apparaît après ③ seulement)
+function renderKbConvergenceWorkflow(testing, strengthenReport, sbId, kbModeled) {
+  if (!kbModeled) return '';
+
+  const slugs = Object.keys(testing).filter(s => testing[s]);
+  if (!slugs.length) return '';
+
+  // ── État étape ①  (chorus-check --all) ──────────────────────────────
+  const totalDisc    = slugs.reduce((s, k) => s + (testing[k].convergence?.discordances || 0), 0);
+  const totalUnproc  = slugs.reduce((s, k) => s + (testing[k].convergence?.unprocessed  || 0), 0);
+  const anyStale     = slugs.some(k => testing[k].convergence?.stale);
+  const checkTs      = slugs.map(k => testing[k].convergence?.timestamp).filter(Boolean).sort().pop();
+  const checkDone    = slugs.some(k => testing[k].convergence);
+
+  let step1State, step1Badge, step1Action = '';
+  if (!checkDone) {
+    step1State = 'pending';
+    step1Badge = `<span style="color:var(--text-muted)">○ jamais lancé</span>`;
+    step1Action = `<button class="btn btn-ghost btn-sm" style="font-size:11px" onclick="runCheckAll()">▶ Vérifier</button>`;
+  } else if (anyStale) {
+    step1State = 'stale';
+    step1Badge = `<span style="color:var(--warn)">⚠️ périmé — résultats obsolètes</span>`;
+    step1Action = `<button class="btn btn-ghost btn-sm" style="font-size:11px" onclick="runCheckAll()">▶ Re-lancer</button>`;
+  } else if (totalDisc === 0 && totalUnproc === 0) {
+    step1State = 'ok';
+    step1Badge = `<span style="color:var(--success)">✅ ${slugs.length} projet(s) convergés</span>
+      <span style="color:var(--text-muted);font-size:10px;margin-left:6px">${(checkTs||'').slice(0,16).replace('T',' ')}</span>`;
+    step1Action = `<button class="btn btn-ghost btn-sm" style="font-size:11px" onclick="runCheckAll()">▶ Re-vérifier</button>`;
+  } else {
+    step1State = 'disc';
+    step1Badge = `<span style="color:var(--warn)">⚠️ ${totalDisc} discordance(s)</span>
+      <span style="color:var(--text-muted);font-size:10px;margin-left:6px">${(checkTs||'').slice(0,16).replace('T',' ')}</span>`;
+    step1Action = `<button class="btn btn-ghost btn-sm" style="font-size:11px" onclick="runCheckAll()">▶ Re-lancer</button>`;
+  }
+
+  // ── État étape ②  (chorus-strengthen) ───────────────────────────────
+  const sr = strengthenReport;
+  const step2Enabled = (step1State === 'disc' || step1State === 'ok');
+  let step2State, step2Badge, step2Action = '', step2Detail = '';
+  if (!step2Enabled) {
+    step2State = 'waiting';
+    step2Badge = `<span style="color:var(--text-muted)">○ en attente de l'étape ①</span>`;
+  } else if (!sr) {
+    step2State = 'pending';
+    step2Badge = `<span style="color:var(--text-muted)">○ jamais analysé</span>`;
+    step2Action = `<button class="btn btn-ghost btn-sm" style="font-size:11px" onclick="runStrengthenFull()">🔍 Diagnostiquer</button>`;
+  } else if (sr.stale) {
+    step2State = 'stale';
+    step2Badge = `<span style="color:var(--warn)">⚠️ périmé — KB modifiée depuis</span>`;
+    step2Action = `<button class="btn btn-ghost btn-sm" style="font-size:11px" onclick="runStrengthenFull()">🔍 Re-analyser</button>`;
+  } else {
+    const bB = sr.summary?.bucket_b || 0, bC = sr.summary?.bucket_c || 0, bA = sr.summary?.bucket_a || 0;
+    const nBugs = (sr.projectBugs || []).length;
+    if (sr.totalGaps === 0 && nBugs === 0) {
+      step2State = 'ok';
+      step2Badge = `<span style="color:var(--success)">✅ 0 gap KB</span>
+        <span style="color:var(--text-muted);font-size:10px;margin-left:6px">${(sr.timestamp||'').slice(0,16).replace('T',' ')}</span>`;
+    } else {
+      step2State = 'gaps';
+      const parts = [];
+      if (bB) parts.push(`B:${bB}`); if (bC) parts.push(`C:${bC}`); if (bA) parts.push(`A:${bA}`);
+      if (nBugs) parts.push(`🔧 ${nBugs} bug(s) fichier`);
+      step2Badge = `<span style="color:var(--warn)">⚠️ ${sr.totalGaps} gap(s) KB${nBugs ? ` · ${nBugs} bug(s) fichier` : ''}</span>
+        <span style="color:var(--text-muted);font-size:10px;margin-left:6px">${parts.join(' ')} · ${(sr.timestamp||'').slice(0,16).replace('T',' ')}</span>`;
+      // Bugs fichier → suggestion ⟲ par stratégie
+      if (nBugs) {
+        const bugSlugs = [...new Set((sr.projectBugs||[]).map(b => (b.project_file||'').replace('project-','').replace('.json','')))];
+        step2Detail += `<div style="font-size:11px;color:var(--warn);margin-top:4px;padding:4px 8px;background:rgba(251,146,60,.08);border-radius:4px">
+          🔧 Bug(s) fichier détecté(s) — fix : cliquez ⟲ sur ${bugSlugs.map(s=>`<code>${s}</code>`).join(', ')} (Phase 5b C2–C5 auto)
+        </div>`;
+      }
+    }
+    step2Action = `<button class="btn btn-ghost btn-sm" style="font-size:11px" onclick="runStrengthenFull()">🔍 Re-analyser</button>`;
+  }
+
+  // ── État étape ③  (chorus-fix) ───────────────────────────────────────
+  const step3Enabled = (step2State === 'gaps');
+  const bB = sr?.summary?.bucket_b || 0, bC = sr?.summary?.bucket_c || 0;
+  let step3State, step3Badge, step3Action = '';
+  if (!step3Enabled) {
+    step3State = 'waiting';
+    step3Badge = `<span style="color:var(--text-muted)">○ en attente de l'étape ②</span>`;
+  } else {
+    step3State = 'ready';
+    const parts = [];
+    if (bB) parts.push(`${bB} règle(s) YAML`); if (bC) parts.push(`${bC} enrichissement(s) KB`);
+    step3Badge = `<span style="color:var(--info)">${parts.join(' · ') || '—'}</span>`;
+    step3Action = `<span style="display:flex;gap:6px;flex-wrap:wrap">
+      <button class="btn btn-ghost btn-sm" style="font-size:11px" onclick="confirmRunChorusFix('dry-run')" title="Prévisualise sans écrire">🛠️ Dry-run</button>
+      ${bB ? `<button class="btn btn-ghost btn-sm" style="font-size:11px" onclick="confirmRunChorusFix('bucket-b')">⚡ B (${bB})</button>` : ''}
+      ${bC ? `<button class="btn btn-ghost btn-sm" style="font-size:11px" onclick="confirmRunChorusFix('bucket-c')">📄 C (${bC})</button>` : ''}
+    </span>`;
+  }
+
+  // ── État étape ④  (re-vérifier) — visible seulement si ③ actionnable ─
+  const step4Visible = (step3State === 'ready' || step3State === 'done');
+  const step4Html = step4Visible ? `
+    <div style="display:flex;align-items:center;gap:10px;padding:8px 12px;border-radius:6px;background:var(--bg-secondary);font-size:12px">
+      <span style="color:var(--text-muted);font-weight:700;min-width:16px">④</span>
+      <span style="min-width:90px">🔄 Re-vérifier</span>
+      <code style="font-size:10px;color:var(--text-muted)">chorus-check --all</code>
+      <span style="flex:1;color:var(--text-muted)">○ après correction KB</span>
+      <button class="btn btn-ghost btn-sm" style="font-size:11px" onclick="runCheckAll()">▶ Lancer</button>
+    </div>` : '';
+
+  // ── Global : 🏁 Convergé ──────────────────────────────────────────────
+  if (step1State === 'ok' && step2State === 'ok') {
+    return `<div style="display:flex;align-items:center;gap:10px;padding:10px 14px;border-radius:8px;background:rgba(34,197,94,.1);margin-bottom:14px;font-size:12px">
+      <span style="font-size:16px">🏁</span>
+      <span style="color:var(--success);font-weight:700">Convergé — KB validée, 0 gap, 0 discordance</span>
+    </div>`;
+  }
+
+  const stepRow = (n, icon, label, cmd, badge, action, detail='') => `
+    <div style="display:flex;align-items:flex-start;gap:10px;padding:8px 12px;border-radius:6px;background:var(--bg-secondary);font-size:12px">
+      <span style="color:var(--text-muted);font-weight:700;min-width:16px;padding-top:1px">${n}</span>
+      <span style="min-width:90px;white-space:nowrap">${icon} ${label}</span>
+      <code style="font-size:10px;color:var(--text-muted);white-space:nowrap">${cmd}</code>
+      <span style="flex:1">${badge}</span>
+      <span>${action}</span>
+    </div>${detail}`;
+
+  return `<div style="display:flex;flex-direction:column;gap:6px;margin-bottom:16px">
+    <div style="font-size:11px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:2px">Boucle de convergence KB</div>
+    ${stepRow('①','▶','Vérifier',    'chorus-check --all', step1Badge, step1Action)}
+    ${stepRow('②','🔍','Diagnostiquer','chorus-strengthen',  step2Badge, step2Action, step2Detail)}
+    ${stepRow('③','🔧','Corriger KB', 'chorus-fix',          step3Badge, step3Action)}
+    ${step4Html}
+  </div>`;
+}
+
 function renderTestingTab() {
+
   const sb = currentSandbox;
   const panel = document.getElementById('tab-tests');
   if (!sb || !panel) return;
@@ -1817,6 +2089,7 @@ function renderTestingTab() {
   const testing           = sb.testing || {};
   const kbModeled         = !!sb.kbModeled;
   const strengthenReport  = sb.strengthenReport || null;
+  const fixHistory        = sb.fixHistory        || null;
 
   const cards = Object.keys(TESTING_META).map(slug => {
     const meta  = TESTING_META[slug];
@@ -1824,39 +2097,49 @@ function renderTestingTab() {
     const exists = !!entry;
     const checked = _testsSelected.has(slug);
 
-    let statusHtml;
+    // ── Badge unique de statut (WEB-022) ──────────────────────────────
+    // Distingue 5 états : ✅ convergé / ⚠️ disc KB / 🔧 bug fichier / ○ non exécuté / ○ non généré
+    // Les bugs fichier (C2–C5) viennent de strengthenReport.projectBugs filtré sur ce slug.
+    const fileBugsForSlug = (strengthenReport?.projectBugs || [])
+      .filter(b => (b.project_file || '').replace('project-','').replace('.json','') === slug);
+    const disc = entry?.convergence?.discordances || 0;
+
+    let statusBadge;
     if (!exists) {
-      statusHtml = `<div class="pv-empty" style="margin:8px 0">Pas encore généré.</div>`;
+      statusBadge = `<span style="font-size:11px;color:var(--text-muted)">○ Pas encore généré</span>`;
     } else if (!entry.lastRun) {
-      statusHtml = `<div style="font-size:11px;color:var(--text-muted);margin:8px 0">Jamais exécuté.</div>`;
+      statusBadge = `<span style="font-size:11px;color:var(--text-muted)">○ Jamais exécuté</span>`;
+    } else if (fileBugsForSlug.length > 0) {
+      statusBadge = `<span style="font-size:11px;color:var(--warn)">🔧 Bug fichier → cliquez ⟲</span>
+        <span style="font-size:10px;color:var(--text-muted);display:block">${fileBugsForSlug.map(b=>b.bug_type).join(', ')}</span>`;
+    } else if (disc > 0) {
+      statusBadge = `<span style="font-size:11px;color:var(--warn)">⚠️ ${disc} disc. KB — voir boucle ↓</span>`;
     } else {
+      statusBadge = `<span style="font-size:11px;color:var(--success)">✅ Convergé</span>`;
+    }
+
+    // Run info ligne (compact — SOLVED/FAILED + counts + date)
+    let runInfo = '';
+    if (exists && entry.lastRun) {
       const r = entry.lastRun;
       const isSolved = r.verdict === 'SOLVED';
-      statusHtml = `<div style="font-size:11px;margin:8px 0;display:flex;flex-direction:column;gap:2px">
-        <div><span style="color:${isSolved ? 'var(--success)' : 'var(--error)'};font-weight:700">${r.verdict}</span>
-          <span style="color:var(--text-muted)"> · ${r.conformes ?? 0}/${r.totalFrames ?? 0} CONFORMES</span></div>
-        <div style="color:var(--text-muted)">${r.date || '—'}</div>
-        ${renderConvergenceBadge(slug, entry.convergence)}
+      runInfo = `<div style="font-size:10px;color:var(--text-muted);margin-top:2px">
+        <span style="color:${isSolved?'var(--success)':'var(--error)'};font-weight:600">${r.verdict}</span>
+        · ${r.conformes??0}/${r.totalFrames??0}
+        · <span>${(r.date||'').slice(0,16).replace('T',' ')}</span>
       </div>`;
     }
 
-    // Bouton "Renforcer" conditionné aux discordances uniquement (même
-    // logique que renderConvergenceBadge) — un élément "unprocessed" seul
-    // (ex. pipeline_control, hors périmètre -OK-/-KO-) ne justifie pas de
-    // lancer chorus-strengthen, qui cible spécifiquement les discordances
-    // attendu/obtenu. En cas de discordance(s), "🔧 Renforcer" REMPLACE
-    // "🖥️ Lancer le test" (pas d'ajout côté à côté) — relancer le test tel
-    // quel reproduirait exactement les mêmes discordances déjà connues ;
-    // l'action pertinente devient l'analyse/correction via chorus-strengthen.
-    const hasDiscordances = !!(entry && entry.convergence && entry.convergence.discordances);
+    const statusHtml = `<div style="margin:6px 0">${statusBadge}${runInfo}</div>`;
+
+    // ── Actions : ▶ Lancer + ⟲ Régénérer toujours présents (WEB-022)
+    // "🔧 Renforcer" supprimé — déplacé dans Zone 2 (boucle de convergence KB)
     const actionsHtml = exists
-      ? (hasDiscordances
-          ? `<button class="btn btn-ghost btn-sm" style="font-size:11px" onclick="confirmRunStrengthen('${slug}')" title="Analyse les discordances et renforce la KB — opération potentiellement longue et consommatrice de CPU">🔧 Renforcer</button>`
-          : `<button class="btn btn-ghost btn-sm" style="font-size:11px" onclick="runTestingStrategy('${slug}')">🖥️ Lancer le test</button>`)
-          + ` <button class="btn btn-ghost btn-sm" style="font-size:11px;padding:2px 6px" onclick="regenerateTestingStrategy('${slug}')" title="Régénérer ce test depuis la KB (sauvegarde l'existant avant remplacement)">⟲</button>`
+      ? `<button class="btn btn-ghost btn-sm" style="font-size:11px" onclick="runTestingStrategy('${slug}')" title="Lancer chorus-check sur ce fichier projet">▶ Lancer</button>
+         <button class="btn btn-ghost btn-sm" style="font-size:11px;padding:2px 6px" onclick="regenerateTestingStrategy('${slug}')" title="Régénérer ce test depuis la KB avec corrections C1–C5 automatiques (Phase 5b)">⟲ Regénérer</button>`
       : (kbModeled
-          ? `<button class="btn btn-ghost btn-sm" style="font-size:11px" onclick="generateTestingStrategy('${slug}')">+ Générer ce test</button>`
-          : `<button class="btn btn-ghost btn-sm" style="font-size:11px" disabled title="La KB doit être modélisée (chorus-feed) avant de générer des tests">+ Générer ce test</button>`);
+          ? `<button class="btn btn-ghost btn-sm" style="font-size:11px" onclick="generateTestingStrategy('${slug}')">+ Générer</button>`
+          : `<button class="btn btn-ghost btn-sm" style="font-size:11px" disabled title="La KB doit être modélisée (chorus-feed) avant de générer des tests">+ Générer</button>`);
 
     return `
       <div class="pv-panel" style="display:flex;flex-direction:column;gap:4px">
@@ -1882,20 +2165,30 @@ function renderTestingTab() {
 
   panel.innerHTML = `
     ${kbWarning}
-    ${renderConvergenceIndicator(testing, strengthenReport, kbModeled)}
-    <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;flex-wrap:wrap">
-      <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text-secondary);cursor:${nExisting ? 'pointer' : 'default'}">
-        <input type="checkbox" ${allSelected ? 'checked' : ''} ${nExisting === 0 ? 'disabled' : ''} onchange="toggleSelectAllTests(this.checked)">
-        Tout sélectionner
-      </label>
-      <button class="btn btn-primary btn-sm" ${_testsSelected.size === 0 ? 'disabled' : ''} onclick="runTestingSelection()">🖥️ Lancer la sélection via ECA (${_testsSelected.size})</button>
-      ${kbModeled ? `<button class="btn btn-ghost btn-sm" onclick="generateAllTests()" title="${nExisting > 0 ? 'Sauvegarde les tests existants puis relance chorus-create-project --batch' : 'Lance chorus-create-project --batch pour générer les 4 tests'}">🔄 ${nExisting > 0 ? 'Re-générer tous les tests' : 'Générer tous les tests'}</button>` : ''}
-      ${nExisting > 1 ? `<span style="font-size:11px;color:var(--text-muted)">${nExisting} test(s) générés sur 4</span>` : ''}
+
+    <!-- ══ ZONE 1 — Projets de test ══════════════════════════════════════ -->
+    <div style="margin-bottom:18px">
+      <div style="font-size:11px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:8px">Projets de test</div>
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;flex-wrap:wrap">
+        <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text-secondary);cursor:${nExisting ? 'pointer' : 'default'}">
+          <input type="checkbox" ${allSelected ? 'checked' : ''} ${nExisting === 0 ? 'disabled' : ''} onchange="toggleSelectAllTests(this.checked)">
+          Tout sélectionner
+        </label>
+        <button class="btn btn-primary btn-sm" ${_testsSelected.size === 0 ? 'disabled' : ''} onclick="runTestingSelection()">▶ Lancer la sélection (${_testsSelected.size})</button>
+        ${kbModeled ? `<button class="btn btn-ghost btn-sm" onclick="generateAllTests()" title="${nExisting > 0 ? 'Sauvegarde les tests existants puis relance chorus-create-project --batch' : 'Lance chorus-create-project --batch pour générer les 4 tests'}">🔄 ${nExisting > 0 ? 'Re-générer tous' : 'Générer tous'}</button>` : ''}
+        ${nExisting > 1 ? `<span style="font-size:11px;color:var(--text-muted)">${nExisting}/4 générés</span>` : ''}
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:10px">
+        ${cards}
+      </div>
     </div>
-    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:12px">
-      ${cards}
-    </div>
-    ${renderStrengthenPanel(strengthenReport, sb.id)}
+
+    <!-- ══ ZONE 2 — Boucle de convergence KB ═════════════════════════════ -->
+    ${renderKbConvergenceWorkflow(testing, strengthenReport, sb.id, kbModeled)}
+
+    <!-- ══ ZONE 3 — Historique des corrections (chorus-fix) ══════════════ -->
+    ${renderFixHistoryPanel(fixHistory)}
+
     <div id="testing-bugs-section" style="margin-top:18px"></div>
   `;
 
@@ -4228,7 +4521,7 @@ async function levelTerminalExec(cmd) {
           } else if (evt === 'ask') {
             ensureThinkingRemoved();
             replyLine = null; // nouvelle réponse après la question
-            lvlTermAskUser(ctx, data.question || '', data.toolId, data.isApproval);
+            lvlTermAskUser(ctx, data.question || '', data.toolId, data.isApproval, data.options);
 
           } else if (evt === 'refresh') {
             // Live refresh de l'onglet Tests (WEB-021) — déclenché par
@@ -4260,6 +4553,7 @@ async function levelTerminalExec(cmd) {
               }
             }
             doneShown = true;
+            lvlTermResetAskBanner(); // Fix A+C : cacher bannière + restaurer titre
             // Fold long responses + Markdown rendering
             if (replyLine) {
               renderMarkdownInline(replyLine);
@@ -4305,6 +4599,7 @@ async function levelTerminalExec(cmd) {
       // (e.g. network cut, server crash). End is signalled anyway.
       if (!doneShown) {
         const elapsed = Math.round((Date.now() - _lvlTermStartTs) / 1000);
+        lvlTermResetAskBanner();
         lvlTermAppend(`⏸ Session terminée (${elapsed}s)`, 'dim done-badge');
         doneShown = true;
         lvlTermSaveHistory();
@@ -4351,49 +4646,89 @@ function reportCountLabel(reports) {
 }
 
 /**
- * Displays the question asked by ECA (ask_user) and a temporary
- * input field. The response is submitted via POST /terminal/respond.
+ * Displays the question asked by ECA (ask_user).
+ * - Shows a STICKY BANNER above the scrollable output (always visible).
+ * - If options[] are provided, renders clickable buttons (no need to type).
+ * - Always also renders an inline text input for freeform answers.
+ * - Updates the terminal title with a "⏸" badge (Fix C).
+ * The response is submitted via POST /terminal/respond.
  */
-function lvlTermAskUser(ctx, question, toolId, isApproval = false) {
-  const out = document.getElementById('lvl-term-output');
+function lvlTermAskUser(ctx, question, toolId, isApproval = false, options = []) {
+  const out    = document.getElementById('lvl-term-output');
+  const banner = document.getElementById('lvl-term-ask-banner');
+  const bannerQ = document.getElementById('lvl-term-ask-question');
+  const title  = document.getElementById('lvl-term-title');
 
-  // Display the question / approval request
+  // ── Fix A : bannière sticky ───────────────────────────────────────────
+  if (banner) {
+    if (bannerQ) bannerQ.textContent = question;
+    banner.hidden = false;
+  }
+  // ── Fix C : badge pulsant sur le titre ────────────────────────────────
+  if (title && !title.dataset.origTitle) title.dataset.origTitle = title.textContent;
+  if (title) title.textContent = `⏸ En attente — ${title.dataset.origTitle || 'ECA'}`;
+
+  // ── Ligne question dans le flux ────────────────────────────────────────
   const qLine = document.createElement('div');
   qLine.className = 'eca-session-line warn';
   qLine.textContent = isApproval ? `🔐 ECA — ${question}` : `❓ ECA — ${question}`;
   out.appendChild(qLine);
 
-  // Temporary reply field
+  // ── Fix B : boutons d'options cliquables ─────────────────────────────
   const wrap = document.createElement('div');
   wrap.className = 'eca-ask-user-wrap';
-  wrap.innerHTML = `
+  wrap.style.cssText = 'display:flex;flex-direction:column;gap:6px;padding:6px 0';
+
+  const optList = Array.isArray(options) ? options : [];
+  if (optList.length) {
+    const btnRow = document.createElement('div');
+    btnRow.style.cssText = 'display:flex;flex-wrap:wrap;gap:6px;padding-left:4px';
+    optList.forEach(opt => {
+      const btn = document.createElement('button');
+      btn.className = 'btn btn-ghost btn-sm';
+      btn.style.cssText = 'font-size:11px;border:1px solid var(--warn,#FEBC2E);color:var(--warn,#FEBC2E)';
+      btn.textContent = opt.label || opt;
+      btn.title = opt.description || '';
+      btn.onclick = () => submitAnswer(opt.label || opt);
+      btnRow.appendChild(btn);
+    });
+    wrap.appendChild(btnRow);
+  }
+
+  // Champ texte libre (toujours présent — fallback ou réponse libre)
+  const inputRow = document.createElement('div');
+  inputRow.style.cssText = 'display:flex;align-items:center;gap:6px';
+  inputRow.innerHTML = `
     <span class="eca-session-prompt-label" style="color:var(--warn)">réponse ?›</span>
     <input class="eca-session-input" style="flex:1;border:none;outline:none;font-size:12px;
       font-family:'JetBrains Mono',monospace;color:#E6EDF3;background:transparent;caret-color:#F59E0B"
-      placeholder="Tapez votre réponse et appuyez sur Entrée…"
+      placeholder="${optList.length ? 'ou tapez une réponse libre…' : 'Tapez votre réponse et appuyez sur Entrée…'}"
       autocomplete="off" spellcheck="false">
   `;
+  wrap.appendChild(inputRow);
   out.appendChild(wrap);
   out.scrollTop = out.scrollHeight;
 
   const answerInput = wrap.querySelector('input');
   if (answerInput) answerInput.focus();
 
-  const submit = async () => {
-    const answer = (answerInput.value || '').trim();
-    if (!answer) return;
+  async function submitAnswer(answer) {
+    if (!(answer || '').trim()) return;
     wrap.remove();
 
-    // Display the response in the timeline
+    // Cacher la bannière et restaurer le titre
+    if (banner) banner.hidden = true;
+    if (title && title.dataset.origTitle) {
+      title.textContent = title.dataset.origTitle;
+      delete title.dataset.origTitle;
+    }
+
     const aLine = document.createElement('div');
     aLine.className = 'eca-session-line cmd';
     aLine.innerHTML = `<span style="color:var(--warn)">réponse ?›</span> ${escapeHtml(answer)}`;
     out.appendChild(aLine);
     out.scrollTop = out.scrollHeight;
 
-    // Envoyer la réponse à ECA via /terminal/respond — sessionId requis
-    // pour reconstruire le même chatId que la session qui a posé la
-    // question (voir server.js § ROUTE 5ter).
     try {
       await fetch(`${API}/api/sandboxes/${ctx.sbId}/terminal/respond`, {
         method: 'POST',
@@ -4403,12 +4738,30 @@ function lvlTermAskUser(ctx, question, toolId, isApproval = false) {
     } catch (e) {
       lvlTermAppend(`✖ Erreur envoi réponse : ${e.message}`, 'err');
     }
-  };
+  }
 
   if (answerInput) {
     answerInput.addEventListener('keydown', e => {
-      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submit(); }
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        submitAnswer((answerInput.value || '').trim());
+      }
     });
+  }
+
+  // Cacher la bannière aussi quand le terminal se ferme (DONE)
+  // → géré dans lvlTermResetAskBanner() appelé sur event:done
+}
+
+/** Réinitialise la bannière "En attente" et le titre du terminal.
+ *  Appelée à la fin de chaque session (event:done, stop, error). */
+function lvlTermResetAskBanner() {
+  const banner = document.getElementById('lvl-term-ask-banner');
+  if (banner) banner.hidden = true;
+  const title = document.getElementById('lvl-term-title');
+  if (title && title.dataset.origTitle) {
+    title.textContent = title.dataset.origTitle;
+    delete title.dataset.origTitle;
   }
 }
 

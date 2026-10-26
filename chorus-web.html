@@ -715,6 +715,17 @@
         </div>
         <div id="lvl-term-taskboard-list" class="hidden" style="padding:0 12px 8px;display:flex;flex-direction:column;gap:3px"></div>
       </div>
+      <!-- Bannière sticky "En attente de réponse" — visible au-dessus du flux de sortie
+           même si l'utilisateur a scrollé. Affichée par lvlTermAskUser(), cachée à la soumission. -->
+      <div id="lvl-term-ask-banner" hidden
+           style="display:flex;align-items:center;gap:10px;padding:8px 12px;
+                  background:rgba(251,146,60,.15);border-top:2px solid var(--warn,#FEBC2E);
+                  animation:lvlTermPulse 1.2s ease-in-out infinite;flex-shrink:0">
+        <span style="font-size:16px">⏸</span>
+        <span style="font-weight:700;color:var(--warn,#FEBC2E);font-size:12px">En attente de votre réponse</span>
+        <span id="lvl-term-ask-question" style="font-size:11px;color:var(--text-secondary);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></span>
+        <span style="font-size:10px;color:var(--text-muted)">↓ scrollez vers le bas ou choisissez ↓</span>
+      </div>
       <div class="eca-session-output" id="lvl-term-output" style="flex:1;min-height:0;overflow-y:auto"></div>
       <div class="eca-session-input-row">
         <span class="eca-session-prompt-label" id="lvl-term-prompt">sandbox ?></span>
