@@ -622,7 +622,43 @@ function renderProjectPage(proj, entLabel) {
   } else {
     apercuHtml += `<div class="pv-empty">Aucun rapport disponible.</div>`;
   }
-  apercuHtml += `</div></div>`;
+  apercuHtml += `</div>`;
+
+  // ── Audit qualité panel ───────────────────────────────────────
+  const aud = proj.audit || null;
+  apercuHtml += `<div class="pv-panel"><div class="pv-panel-title">Audit qualité</div>`;
+  if (!aud) {
+    apercuHtml += `
+      <div class="pv-empty" style="margin-bottom:8px">Audit non effectué — <code>chorus-audit-import</code> jamais lancé sur ce projet.</div>
+      <button class="btn btn-ghost btn-sm" onclick="startAudit('${proj.id}')" style="font-size:11px">Auditer</button>`;
+  } else {
+    const actionable = (aud.gapsComblables||0) + (aud.gapsPartiels||0) + (aud.gapsMapping||0) + (aud.framesManquantes||0);
+    const statusClr = actionable === 0 ? 'var(--success)' : 'var(--warn)';
+    const statusTxt = actionable === 0
+      ? (aud.patchApplied ? `✅ Audité · ${aud.patchesApplied || 0} correction(s) appliquée(s)` : '✅ Aucun gap actionnable')
+      : `⚠ ${actionable} gap(s) restant(s)`;
+    const rows = [
+      aud.gapsComblables   > 0 ? `<div class="pv-li-row"><span class="pv-li-key">✅ Comblables</span><span class="pv-li-val" style="color:var(--success)">${aud.gapsComblables} restant(s)</span></div>` : '',
+      aud.patchesApplied   > 0 ? `<div class="pv-li-row"><span class="pv-li-key">✅ Patchés</span><span class="pv-li-val" style="color:var(--success)">${aud.patchesApplied} correction(s) appliquée(s)</span></div>` : '',
+      aud.gapsPartiels     > 0 ? `<div class="pv-li-row"><span class="pv-li-key">⚠️ Partiels</span><span class="pv-li-val" style="color:var(--warn)">${aud.gapsPartiels} — source incomplète</span></div>` : '',
+      aud.gapsMapping      > 0 ? `<div class="pv-li-row"><span class="pv-li-key">🔄 Mappings</span><span class="pv-li-val" style="color:var(--warn)">${aud.gapsMapping} — décision ingénieur</span></div>` : '',
+      aud.framesManquantes > 0 ? `<div class="pv-li-row"><span class="pv-li-key">🚫 Frames</span><span class="pv-li-val" style="color:var(--error)">${aud.framesManquantes} type(s) manquant(s)</span></div>` : '',
+      aud.gapsAbsents      > 0 ? `<div class="pv-li-row"><span class="pv-li-key">❌ Absents</span><span class="pv-li-val" style="color:var(--text-muted)">${aud.gapsAbsents} — hors périmètre</span></div>` : '',
+    ].filter(Boolean).join('');
+    const auditDate = aud.date ? `<span style="font-size:10px;color:var(--text-muted);margin-left:8px">${aud.date}</span>` : '';
+    const reportLink = aud.report
+      ? `<div style="margin-top:6px;font-size:10px;color:var(--text-muted);font-family:'JetBrains Mono',monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${aud.report}">${aud.report}</div>`
+      : '';
+    const auditBtnInner = auditNextAction(aud, proj.id, false);
+    apercuHtml += `
+      <div style="font-size:12px;font-weight:600;color:${statusClr};margin-bottom:6px">${statusTxt}${auditDate}</div>
+      <div class="pv-last-import">${rows}</div>
+      ${reportLink}
+      <div style="margin-top:8px">${auditBtnInner}</div>`;
+  }
+  apercuHtml += `</div>`;
+
+  apercuHtml += `</div>`; // close pv-overview-grid
 
   document.getElementById('pv-tab-apercu').innerHTML = apercuHtml;
 
@@ -1430,6 +1466,39 @@ function renderProjectsTab() {
 }
 
 // ─── AUDIT QUALITÉ ──────────────────────────────────────────────
+// Calcule le bouton d'action contextuelle selon l'état d'audit du projet.
+//   compact=true  → bouton court pour projCard / projRow (sp = stopPropagation prefix)
+//   compact=false → bouton + guidance texte pour le panel aperçu
+function auditNextAction(audit, projId, compact, sp = '') {
+  if (!audit) {
+    return compact
+      ? `<button class="btn btn-ghost btn-sm" onclick="${sp}startAudit('${projId}')" title="Lancer l'audit qualité">Aud.</button>`
+      : `<button class="btn btn-ghost btn-sm" onclick="startAudit('${projId}')" style="font-size:11px">Auditer</button>`;
+  }
+  if (audit.gapsComblables > 0 && !audit.patchApplied) {
+    return compact
+      ? `<button class="btn btn-ghost btn-sm" onclick="${sp}startAudit('${projId}', true)" title="Appliquer ${audit.gapsComblables} correction(s) comblable(s)">✅ ${audit.gapsComblables}</button>`
+      : `<button class="btn btn-ghost btn-sm" onclick="startAudit('${projId}', true)" style="font-size:11px">✅ Patch (${audit.gapsComblables})</button>`;
+  }
+  // Plus de comblables — prochaine action selon les gaps résiduels
+  const blocking = (audit.gapsPartiels||0) + (audit.gapsMapping||0) + (audit.framesManquantes||0);
+  if (compact) {
+    // Vue compacte : un seul bouton ▶ Pipeline (les gaps résiduels nécessitent
+    // des actions hors webapp — guidance dans le panel aperçu)
+    return `<button class="btn btn-ghost btn-sm" onclick="${sp}selectProjectPipeline('${projId}')" title="Vérifier l'impact des corrections sur le rapport de conformité">▶ Pipeline</button>`;
+  }
+  // Panel aperçu — bouton Pipeline + guidance contextuelle par type de gap
+  const steps = [];
+  if (audit.gapsPartiels > 0)
+    steps.push(`<div style="font-size:11px;color:var(--text-muted);margin-top:5px">⚠️ <strong>${audit.gapsPartiels}</strong> partiel(s) → extraire les pages manquantes, ré-importer, ré-auditer</div>`);
+  if (audit.gapsMapping > 0)
+    steps.push(`<div style="font-size:11px;color:var(--text-muted);margin-top:5px">🔄 <strong>${audit.gapsMapping}</strong> mapping(s) → <code>chorus-feed --enrich</code> puis ré-auditer</div>`);
+  if (audit.framesManquantes > 0)
+    steps.push(`<div style="font-size:11px;color:var(--text-muted);margin-top:5px">🚫 <strong>${audit.framesManquantes}</strong> Frame(s) manquante(s) → ajouter manuellement au JSON puis ré-auditer</div>`);
+  const pipelineBtn = `<button class="btn btn-${blocking === 0 ? 'success' : 'ghost'} btn-sm" onclick="selectProjectPipeline('${projId}')" style="font-size:11px" title="Vérifier l'impact des corrections sur le rapport de conformité">▶ Pipeline</button>`;
+  return pipelineBtn + steps.join('');
+}
+
 // Rendu du badge _audit (chorus-audit-import) sur les cartes de projets importés.
 // audit = null → Non audité  |  audit.run=true + 0 gaps → Audité OK
 //              | gaps > 0    → N gaps (comblables/partiels/mapping/frames manquantes)
@@ -1504,11 +1573,9 @@ function projCard(p) {
   const comp = p.compliance;
   const compColor = comp >= 90 ? 'var(--success)' : comp >= 75 ? 'var(--warn)' : 'var(--error)';
   const auditBadge = renderAuditBadge(p.audit || null);
-  const auditBtn = !p.audit
-    ? `<button class="btn btn-ghost" style="font-size:11px" onclick="${sp}startAudit('${p.id}')" title="Lancer l'audit qualité (chorus-audit-import)">Auditer</button>`
-    : (p.audit.gapsComblables > 0 && !p.audit.patchApplied)
-      ? `<button class="btn btn-ghost" style="font-size:11px" onclick="${sp}startAudit('${p.id}', true)" title="Appliquer les ${p.audit.gapsComblables} correction(s) comblable(s) (--patch)">✅ Patch (${p.audit.gapsComblables})</button>`
-      : `<button class="btn btn-ghost" style="font-size:11px" onclick="${sp}startAudit('${p.id}')" title="Relancer l'audit qualité">↺ Ré-aud.</button>`;
+  const auditBtn = auditNextAction(p.audit || null, p.id, true, sp)
+    .replace('class="btn btn-ghost btn-sm"', 'class="btn btn-ghost" style="font-size:11px"')
+    .replace('class="btn btn-success btn-sm"', 'class="btn btn-success" style="font-size:11px"');
   return `
     <div class="proj-card imported" style="cursor:pointer" onclick="selectProject('${p.id}')">
       <div class="pc-header">
@@ -1574,11 +1641,7 @@ function projRow(p) {
   const comp = p.compliance;
   const compColor = comp >= 90 ? 'var(--success)' : comp >= 75 ? 'var(--warn)' : 'var(--error)';
   const auditBadgeRow = renderAuditBadge(p.audit || null);
-  const auditBtnRow = !p.audit
-    ? `<button class="btn btn-ghost btn-sm" onclick="${sp}startAudit('${p.id}')" title="Lancer l'audit qualité (chorus-audit-import)">Aud.</button>`
-    : (p.audit.gapsComblables > 0 && !p.audit.patchApplied)
-      ? `<button class="btn btn-ghost btn-sm" onclick="${sp}startAudit('${p.id}', true)" title="Appliquer ${p.audit.gapsComblables} correction(s) comblable(s) (--patch)">✅ ${p.audit.gapsComblables}</button>`
-      : `<button class="btn btn-ghost btn-sm" onclick="${sp}startAudit('${p.id}')" title="Relancer l'audit qualité">↺ Aud.</button>`;
+  const auditBtnRow = auditNextAction(p.audit || null, p.id, true, sp);
   return `
     <div class="proj-row imported" style="cursor:pointer" onclick="selectProject('${p.id}')">
       <span class="pr-name" title="${p.name}">${icon} ${p.name}</span>
