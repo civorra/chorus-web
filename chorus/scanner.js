@@ -235,18 +235,32 @@ function scanFlatProject(entityPath, slug, jsonFile, runReportIndex) {
     }
     // Lecture du bloc _audit (écrit par chorus-audit-import via chorus-import-project
     // § "Post-import — audit qualité (automatic)"). Absent = audit jamais exécuté.
+    // Aliases : le skill peut produire des noms longs (gaps_extraction_partielle,
+    // gaps_structurellement_absents, gaps_mapping_a_confirmer, gaps_frame_manquante)
+    // ou courts (gaps_partiels, gaps_absents, gaps_mapping, frames_manquantes) —
+    // les deux sont acceptés. patch_applied peut être booléen (spec) ou déduit
+    // de patches_applied (entier produit par le skill).
     const aud = projJson._audit;
     if (aud && aud.run) {
+      const totalComblables = aud.gaps_comblables ?? 0;
+      const patchesApplied  = aud.patches_applied ?? 0;
+      // patch_applied = true si booléen explicite OU si toutes les corrections
+      // comblables ont été appliquées (patches_applied >= gaps_comblables > 0)
+      const patchApplied = aud.patch_applied === true
+        || (totalComblables > 0 && patchesApplied >= totalComblables);
+      // gapsComblables = résidu actif (non encore patchés)
+      const gapsComblables = Math.max(0, totalComblables - patchesApplied);
       auditData = {
         run:              true,
-        date:             aud.date              || null,
-        report:           aud.report            || null,
-        gapsComblables:   aud.gaps_comblables   ?? 0,
-        gapsPartiels:     aud.gaps_partiels     ?? 0,
-        gapsAbsents:      aud.gaps_absents      ?? 0,
-        gapsMapping:      aud.gaps_mapping      ?? 0,
-        framesManquantes: aud.frames_manquantes ?? 0,
-        patchApplied:     !!aud.patch_applied,
+        date:             aud.patch_date || aud.date || null,
+        report:           aud.report     || null,
+        gapsComblables,
+        gapsPartiels:     aud.gaps_partiels     ?? aud.gaps_extraction_partielle     ?? 0,
+        gapsAbsents:      aud.gaps_absents      ?? aud.gaps_structurellement_absents ?? 0,
+        gapsMapping:      aud.gaps_mapping      ?? aud.gaps_mapping_a_confirmer      ?? 0,
+        framesManquantes: aud.frames_manquantes ?? aud.gaps_frame_manquante          ?? 0,
+        patchApplied,
+        patchesApplied,
       };
     }
   } catch { /* JSON invalide ou _import absent */ }
