@@ -284,4 +284,123 @@ function resolveThesaurusPending(sbId, shard, term, sourceImport, action, opts =
   return { ok: true, targetShard: action === 'confirm' ? targetShardName : shard, scope: targetScope };
 }
 
-module.exports = { scanSandboxThesaurus, resolveThesaurusPending };
+// ── Annulation d'une confirmation manuelle ────────────────────────────────
+//
+// Symétrique de resolveThesaurusPending(action='confirm') : remet un alias
+// confirmé manuellement via chorus-web dans * Pending (global.org), pour
+// permettre à l'engineer de revenir sur une décision prise par erreur.
+//
+// ⛔ Garde-fou strict : n'opère JAMAIS sur un alias résolu à l'import
+// (confidence = "✅ confirmed" sans suffixe "validated via chorus-web") —
+// ces alignements sont la responsabilité de chorus-import-project et ne
+// doivent jamais être rouverts depuis la webapp sans repasser par un import.
+// Voir chorus-web.js § _pvThesOrigin pour la même distinction côté lecture.
+//
+// shard  = nom du shard où vit la ligne Aliases à annuler (ex: 'global',
+//          'client-alpha') — PAS nécessairement 'global', contrairement à
+//          resolveThesaurusPending où le shard source est toujours global.org
+//          pour les lignes Pending.
+function unconfirmThesaurusAlias(sbId, shard, term, sourceImport, opts = {}) {
+  const sbPath    = path.join(SANDBOXES_DIR(), sbId);
+  const shardDir  = path.join(sbPath, 'agent', 'thesaurus');
+  const shardPath = path.join(shardDir, `${shard}.org`);
+  const content   = readFileSafe(shardPath);
+  if (content == null) throw new Error(`Shard thesaurus introuvable : ${shard}.org`);
+
+  const lines = content.split('\n');
+
+  // 1) Localiser la ligne Aliases (type_element OU slot values) à annuler.
+  //    On cherche dans les deux sections, une seule doit matcher (term, sourceImport).
+  const sections = [
+    { heading: /^\*\s+Aliases\s*(—|-)\s*type_element/i, kind: 'type_element' },
+    { heading: /^\*\s+Aliases\s*(—|-)\s*slot values/i,  kind: 'slot_value' },
+  ];
+
+  let found = null; // { bounds, rowIdx, cells, kind }
+  for (const sec of sections) {
+    const bounds = _findOrgSectionBounds(lines, sec.heading);
+    if (!bounds) continue;
+    for (let i = bounds.start; i < bounds.end; i++) {
+      const trimmed = lines[i].trim();
+      if (!trimmed.startsWith('|') || /^\|[-+]+\|?$/.test(trimmed)) continue;
+      const cells = trimmed.split('|').slice(1, -1).map(c => c.trim());
+      if (cells[0] === 'Project term') continue;
+      // Colonnes : type_element → [term, target, confidence, sourceImport, ...]
+      //            slot_value   → [term, slot, value, confidence, sourceImport, ...]
+      const srcCol = sec.kind === 'type_element' ? cells[3] : cells[4];
+      if (cells[0] === term && srcCol === sourceImport) {
+        found = { bounds, rowIdx: i, cells, kind: sec.kind };
+        break;
+      }
+    }
+    if (found) break;
+  }
+  if (!found) {
+    throw new Error(`Alias confirmé introuvable pour terme="${term}" source="${sourceImport}" dans ${shard}.org`);
+  }
+
+  // 2) Garde-fou : refuser si l'alias n'a pas été confirmé manuellement.
+  const confidenceCol = found.kind === 'type_element' ? found.cells[2] : found.cells[3];
+  if (!/validated via chorus-web/i.test(confidenceCol || '')) {
+    throw new Error(
+      `Cet alias a été résolu à l'import (chorus-import-project), pas via chorus-web — ` +
+      `annulation refusée (confidence="${confidenceCol}"). Seules les confirmations ` +
+      `manuelles peuvent être annulées depuis la webapp.`
+    );
+  }
+
+  // 3) Backup avant écriture (shard source ; global.org si différent, pour la réécriture de Pending).
+  const backupDir = path.join(sbPath, 'agent', '.backups');
+  fs.mkdirSync(backupDir, { recursive: true });
+  const ts = new Date().toISOString().replace(/[-:]/g, '').replace('T', '-').slice(0, 15);
+  fs.writeFileSync(path.join(backupDir, `${shard}.org.bak-${ts}`), content, 'utf8');
+
+  const globalPath = path.join(shardDir, 'global.org');
+  const isGlobalShard = shard === 'global';
+  if (!isGlobalShard) {
+    const globalContent = readFileSafe(globalPath);
+    if (globalContent) {
+      fs.writeFileSync(path.join(backupDir, `global.org.bak-${ts}`), globalContent, 'utf8');
+    }
+  }
+
+  // 4) Supprimer la ligne Aliases du shard source.
+  lines.splice(found.rowIdx, 1);
+  fs.writeFileSync(shardPath, lines.join('\n'), 'utf8');
+
+  // 5) Reconstruire une ligne Pending à partir des données de l'alias supprimé,
+  //    et l'ajouter dans global.org (section * Pending est toujours sandbox-wide).
+  const proposed = found.kind === 'type_element'
+    ? `type_element: ${found.cells[1]} ?`
+    : `${found.cells[1]}: ${found.cells[2]} ?`;
+  const pendingRow = _makeOrgRow([term, proposed, '⚠️ _a_confirmer', sourceImport, shard]);
+
+  const globalLines = isGlobalShard ? lines : (readFileSafe(globalPath) || '').split('\n');
+  const pendingBounds = _findOrgSectionBounds(globalLines, /^\*\s+Pending/i);
+  if (!pendingBounds) throw new Error(`Section "Pending" introuvable dans global.org`);
+  const pendingInsertion = _findTableInsertionPoint(globalLines, pendingBounds.start, pendingBounds.end);
+  if (pendingInsertion) {
+    globalLines.splice(pendingInsertion.lastRowIdx + 1, 0, pendingRow);
+  } else {
+    globalLines.splice(pendingBounds.end, 0, pendingRow);
+  }
+  fs.writeFileSync(globalPath, globalLines.join('\n'), 'utf8');
+
+  // 6) Journal de décisions terminologiques (best-effort — jamais bloquant).
+  try {
+    _appendThesaurusLog(sbPath, opts.entityId, opts.projectId, opts.projectName, {
+      date:         new Date().toISOString().slice(0, 10),
+      term,
+      action:       '↩️ Annulé (retour en Pending)',
+      typeElement:  found.kind === 'type_element' ? found.cells[1] : null,
+      slot:         found.kind === 'slot_value' ? found.cells[1] : null,
+      value:        found.kind === 'slot_value' ? found.cells[2] : null,
+      shard,
+      sourceImport,
+    });
+  } catch { /* ne jamais bloquer pour le log */ }
+
+  return { ok: true, shard, scope: shard };
+}
+
+module.exports = { scanSandboxThesaurus, resolveThesaurusPending, unconfirmThesaurusAlias };

@@ -24,7 +24,8 @@ const { scanAll, scanSandbox, scanEntity,
 const { parseReport, readReport,
         writeCheckReport,
         buildRunReportIndex }            = require('./reports');
-const { resolveThesaurusPending }        = require('./thesaurus');
+const { resolveThesaurusPending,
+        unconfirmThesaurusAlias }        = require('./thesaurus');
 
 module.exports = {
   CHORUS_HOME,
@@ -42,4 +43,5 @@ module.exports = {
   readLastCheckResults,
   readLastStrengthenReport,
   resolveThesaurusPending,
+  unconfirmThesaurusAlias,
 };

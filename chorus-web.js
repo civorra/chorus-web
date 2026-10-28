@@ -765,6 +765,15 @@ async function renderPvThesaurusTab() {
   }
 
   // ── Resolved (✅) ───────────────────────────────────────────────
+  // _pvResolvedRows stores rows in render order so that pvThesUnconfirm(i)
+  // (called by index, cf. inline onclick) can retrieve shard/term/
+  // sourceImport without re-escaping these values in the HTML — same
+  // pattern as _pvPendingRows below.
+  _pvResolvedRows = [
+    ...resolvedTypeElement.map(a => ({ ...a, kind: 'type_element' })),
+    ...resolvedSlotValues.map(a => ({ ...a, kind: 'slot_value' })),
+  ];
+
   html += `<div style="margin-bottom:16px">
     <div style="font-size:11px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px">✅ Resolved alignments (${nResolved}) — <span style="color:var(--text-muted);font-weight:400;text-transform:none;letter-spacing:0">📥 ${nImport} à l'import · ✍️ ${nManual} validé(s) manuellement</span></div>`;
   if (nResolved) {
@@ -774,21 +783,18 @@ async function renderPvThesaurusTab() {
         <th style="text-align:left;padding:4px 8px;color:var(--text-muted);font-weight:600">→ KB</th>
         <th style="text-align:left;padding:4px 8px;color:var(--text-muted);font-weight:600">Confiance</th>
         <th style="text-align:left;padding:4px 8px;color:var(--text-muted);font-weight:600">Origine</th>
+        <th style="text-align:left;padding:4px 8px;color:var(--text-muted);font-weight:600"></th>
       </tr></thead>
       <tbody>
-        ${resolvedTypeElement.map(a => `
+        ${_pvResolvedRows.map((a, i) => `
         <tr style="border-bottom:1px solid var(--border-light)">
           <td style="padding:4px 8px;color:var(--text-secondary)">${a.term}</td>
-          <td style="padding:4px 8px;color:var(--accent);font-family:'JetBrains Mono',monospace">type_element = ${a.target}</td>
+          <td style="padding:4px 8px;color:var(--accent);font-family:'JetBrains Mono',monospace">${a.kind === 'type_element' ? `type_element = ${a.target}` : `${a.slot} = ${a.value}`}</td>
           <td style="padding:4px 8px;color:var(--success);font-size:11px">${a.confidence || ''}</td>
           <td style="padding:4px 8px;font-size:11px">${_pvThesOriginBadge(a.confidence, a.sourceImport)}</td>
-        </tr>`).join('')}
-        ${resolvedSlotValues.map(a => `
-        <tr style="border-bottom:1px solid var(--border-light)">
-          <td style="padding:4px 8px;color:var(--text-secondary)">${a.term}</td>
-          <td style="padding:4px 8px;color:var(--accent);font-family:'JetBrains Mono',monospace">${a.slot} = ${a.value}</td>
-          <td style="padding:4px 8px;color:var(--success);font-size:11px">${a.confidence || ''}</td>
-          <td style="padding:4px 8px;font-size:11px">${_pvThesOriginBadge(a.confidence, a.sourceImport)}</td>
+          <td style="padding:4px 8px;white-space:nowrap">${_pvThesOrigin(a.confidence).kind === 'manual'
+            ? `<button class="btn btn-ghost" style="font-size:11px;padding:2px 8px;color:var(--text-muted)" onclick="pvThesUnconfirm(${i})" title="Remet ce terme en attente de confirmation">↩️ Annuler</button>`
+            : ''}</td>
         </tr>`).join('')}
       </tbody>
     </table></div>`;
@@ -855,6 +861,7 @@ async function renderPvThesaurusTab() {
 
 // ── Inline resolution of Pending rows (Thesaurus tab, Project view) ──
 let _pvPendingRows = [];
+let _pvResolvedRows = []; // populated by renderPvThesaurusTab — see pvThesUnconfirm below
 
 // Extracts a candidate type_element from the "Proposed KB mapping" text
 // (e.g. "type_element: chiffrement_authentifie ? (nom_mecanisme: GCM-SIV)"
@@ -922,6 +929,34 @@ async function _pvThesSubmitResolve(body) {
     // freshly written org file (no optimistic in-memory update —
     // we re-read the source of truth to remain reliable even when
     // multiple rows point to the same term).
+    const cacheKey = `${currentSandbox.id}/${currentProject.entity}/${currentProject.id}`;
+    delete _pvThesaurusCache[cacheKey];
+    renderPvThesaurusTab();
+  } catch (err) {
+    alert(`Erreur : ${err.message}`);
+  }
+}
+
+// Undoes a manual confirmation (webapp-only — server refuses this on an
+// alias resolved at import time, see chorus/thesaurus.js §
+// unconfirmThesaurusAlias). Moves the alias back to * Pending so it can be
+// re-confirmed differently or rejected.
+async function pvThesUnconfirm(i) {
+  const a = _pvResolvedRows[i];
+  if (!a || !currentSandbox) return;
+  if (!confirm(`Annuler la confirmation manuelle de "${a.term}" et la remettre en attente ?`)) return;
+  try {
+    const r = await fetch(`${API}/api/sandboxes/${currentSandbox.id}/thesaurus/unconfirm`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        shard: a.shard, term: a.term, sourceImport: a.sourceImport,
+        projectId:   currentProject?.id,
+        entityId:    currentProject?.entity,
+        projectName: currentProject?.name,
+      }),
+    });
+    const data = await r.json();
+    if (!r.ok || !data.ok) throw new Error(data.error || 'Échec de l\'annulation');
     const cacheKey = `${currentSandbox.id}/${currentProject.entity}/${currentProject.id}`;
     delete _pvThesaurusCache[cacheKey];
     renderPvThesaurusTab();
