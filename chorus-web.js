@@ -1448,32 +1448,22 @@ function renderAuditBadge(audit) {
   if (audit.gapsMapping)      parts.push(`🔄 ${audit.gapsMapping} mapping${audit.gapsMapping > 1 ? 's' : ''}`);
   if (audit.framesManquantes) parts.push(`🚫 ${audit.framesManquantes} frame${audit.framesManquantes > 1 ? 's' : ''} manquante${audit.framesManquantes > 1 ? 's' : ''}`);
   const tip = parts.join(' · ') + (audit.date ? ` · ${audit.date}` : '');
-  return `<span class="badge audit-gaps" title="${tip}">🔍 ${actionable} gap${actionable > 1 ? 's' : ''}</span>`;
+  return `<span class="badge audit-gaps" title="${tip}">⚠ ${actionable} gap${actionable > 1 ? 's' : ''}</span>`;
 }
 
-// Lance chorus-audit-import (rapport uniquement) via la route POST /audit
-async function startAudit(projId, withPatch = false) {
+// Lance chorus-audit-import via le terminal ECA sandbox (même pattern que
+// runTestingStrategy). Le refreshSandboxReports est déclenché automatiquement
+// par levelTerminalExec après la fin de session (DONE) — le badge _audit se
+// met à jour sans action supplémentaire.
+function startAudit(projId, withPatch = false) {
   const sb   = currentSandbox;
   const proj = (PROJECTS[sb.id] || []).find(p => p.id === projId);
   if (!proj) return;
-  const patchSuffix = withPatch ? '?patch=1' : '';
-  const url  = `${API}/api/sandboxes/${sb.id}/entities/${proj.entity}/projects/${projId}/audit${patchSuffix}`;
-  const label = withPatch ? 'chorus-audit-import --patch' : 'chorus-audit-import';
-
-  // Ouvrir le terminal niveau projet pour afficher la progression
-  openLevelTerminal('project', {
-    sbId: sb.id, entityId: proj.entity, projId, projName: proj.name || projId,
-  });
-
-  try {
-    const r = await fetch(url, { method: 'POST' });
-    if (!r.ok) { console.error(`${label} HTTP ${r.status}`); return; }
-    // Après audit, rafraîchir l'état du sandbox pour mettre à jour le badge
-    await refreshSandbox(sb.id);
-    renderProjectsTab();
-  } catch (e) {
-    console.error(`${label} erreur :`, e);
-  }
+  // projId = slug complet, ex. "project-proj-1234" — le fichier est workspace/<entity>/<projId>.json
+  const relFile  = `workspace/${proj.entity}/${projId}.json`;
+  const patchFlag = withPatch ? ' --patch' : '';
+  const cmd = `chorus-audit-import ${sb.id} ${relFile}${patchFlag}`;
+  openLevelTerminal('sandbox', { sbId: sb.id }, cmd);
 }
 
 function projCard(p) {
@@ -1514,10 +1504,10 @@ function projCard(p) {
   const compColor = comp >= 90 ? 'var(--success)' : comp >= 75 ? 'var(--warn)' : 'var(--error)';
   const auditBadge = renderAuditBadge(p.audit || null);
   const auditBtn = !p.audit
-    ? `<button class="btn btn-ghost" style="font-size:11px" onclick="${sp}startAudit('${p.id}')" title="Lancer l'audit qualité (chorus-audit-import)">🔍 Auditer</button>`
+    ? `<button class="btn btn-ghost" style="font-size:11px" onclick="${sp}startAudit('${p.id}')" title="Lancer l'audit qualité (chorus-audit-import)">Auditer</button>`
     : (p.audit.gapsComblables > 0 && !p.audit.patchApplied)
       ? `<button class="btn btn-ghost" style="font-size:11px" onclick="${sp}startAudit('${p.id}', true)" title="Appliquer les ${p.audit.gapsComblables} correction(s) comblable(s) (--patch)">✅ Patch (${p.audit.gapsComblables})</button>`
-      : `<button class="btn btn-ghost" style="font-size:11px" onclick="${sp}startAudit('${p.id}')" title="Relancer l'audit qualité">🔄 Ré-auditer</button>`;
+      : `<button class="btn btn-ghost" style="font-size:11px" onclick="${sp}startAudit('${p.id}')" title="Relancer l'audit qualité">↺ Ré-aud.</button>`;
   return `
     <div class="proj-card imported" style="cursor:pointer" onclick="selectProject('${p.id}')">
       <div class="pc-header">
@@ -1584,10 +1574,10 @@ function projRow(p) {
   const compColor = comp >= 90 ? 'var(--success)' : comp >= 75 ? 'var(--warn)' : 'var(--error)';
   const auditBadgeRow = renderAuditBadge(p.audit || null);
   const auditBtnRow = !p.audit
-    ? `<button class="btn btn-ghost btn-sm" onclick="${sp}startAudit('${p.id}')" title="Lancer l'audit qualité">🔍</button>`
+    ? `<button class="btn btn-ghost btn-sm" onclick="${sp}startAudit('${p.id}')" title="Lancer l'audit qualité (chorus-audit-import)">Aud.</button>`
     : (p.audit.gapsComblables > 0 && !p.audit.patchApplied)
       ? `<button class="btn btn-ghost btn-sm" onclick="${sp}startAudit('${p.id}', true)" title="Appliquer ${p.audit.gapsComblables} correction(s) comblable(s) (--patch)">✅ ${p.audit.gapsComblables}</button>`
-      : `<button class="btn btn-ghost btn-sm" onclick="${sp}startAudit('${p.id}')" title="Relancer l'audit qualité">🔄</button>`;
+      : `<button class="btn btn-ghost btn-sm" onclick="${sp}startAudit('${p.id}')" title="Relancer l'audit qualité">↺ Aud.</button>`;
   return `
     <div class="proj-row imported" style="cursor:pointer" onclick="selectProject('${p.id}')">
       <span class="pr-name" title="${p.name}">${icon} ${p.name}</span>

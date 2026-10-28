@@ -388,52 +388,23 @@ router.post('/sandboxes/:sbId/entities/:entityId/projects/:projId/chat', async (
   }
 });
 
-// ── POST .../projects/:projId/audit ──────────────────────────────────────
-// Déclenche chorus-audit-import sur le projet JSON importé (mode autonome,
-// rapport uniquement — --patch jamais automatique).
-// Retourne l'état projet mis à jour (incluant le champ _audit) via scanEntity.
-router.post('/sandboxes/:sbId/entities/:entityId/projects/:projId/audit', async (req, res) => {
-  sseInit(res);
+// ── GET .../projects/:projId/audit ───────────────────────────────────────
+// Lecture seule : retourne le bloc _audit courant du projet (issu du JSON).
+// L'exécution de chorus-audit-import se fait via le terminal ECA sandbox
+// (startAudit() côté frontend → openLevelTerminal → levelTerminalExec).
+router.get('/sandboxes/:sbId/entities/:entityId/projects/:projId/audit', (req, res) => {
   const { sbId, entityId, projId } = req.params;
-  const withPatch = req.query.patch === '1'; // --patch : explicitment demandé
-
   let sbPath;
   try { sbPath = path.join(chorus.SANDBOXES_DIR(), sbId); }
-  catch (e) { return sseError(res, e.message); }
+  catch (e) { return res.status(500).json({ ok: false, error: e.message }); }
 
-  const entityPath = path.join(sbPath, 'workspace', entityId);
-  const projFile   = path.join(entityPath, `project-${projId}.json`);
-
-  if (!fs.existsSync(projFile)) {
-    return sseError(res, `Fichier projet introuvable : workspace/${entityId}/project-${projId}.json`);
-  }
-
-  const relProjFile = `workspace/${entityId}/project-${projId}.json`;
-  const patchFlag   = withPatch ? ' --patch' : '';
-
-  sseSend(res, 'log', { line: `→ chorus-audit-import ${sbId} ${relProjFile}${patchFlag}` });
-
-  const DONE_INSTRUCTION =
-    '\n\n[AUDIT PROTOCOL — OBLIGATOIRE] ' +
-    'Quand ta réponse est entièrement terminée — rapport écrit et _audit mis à jour — ' +
-    'tu dois écrire en toute dernière ligne, seule sur sa ligne, le mot exactement : DONE';
-
-  const cmd = `chorus-audit-import ${sbId} ${relProjFile}${patchFlag}` + DONE_INSTRUCTION;
-  const chatId = `audit-${sbId}-${entityId}-${projId}-${Date.now()}`;
-
+  const projFile = path.join(sbPath, 'workspace', entityId, `${projId}.json`);
   try {
-    const { text } = await eca.promptAndWaitSSE(chatId, cmd, {
-      onChunk: chunk => sseSend(res, 'log', { line: chunk }),
-      timeoutMs: 10 * 60_000,
-    });
-    sseSend(res, 'log', { line: '✓ Audit terminé' });
-
-    // Re-scanner le projet pour retourner l'état mis à jour (_audit inclus)
-    const entity = chorus.scanEntity(sbPath, entityId);
-    const updated = (entity.projects || []).find(p => p.id === `project-${projId}` || p.id === projId);
-    sseDone(res, { audit: updated?.audit || null });
-  } catch (err) {
-    sseError(res, `Erreur audit : ${err.message}`);
+    const raw  = fs.readFileSync(projFile, 'utf8');
+    const json = JSON.parse(raw);
+    res.json({ ok: true, audit: json._audit || null });
+  } catch (e) {
+    res.status(404).json({ ok: false, error: `Projet introuvable : ${projId}` });
   }
 });
 
