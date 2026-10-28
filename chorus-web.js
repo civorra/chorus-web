@@ -1579,10 +1579,7 @@ function projCard(p) {
           <div class="pc-name">${typeIcons[p.type] || '📁'} ${p.name}</div>
           <div class="pc-id">${p.id}</div>
         </div>
-        <div style="display:flex;gap:4px;align-items:center">
-          ${auditBadge}
-          <span class="badge imported">✓ Imported</span>
-        </div>
+        <span class="badge imported">✓ Imported</span>
       </div>
       <div class="pc-meta" style="display:flex;gap:12px">
         <span><span style="color:var(--accent)" class="mono">${p.frames}</span> frames</span>
@@ -1592,8 +1589,6 @@ function projCard(p) {
       <div class="pc-meta" style="margin-top:4px">Last run: ${p.lastRun}</div>
       <div class="pc-actions">
         <button class="btn btn-success btn-sm" onclick="${sp}selectProjectPipeline('${p.id}')">▶ Pipeline</button>
-        <button class="btn btn-ghost" style="font-size:11px" onclick="${sp}openImportModal('${p.id}')">↺ Ré-importer</button>
-        ${auditBtn}
         <button class="btn btn-ghost" style="font-size:11px" onclick="${sp}openHistoryModal('${p.id}')" title="Rapports : ${reportCountLabel(p.reports)}">📋 ${reportCountLabel(p.reports)}</button>
         <button class="btn btn-ghost" style="font-size:11px" title="Terminal ECA — projet ${p.id}" onclick="${sp}openLevelTerminal('project', {sbId: currentSandbox.id, entityId: '${p.entity}', projId: '${p.id}', projName: '${(p.name||'').replace(/'/g,"\\'")}'})">🖥️</button>
       </div>
@@ -1636,8 +1631,6 @@ function projRow(p) {
   // imported
   const comp = p.compliance;
   const compColor = comp >= 90 ? 'var(--success)' : comp >= 75 ? 'var(--warn)' : 'var(--error)';
-  const auditBadgeRow = renderAuditBadge(p.audit || null);
-  const auditBtnRow = auditNextAction(p.audit || null, p.id, true, sp);
   return `
     <div class="proj-row imported" style="cursor:pointer" onclick="selectProject('${p.id}')">
       <span class="pr-name" title="${p.name}">${icon} ${p.name}</span>
@@ -1647,12 +1640,9 @@ function projRow(p) {
         <span><span style="color:var(--info)" class="mono">${p.evidence}</span> evidence</span>
         <span style="color:${compColor};font-weight:600" class="mono">${comp}%</span>
         <span>Last run: ${p.lastRun}</span>
-        ${auditBadgeRow}
       </span>
       <span class="pr-actions">
         <button class="btn btn-success btn-sm" onclick="${sp}selectProjectPipeline('${p.id}')">▶ Pipeline</button>
-        <button class="btn btn-ghost btn-sm" onclick="${sp}openImportModal('${p.id}')" title="Ré-importer">↺</button>
-        ${auditBtnRow}
         <button class="btn btn-ghost btn-sm" onclick="${sp}openHistoryModal('${p.id}')" title="Rapports : ${reportCountLabel(p.reports)}">📋 ${reportCountLabel(p.reports)}</button>
         <button class="btn btn-ghost btn-sm" title="Terminal ECA — projet ${p.id}" onclick="${sp}openLevelTerminal('project', {sbId: currentSandbox.id, entityId: '${p.entity}', projId: '${p.id}', projName: '${(p.name||'').replace(/'/g,"\\'")}'})">🖥️</button>
       </span>
