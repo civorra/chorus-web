@@ -733,7 +733,15 @@ async function renderPvThesaurusTab() {
     const allSlotValues  = thesaurus.flatMap(s => s.aliasesSlotValues.map(a => ({ ...a, shard: s.shard })));
     const allPending     = thesaurus.flatMap(s => s.pending.map(a => ({ ...a, shard: s.shard })));
 
-    const matches = (row) => hasFilter && _basenameNoExt(row.sourceImport) === target;
+    // Matching priority: server-resolved sourceBasename (from the import
+    // report's own #+SOURCE: header — reliable, handles the common case
+    // where "Source import" is just "import-report-NNN") > legacy inline
+    // basename fallback (sourceImport already contains a filename, e.g.
+    // "import-report-002 (workspace/test/reports/)") — see
+    // chorus/thesaurus.js § _resolveSourceImportBasename for why this
+    // two-tier resolution is needed.
+    const matches = (row) => hasFilter &&
+      (row.sourceBasename ? row.sourceBasename === target : _basenameNoExt(row.sourceImport) === target);
 
     cached = {
       hasFilter,

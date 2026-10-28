@@ -9,8 +9,64 @@
 
 const fs   = require('fs');
 const path = require('path');
-const { SANDBOXES_DIR, readFileSafe } = require('./fs');
-const { extractOrgTable } = require('./parser');
+const { SANDBOXES_DIR, readFileSafe, listDirs } = require('./fs');
+const { extractOrgTable, parseImportReportOrg } = require('./parser');
+
+// ── Résolution "Source import" → vrai fichier source ──────────────────────
+//
+// La colonne "Source import" des tables thésaurus contient le plus souvent
+// un simple identifiant de rapport (ex: "import-report-003"), jamais le nom
+// du fichier source réellement importé (ex: "cbom.cdx.json") — seules
+// quelques lignes écrites manuellement portent un suffixe explicite
+// "(workspace/test/reports/)". Or le filtrage par projet de la webapp
+// (chorus-web.js § renderPvThesaurusTab) doit comparer des alignements
+// thésaurus au fichier source du projet consulté (proj.sourceBasename,
+// dérivé de _import.source_file) — pas au numéro de rapport qui les a
+// produits. Deux imports distincts peuvent légitimement partager le même
+// fichier source (ex: 5 réimports successifs du même CBOM), chacun avec son
+// propre import-report-NNN.org : sans cette résolution, un alignement/Pending
+// écrit lors d'un import antérieur reste invisible pour tout projet importé
+// plus tard à partir de la même source — y compris alors que le lien est
+// réel et pertinent (confirmé : incident sandbox 08-ANSSI-PG-083-CENTRIC,
+// terme "ECIES-X25519-XSalsa20-Poly1305", Source import="import-report-003",
+// jamais affiché pour project-import-cbom-001-cosmian-kms-v5.json bien que
+// les deux partagent le même #+SOURCE: eviden/cbom.cdx.json).
+//
+// Résolution : chercher import-report-NNN.org dans TOUTES les
+// workspace/<entity>/reports/ du sandbox (le numéro de rapport est unique
+// sandbox-wide par convention, mais l'entity exacte n'est pas connue ici),
+// et en extraire #+SOURCE: via parseImportReportOrg (déjà utilisé par
+// collectImportHistory). Résultat mémoïsé par sbPath (invalidation : aucune,
+// le scan est best-effort et reconstruit à chaque appel de scanSandboxThesaurus
+// — acceptable, ces fichiers sont peu nombreux et cette fonction n'est pas
+// sur un chemin chaud).
+function _resolveSourceImportBasename(sbPath, sourceImport) {
+  if (!sourceImport) return null;
+  // Repli immédiat : certaines lignes portent déjà un nom de fichier
+  // explicite entre parenthèses (convention legacy) — rien à résoudre.
+  const inlineMatch = sourceImport.match(/\(([^)]+)\)/);
+  if (inlineMatch) return path.basename(inlineMatch[1]).replace(/\.[^.]+$/, '');
+
+  const reportId = sourceImport.trim(); // ex: "import-report-003"
+  if (!/^import-report-\d+$/.test(reportId)) return null;
+
+  const workspacePath = path.join(sbPath, 'workspace');
+  for (const entity of listDirs(workspacePath)) {
+    const reportPath = path.join(workspacePath, entity, 'reports', `${reportId}.org`);
+    const content = readFileSafe(reportPath);
+    if (!content) continue;
+    const parsed = parseImportReportOrg(content);
+    if (parsed.source) {
+      // #+SOURCE: often carries a trailing format annotation, e.g.
+      // "eviden/cbom.cdx.json (CycloneDX / CBOM)" — strip it before
+      // extracting the basename, otherwise path.basename() would return
+      // garbage (the annotation itself, not the file path).
+      const sourcePath = parsed.source.replace(/\s*\([^)]*\)\s*$/, '').trim();
+      return path.basename(sourcePath).replace(/\.[^.]+$/, '');
+    }
+  }
+  return null;
+}
 
 // ── Scan de tous les shards ────────────────────────────────────────────────
 
@@ -23,19 +79,33 @@ function scanSandboxThesaurus(sbPath) {
       .map(e => e.name);
   } catch { return []; }
 
+  // Mémoïsation locale (par appel) — évite de relire le même import-report-NNN.org
+  // plusieurs fois si plusieurs lignes thésaurus le référencent.
+  const resolveCache = new Map();
+  const resolve = (sourceImport) => {
+    if (!sourceImport) return null;
+    if (!resolveCache.has(sourceImport)) {
+      resolveCache.set(sourceImport, _resolveSourceImportBasename(sbPath, sourceImport));
+    }
+    return resolveCache.get(sourceImport);
+  };
+
   return files.map(fname => {
     const content = readFileSafe(path.join(thesDir, fname));
     const shard = fname.replace(/\.org$/, '');
     if (!content) return { shard, aliasesTypeElement: [], aliasesSlotValues: [], pending: [], outOfScope: [] };
 
     const aliasesTypeElement = extractOrgTable(content, /^\*\s+Aliases\s*(—|-)\s*type_element/i)
-      .slice(1).map(r => ({ term: r[0], target: r[1], confidence: r[2], sourceImport: r[3] || null }));
+      .slice(1).map(r => ({ term: r[0], target: r[1], confidence: r[2], sourceImport: r[3] || null,
+        sourceBasename: resolve(r[3] || null) }));
     const aliasesSlotValues = extractOrgTable(content, /^\*\s+Aliases\s*(—|-)\s*slot values/i)
-      .slice(1).map(r => ({ term: r[0], slot: r[1], value: r[2], confidence: r[3], sourceImport: r[4] || null }));
+      .slice(1).map(r => ({ term: r[0], slot: r[1], value: r[2], confidence: r[3], sourceImport: r[4] || null,
+        sourceBasename: resolve(r[4] || null) }));
     const pending = extractOrgTable(content, /^\*\s+Pending/i)
       .slice(1).map(r => ({
         term: r[0], proposed: r[1], flag: r[2], sourceImport: r[3] || null,
         scope: r[4] ? r[4].trim() : null,  // 5e colonne ajoutée (backward-compat : null → 'global')
+        sourceBasename: resolve(r[3] || null),
       }));
     const outOfScope = extractOrgTable(content, /^\*\s+Out-of-scope/i)
       .slice(1).map(r => ({ term: r[0], reason: r[1] }));
