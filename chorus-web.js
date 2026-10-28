@@ -682,6 +682,30 @@ function _basenameNoExt(p) {
   return base.replace(/\.[^.]+$/, '');
 }
 
+// Distinguishes alignments auto-resolved at import time (chorus-import-project,
+// confidence written verbatim as "✅ confirmed") from alignments resolved
+// manually afterwards via the webapp's inline Pending confirmation
+// (resolveThesaurusPending, server/chorus/thesaurus.js — confidence written as
+// "✅ confirmed (validated via chorus-web <date>)"). Both share the same ✅
+// prefix in the org file; only this suffix differentiates them — see
+// chorus-import-project.md § "Write format per section" vs
+// thesaurus.js § resolveThesaurusPending.
+function _pvThesOrigin(confidence) {
+  const m = (confidence || '').match(/validated via chorus-web ([\d-]+)/);
+  if (m) return { kind: 'manual', date: m[1] };
+  return { kind: 'import', date: null };
+}
+
+// Renders the "Origine" column badge — 📥 Import (linked to the source
+// import report) or ✍️ Résolution manuelle (with the validation date).
+function _pvThesOriginBadge(confidence, sourceImport) {
+  const origin = _pvThesOrigin(confidence);
+  if (origin.kind === 'manual') {
+    return `<span style="color:var(--accent)" title="Confirmé manuellement le ${origin.date}">✍️ Manuel (${origin.date})</span>`;
+  }
+  return `<span style="color:var(--text-muted)" title="Résolu automatiquement lors de l'import">📥 ${sourceImport || 'Import'}</span>`;
+}
+
 async function renderPvThesaurusTab() {
   const proj = currentProject, sb = currentSandbox;
   if (!proj || !sb) return;
@@ -730,6 +754,9 @@ async function renderPvThesaurusTab() {
 
   const nResolved = resolvedTypeElement.length + resolvedSlotValues.length;
   const nPending  = pending.length;
+  const nManual   = [...resolvedTypeElement, ...resolvedSlotValues]
+    .filter(a => _pvThesOrigin(a.confidence).kind === 'manual').length;
+  const nImport   = nResolved - nManual;
 
   let html = '';
 
@@ -739,13 +766,14 @@ async function renderPvThesaurusTab() {
 
   // ── Resolved (✅) ───────────────────────────────────────────────
   html += `<div style="margin-bottom:16px">
-    <div style="font-size:11px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px">✅ Resolved alignments (${nResolved})</div>`;
+    <div style="font-size:11px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px">✅ Resolved alignments (${nResolved}) — <span style="color:var(--text-muted);font-weight:400;text-transform:none;letter-spacing:0">📥 ${nImport} à l'import · ✍️ ${nManual} validé(s) manuellement</span></div>`;
   if (nResolved) {
     html += `<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:12px">
       <thead><tr style="border-bottom:1px solid var(--border)">
         <th style="text-align:left;padding:4px 8px;color:var(--text-muted);font-weight:600">Terme projet</th>
         <th style="text-align:left;padding:4px 8px;color:var(--text-muted);font-weight:600">→ KB</th>
         <th style="text-align:left;padding:4px 8px;color:var(--text-muted);font-weight:600">Confiance</th>
+        <th style="text-align:left;padding:4px 8px;color:var(--text-muted);font-weight:600">Origine</th>
       </tr></thead>
       <tbody>
         ${resolvedTypeElement.map(a => `
@@ -753,12 +781,14 @@ async function renderPvThesaurusTab() {
           <td style="padding:4px 8px;color:var(--text-secondary)">${a.term}</td>
           <td style="padding:4px 8px;color:var(--accent);font-family:'JetBrains Mono',monospace">type_element = ${a.target}</td>
           <td style="padding:4px 8px;color:var(--success);font-size:11px">${a.confidence || ''}</td>
+          <td style="padding:4px 8px;font-size:11px">${_pvThesOriginBadge(a.confidence, a.sourceImport)}</td>
         </tr>`).join('')}
         ${resolvedSlotValues.map(a => `
         <tr style="border-bottom:1px solid var(--border-light)">
           <td style="padding:4px 8px;color:var(--text-secondary)">${a.term}</td>
           <td style="padding:4px 8px;color:var(--accent);font-family:'JetBrains Mono',monospace">${a.slot} = ${a.value}</td>
           <td style="padding:4px 8px;color:var(--success);font-size:11px">${a.confidence || ''}</td>
+          <td style="padding:4px 8px;font-size:11px">${_pvThesOriginBadge(a.confidence, a.sourceImport)}</td>
         </tr>`).join('')}
       </tbody>
     </table></div>`;
