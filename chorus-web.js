@@ -1647,7 +1647,6 @@ function projRow(p) {
         <span><span style="color:var(--info)" class="mono">${p.evidence}</span> evidence</span>
         <span style="color:${compColor};font-weight:600" class="mono">${comp}%</span>
         <span>Last run: ${p.lastRun}</span>
-        ${auditBadgeRow}
       </span>
       <span class="pr-actions">
         <button class="btn btn-success btn-sm" onclick="${sp}selectProjectPipeline('${p.id}')">▶ Pipeline</button>
