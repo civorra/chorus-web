@@ -290,6 +290,7 @@ function buildSandboxEntry(sb, iconIndex) {
       imports: p.imports || [],
       reports: [...runReportEntry, ...checkReportEntries, ...thesLogEntry],
       corpus: [],
+      audit:  p.audit  || null,
     };
   }));
 
