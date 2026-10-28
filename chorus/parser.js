@@ -107,6 +107,19 @@ function extractOrgTable(content, headingRegex) {
   for (let i = idx + 1; i < lines.length; i++) {
     const trimmed = lines[i].trim();
     if (!trimmed.startsWith('|')) {
+      // A blank line does NOT end the table — org-mode tables are
+      // sometimes visually broken by a blank separator line (e.g. left by
+      // a manual edit, or by chorus-web's resolveThesaurusPending/
+      // unconfirmThesaurusAlias inserting a row without removing a stray
+      // blank line) without this being a semantic section break. Only a
+      // new heading (`*`/`**` ...) or a genuine non-blank prose line after
+      // the table has already started ends it — see incident: sandbox
+      // 08b-ANSSI-PG-083-CENTRIC-TEST-01, agent/thesaurus/global.org, a
+      // blank line after the "Argon2id" row silently hid every
+      // subsequently-added row (including manually-confirmed aliases) from
+      // every reader of this table, with no error and no visual sign in
+      // the raw file (the blank line looks like harmless formatting).
+      if (trimmed === '') continue;
       if (rows.length) break;
       if (/^\*+\s+\S/.test(trimmed)) break;
       continue;
