@@ -1428,6 +1428,54 @@ function renderProjectsTab() {
   document.getElementById('available-list').innerHTML = availableHtml;
 }
 
+// ─── AUDIT QUALITÉ ──────────────────────────────────────────────
+// Rendu du badge _audit (chorus-audit-import) sur les cartes de projets importés.
+// audit = null → Non audité  |  audit.run=true + 0 gaps → Audité OK
+//              | gaps > 0    → N gaps (comblables/partiels/mapping/frames manquantes)
+function renderAuditBadge(audit) {
+  if (!audit) {
+    return `<span class="badge audit-none" title="Audit qualité non effectué (chorus-audit-import)">⚪ Non audité</span>`;
+  }
+  const actionable = (audit.gapsComblables || 0) + (audit.gapsPartiels || 0)
+                   + (audit.gapsMapping || 0)  + (audit.framesManquantes || 0);
+  if (actionable === 0) {
+    const d = audit.date ? ` · ${audit.date}` : '';
+    return `<span class="badge audit-ok" title="Audit qualité OK${d}">✅ Audité</span>`;
+  }
+  const parts = [];
+  if (audit.gapsComblables)   parts.push(`✅ ${audit.gapsComblables} comblable${audit.gapsComblables > 1 ? 's' : ''}`);
+  if (audit.gapsPartiels)     parts.push(`⚠️ ${audit.gapsPartiels} partiel${audit.gapsPartiels > 1 ? 's' : ''}`);
+  if (audit.gapsMapping)      parts.push(`🔄 ${audit.gapsMapping} mapping${audit.gapsMapping > 1 ? 's' : ''}`);
+  if (audit.framesManquantes) parts.push(`🚫 ${audit.framesManquantes} frame${audit.framesManquantes > 1 ? 's' : ''} manquante${audit.framesManquantes > 1 ? 's' : ''}`);
+  const tip = parts.join(' · ') + (audit.date ? ` · ${audit.date}` : '');
+  return `<span class="badge audit-gaps" title="${tip}">🔍 ${actionable} gap${actionable > 1 ? 's' : ''}</span>`;
+}
+
+// Lance chorus-audit-import (rapport uniquement) via la route POST /audit
+async function startAudit(projId, withPatch = false) {
+  const sb   = currentSandbox;
+  const proj = (PROJECTS[sb.id] || []).find(p => p.id === projId);
+  if (!proj) return;
+  const patchSuffix = withPatch ? '?patch=1' : '';
+  const url  = `${API}/api/sandboxes/${sb.id}/entities/${proj.entity}/projects/${projId}/audit${patchSuffix}`;
+  const label = withPatch ? 'chorus-audit-import --patch' : 'chorus-audit-import';
+
+  // Ouvrir le terminal niveau projet pour afficher la progression
+  openLevelTerminal('project', {
+    sbId: sb.id, entityId: proj.entity, projId, projName: proj.name || projId,
+  });
+
+  try {
+    const r = await fetch(url, { method: 'POST' });
+    if (!r.ok) { console.error(`${label} HTTP ${r.status}`); return; }
+    // Après audit, rafraîchir l'état du sandbox pour mettre à jour le badge
+    await refreshSandbox(sb.id);
+    renderProjectsTab();
+  } catch (e) {
+    console.error(`${label} erreur :`, e);
+  }
+}
+
 function projCard(p) {
   const typeIcons = { pdf: '📄', docx: '📝', zip: '🗜️', url: '🌐' };
   const sp = `event.stopPropagation();`;
@@ -1464,6 +1512,12 @@ function projCard(p) {
   // imported
   const comp = p.compliance;
   const compColor = comp >= 90 ? 'var(--success)' : comp >= 75 ? 'var(--warn)' : 'var(--error)';
+  const auditBadge = renderAuditBadge(p.audit || null);
+  const auditBtn = !p.audit
+    ? `<button class="btn btn-ghost" style="font-size:11px" onclick="${sp}startAudit('${p.id}')" title="Lancer l'audit qualité (chorus-audit-import)">🔍 Auditer</button>`
+    : (p.audit.gapsComblables > 0 && !p.audit.patchApplied)
+      ? `<button class="btn btn-ghost" style="font-size:11px" onclick="${sp}startAudit('${p.id}', true)" title="Appliquer les ${p.audit.gapsComblables} correction(s) comblable(s) (--patch)">✅ Patch (${p.audit.gapsComblables})</button>`
+      : `<button class="btn btn-ghost" style="font-size:11px" onclick="${sp}startAudit('${p.id}')" title="Relancer l'audit qualité">🔄 Ré-auditer</button>`;
   return `
     <div class="proj-card imported" style="cursor:pointer" onclick="selectProject('${p.id}')">
       <div class="pc-header">
@@ -1471,7 +1525,10 @@ function projCard(p) {
           <div class="pc-name">${typeIcons[p.type] || '📁'} ${p.name}</div>
           <div class="pc-id">${p.id}</div>
         </div>
-        <span class="badge imported">✓ Imported</span>
+        <div style="display:flex;gap:4px;align-items:center">
+          ${auditBadge}
+          <span class="badge imported">✓ Imported</span>
+        </div>
       </div>
       <div class="pc-meta" style="display:flex;gap:12px">
         <span><span style="color:var(--accent)" class="mono">${p.frames}</span> frames</span>
@@ -1482,6 +1539,7 @@ function projCard(p) {
       <div class="pc-actions">
         <button class="btn btn-success btn-sm" onclick="${sp}selectProjectPipeline('${p.id}')">▶ Pipeline</button>
         <button class="btn btn-ghost" style="font-size:11px" onclick="${sp}openImportModal('${p.id}')">↺ Ré-importer</button>
+        ${auditBtn}
         <button class="btn btn-ghost" style="font-size:11px" onclick="${sp}openHistoryModal('${p.id}')" title="Rapports : ${reportCountLabel(p.reports)}">📋 ${reportCountLabel(p.reports)}</button>
         <button class="btn btn-ghost" style="font-size:11px" title="Terminal ECA — projet ${p.id}" onclick="${sp}openLevelTerminal('project', {sbId: currentSandbox.id, entityId: '${p.entity}', projId: '${p.id}', projName: '${(p.name||'').replace(/'/g,"\\'")}'})">🖥️</button>
       </div>
@@ -1524,6 +1582,12 @@ function projRow(p) {
   // imported
   const comp = p.compliance;
   const compColor = comp >= 90 ? 'var(--success)' : comp >= 75 ? 'var(--warn)' : 'var(--error)';
+  const auditBadgeRow = renderAuditBadge(p.audit || null);
+  const auditBtnRow = !p.audit
+    ? `<button class="btn btn-ghost btn-sm" onclick="${sp}startAudit('${p.id}')" title="Lancer l'audit qualité">🔍</button>`
+    : (p.audit.gapsComblables > 0 && !p.audit.patchApplied)
+      ? `<button class="btn btn-ghost btn-sm" onclick="${sp}startAudit('${p.id}', true)" title="Appliquer ${p.audit.gapsComblables} correction(s) comblable(s) (--patch)">✅ ${p.audit.gapsComblables}</button>`
+      : `<button class="btn btn-ghost btn-sm" onclick="${sp}startAudit('${p.id}')" title="Relancer l'audit qualité">🔄</button>`;
   return `
     <div class="proj-row imported" style="cursor:pointer" onclick="selectProject('${p.id}')">
       <span class="pr-name" title="${p.name}">${icon} ${p.name}</span>
@@ -1533,10 +1597,12 @@ function projRow(p) {
         <span><span style="color:var(--info)" class="mono">${p.evidence}</span> evidence</span>
         <span style="color:${compColor};font-weight:600" class="mono">${comp}%</span>
         <span>Last run: ${p.lastRun}</span>
+        ${auditBadgeRow}
       </span>
       <span class="pr-actions">
         <button class="btn btn-success btn-sm" onclick="${sp}selectProjectPipeline('${p.id}')">▶ Pipeline</button>
         <button class="btn btn-ghost btn-sm" onclick="${sp}openImportModal('${p.id}')" title="Ré-importer">↺</button>
+        ${auditBtnRow}
         <button class="btn btn-ghost btn-sm" onclick="${sp}openHistoryModal('${p.id}')" title="Rapports : ${reportCountLabel(p.reports)}">📋 ${reportCountLabel(p.reports)}</button>
         <button class="btn btn-ghost btn-sm" title="Terminal ECA — projet ${p.id}" onclick="${sp}openLevelTerminal('project', {sbId: currentSandbox.id, entityId: '${p.entity}', projId: '${p.id}', projName: '${(p.name||'').replace(/'/g,"\\'")}'})">🖥️</button>
       </span>

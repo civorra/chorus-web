@@ -617,8 +617,12 @@ input, select, textarea { font-family: inherit; }
 .badge.pending  { background: var(--bg-elevated); color: var(--text-muted); }
 .badge.error    { background: var(--error-dim); color: var(--error); }
 .badge.running  { background: var(--info-dim); color: var(--info); }
-.badge.solved   { background: var(--success-dim); color: var(--success); }
-.badge.failed   { background: var(--error-dim); color: var(--error); }
+.badge.solved      { background: var(--success-dim); color: var(--success); }
+.badge.failed      { background: var(--error-dim);   color: var(--error); }
+/* Audit qualité (chorus-audit-import) */
+.badge.audit-ok    { background: var(--success-dim); color: var(--success); }
+.badge.audit-gaps  { background: var(--warn-dim);    color: var(--warn);    }
+.badge.audit-none  { background: var(--bg-elevated); color: var(--text-muted); }
 
 /* Import progress bar */
 .import-progress {

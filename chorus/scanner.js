@@ -198,6 +198,7 @@ function scanFlatProject(entityPath, slug, jsonFile, runReportIndex) {
   const name = slug.replace(/[-_]/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
 
   let sourceFile = null;
+  let auditData  = null;
   let imports    = collectImportHistory(reportsDir, slug);
   try {
     const projJson = JSON.parse(readFileSafe(jsonFile) || '{}');
@@ -232,6 +233,22 @@ function scanFlatProject(entityPath, slug, jsonFile, runReportIndex) {
         note:    imp.note || imp._duplicate_warning || null,
       }];
     }
+    // Lecture du bloc _audit (écrit par chorus-audit-import via chorus-import-project
+    // § "Post-import — audit qualité (automatic)"). Absent = audit jamais exécuté.
+    const aud = projJson._audit;
+    if (aud && aud.run) {
+      auditData = {
+        run:              true,
+        date:             aud.date              || null,
+        report:           aud.report            || null,
+        gapsComblables:   aud.gaps_comblables   ?? 0,
+        gapsPartiels:     aud.gaps_partiels     ?? 0,
+        gapsAbsents:      aud.gaps_absents      ?? 0,
+        gapsMapping:      aud.gaps_mapping      ?? 0,
+        framesManquantes: aud.frames_manquantes ?? 0,
+        patchApplied:     !!aud.patch_applied,
+      };
+    }
   } catch { /* JSON invalide ou _import absent */ }
 
   const sourceBasename = sourceFile
@@ -258,6 +275,7 @@ function scanFlatProject(entityPath, slug, jsonFile, runReportIndex) {
     runEntries,
     imports,
     norm:        reportData?.norm || null,
+    audit:       auditData,
   };
 }
 
