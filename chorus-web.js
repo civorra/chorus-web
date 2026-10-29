@@ -634,12 +634,18 @@ function renderProjectPage(proj, entLabel) {
   } else {
     const actionable = (aud.gapsComblables||0) + (aud.gapsPartiels||0) + (aud.gapsMapping||0) + (aud.framesManquantes||0);
     const statusClr = actionable === 0 ? 'var(--success)' : 'var(--warn)';
+    const patchNote = aud.patchApplied
+      ? `${aud.patchesApplied || 0} slot(s) auto-rempli(s) depuis la source`
+      : '';
     const statusTxt = actionable === 0
-      ? (aud.patchApplied ? `✅ Audité · ${aud.patchesApplied || 0} correction(s) appliquée(s)` : '✅ Aucun gap actionnable')
+      ? (aud.patchApplied ? `✅ Audité · ${patchNote}` : '✅ Aucun gap actionnable')
       : `⚠ ${actionable} gap(s) restant(s)`;
+    const patchTooltip = aud.patchApplied
+      ? `title="Slots auto-remplis par chorus-audit-import --patch depuis le document source. Consulter le rapport pour le détail (element_id · slot · valeur injectée)."`
+      : '';
     const rows = [
-      aud.gapsComblables   > 0 ? `<div class="pv-li-row"><span class="pv-li-key">✅ Comblables</span><span class="pv-li-val" style="color:var(--success)">${aud.gapsComblables} restant(s)</span></div>` : '',
-      aud.patchesApplied   > 0 ? `<div class="pv-li-row"><span class="pv-li-key">✅ Patchés</span><span class="pv-li-val" style="color:var(--success)">${aud.patchesApplied} correction(s) appliquée(s)</span></div>` : '',
+      aud.gapsComblables   > 0 ? `<div class="pv-li-row"><span class="pv-li-key">✅ Comblables</span><span class="pv-li-val" style="color:var(--success)">${aud.gapsComblables} slot(s) à auto-remplir (--patch disponible)</span></div>` : '',
+      aud.patchesApplied   > 0 ? `<div class="pv-li-row" ${patchTooltip}><span class="pv-li-key">✅ Patchés</span><span class="pv-li-val" style="color:var(--success)">${aud.patchesApplied} slot(s) auto-rempli(s) depuis la source · <em style="font-weight:normal;opacity:.75">détail dans le rapport</em></span></div>` : '',
       aud.gapsPartiels     > 0 ? `<div class="pv-li-row"><span class="pv-li-key">⚠️ Partiels</span><span class="pv-li-val" style="color:var(--warn)">${aud.gapsPartiels} — source incomplète</span></div>` : '',
       aud.gapsMapping      > 0 ? `<div class="pv-li-row"><span class="pv-li-key">🔄 Mappings</span><span class="pv-li-val" style="color:var(--warn)">${aud.gapsMapping} — décision ingénieur</span></div>` : '',
       aud.framesManquantes > 0 ? `<div class="pv-li-row"><span class="pv-li-key">🚫 Frames</span><span class="pv-li-val" style="color:var(--error)">${aud.framesManquantes} type(s) manquant(s)</span></div>` : '',
