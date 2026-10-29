@@ -646,10 +646,8 @@ function renderProjectPage(proj, entLabel) {
       aud.gapsAbsents      > 0 ? `<div class="pv-li-row"><span class="pv-li-key">❌ Absents</span><span class="pv-li-val" style="color:var(--text-muted)">${aud.gapsAbsents} — hors périmètre</span></div>` : '',
     ].filter(Boolean).join('');
     const auditDate = aud.date ? `<span style="font-size:10px;color:var(--text-muted);margin-left:8px">${aud.date}</span>` : '';
-    const reportLink = aud.report
-      ? `<div style="margin-top:6px;font-size:10px;color:var(--text-muted);font-family:'JetBrains Mono',monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${aud.report}">${aud.report}</div>`
-      : '';
-    const auditBtnInner = auditNextAction(aud, proj.id, false);
+    const reportLink = ''; // remplacé par le bouton "📄 Rapport détaillé" dans auditNextAction
+    const auditBtnInner = auditNextAction(aud, proj.id, false, '', proj.entity || '');
     apercuHtml += `
       <div style="font-size:12px;font-weight:600;color:${statusClr};margin-bottom:6px">${statusTxt}${auditDate}</div>
       <div class="pv-last-import">${rows}</div>
@@ -1472,7 +1470,8 @@ function renderProjectsTab() {
 // Retourne le bouton d'action contextuelle audit :
 //   compact=true  → court (card/row) — pas de Pipeline (déjà présent dans pc-actions)
 //   compact=false → full (panel aperçu) — guidance texte si gaps résiduels
-function auditNextAction(audit, projId, compact, sp = '') {
+// entityId : optionnel — requis pour afficher le bouton "📄 Rapport" en mode full
+function auditNextAction(audit, projId, compact, sp = '', entityId = null) {
   if (!audit) {
     // Jamais audité
     return compact
@@ -1489,11 +1488,20 @@ function auditNextAction(audit, projId, compact, sp = '') {
   if (compact) return ''; // rien à afficher en vue compacte
   const steps = [];
   if (audit.gapsPartiels > 0)
-    steps.push(`<div style="font-size:11px;color:var(--text-muted);margin-top:5px">⚠️ <strong>${audit.gapsPartiels}</strong> partiel(s) → extraire les pages manquantes · ré-importer · ré-auditer</div>`);
+    steps.push(`<div style="font-size:11px;color:var(--text-muted);margin-top:5px">⚠️ <strong>${audit.gapsPartiels}</strong> élément(s) partiels — pages source incomplètes. Identifier les éléments concernés dans le rapport, extraire les pages manquantes, relancer <code>chorus-import-project</code>, puis <code>chorus-audit-import</code>.</div>`);
   if (audit.gapsMapping > 0)
-    steps.push(`<div style="font-size:11px;color:var(--text-muted);margin-top:5px">🔄 <strong>${audit.gapsMapping}</strong> mapping(s) → <code>chorus-feed --enrich</code> · ré-auditer</div>`);
+    steps.push(`<div style="font-size:11px;color:var(--text-muted);margin-top:5px">🔄 <strong>${audit.gapsMapping}</strong> mapping(s) à confirmer — termes du document non reconnus par le KB. Enrichir le KB (<code>chorus-feed --enrich</code>) ou confirmer manuellement dans le rapport d'audit, puis relancer <code>chorus-audit-import</code>.</div>`);
   if (audit.framesManquantes > 0)
-    steps.push(`<div style="font-size:11px;color:var(--text-muted);margin-top:5px">🚫 <strong>${audit.framesManquantes}</strong> Frame(s) manquante(s) → ajouter manuellement au JSON · ré-auditer</div>`);
+    steps.push(`<div style="font-size:11px;color:var(--text-muted);margin-top:5px">🚫 <strong>${audit.framesManquantes}</strong> type(s) de Frame manquant(s) dans le KB — ces éléments ne peuvent pas être classifiés. Consulter le rapport d'audit pour les identifiants concernés, puis ajouter les Frames manuellement au JSON.</div>`);
+  if (audit.gapsAbsents > 0)
+    steps.push(`<div style="font-size:11px;color:var(--text-muted);margin-top:5px">❌ <strong>${audit.gapsAbsents}</strong> élément(s) structurellement absents du document source — hors périmètre. Aucune action requise.</div>`);
+  // Bouton rapport détaillé (si rapport disponible et contexte connu)
+  if (audit.report && entityId) {
+    const rpParts = audit.report.replace(/\\/g, '/').split('/');
+    const rpFile  = rpParts[rpParts.length - 1];
+    const sbId    = currentSandbox ? currentSandbox.id : '';
+    steps.push(`<button class="btn btn-ghost btn-sm" style="margin-top:8px;font-size:11px" onclick="openMdView('${sbId}','${entityId}','${projId}','${rpFile}')" title="${audit.report}">📄 Rapport détaillé</button>`);
+  }
   return steps.join('');
 }
 
@@ -1571,7 +1579,7 @@ function projCard(p) {
   const comp = p.compliance;
   const compColor = comp >= 90 ? 'var(--success)' : comp >= 75 ? 'var(--warn)' : 'var(--error)';
   const auditBadge = renderAuditBadge(p.audit || null);
-  const auditBtn = auditNextAction(p.audit || null, p.id, true, sp);
+  const auditBtn = auditNextAction(p.audit || null, p.id, true, sp, p.entity || '');
   return `
     <div class="proj-card imported" style="cursor:pointer" onclick="selectProject('${p.id}')">
       <div class="pc-header">
@@ -1637,7 +1645,7 @@ function projRow(p) {
   const comp = p.compliance;
   const compColor = comp >= 90 ? 'var(--success)' : comp >= 75 ? 'var(--warn)' : 'var(--error)';
   const auditBadgeRow = renderAuditBadge(p.audit || null);
-  const auditBtnRow = auditNextAction(p.audit || null, p.id, true, sp);
+  const auditBtnRow = auditNextAction(p.audit || null, p.id, true, sp, p.entity || '');
   return `
     <div class="proj-row imported" style="cursor:pointer" onclick="selectProject('${p.id}')">
       <span class="pr-name" title="${p.name}">${icon} ${p.name}</span>
