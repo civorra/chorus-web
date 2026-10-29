@@ -5084,289 +5084,6 @@ function toggleFold(el) {
   if (out) out.scrollTop = out.scrollHeight;
 }
 
-// ─── IMPORT SESSION ───────────────────────────────────────────
-let _ispRunning = false;
-let _ispWaitingReply = false;
-let _ispResolveReply = null;
-let _ispProj = null;
-
-const ISP_PHASES = [
-  { id:'iph-parse',  label:'① Parsing' },
-  { id:'iph-thes',   label:'② Thésaurus' },
-  { id:'iph-kb',     label:'③ Génération KB' },
-  { id:'iph-qa',     label:'④ Q&A' },
-  { id:'iph-report', label:'⑤ Import-report' },
-  { id:'iph-done',   label:'⑥ Finalisation' },
-];
-
-function ispSetPhase(phaseId) {
-  ISP_PHASES.forEach(p => {
-    const el = document.getElementById(p.id);
-    if (!el) return;
-    const idx  = ISP_PHASES.findIndex(x => x.id === p.id);
-    const cur  = ISP_PHASES.findIndex(x => x.id === phaseId);
-    el.className = 'isp-phase' + (idx < cur ? ' done' : idx === cur ? ' active' : '');
-  });
-}
-
-function ispAddMsg(role, html, termLines) {
-  const thread = document.getElementById('isp-thread');
-  const avatars = { agent: '🤖', user: '👤', system: 'ℹ️' };
-  const msg = document.createElement('div');
-  msg.className = `isp-msg ${role}`;
-
-  let termHtml = '';
-  if (termLines && termLines.length) {
-    termHtml = `
-      <div class="isp-mini-term">
-        <div class="isp-mini-titlebar">
-          <div class="isp-mini-dots">
-            <div class="isp-mini-dot" style="background:#FF5F57"></div>
-            <div class="isp-mini-dot" style="background:#FEBC2E"></div>
-            <div class="isp-mini-dot" style="background:#28C840"></div>
-          </div>
-          <span class="isp-mini-label">chorus-import-project</span>
-        </div>
-        <div class="isp-mini-body">${termLines.map(l =>
-          `<div><span style="color:#1E5080">chorus:~$</span> <span style="color:${l[0]}">${l[1]}</span></div>`
-        ).join('')}</div>
-      </div>`;
-  }
-
-  msg.innerHTML = `
-    <div class="isp-avatar">${avatars[role] || '·'}</div>
-    <div class="isp-bubble">${html}${termHtml}</div>`;
-  thread.appendChild(msg);
-  thread.scrollTop = thread.scrollHeight;
-}
-
-function ispAddTyping() {
-  const thread = document.getElementById('isp-thread');
-  const el = document.createElement('div');
-  el.className = 'isp-msg agent';
-  el.id = 'isp-typing-indicator';
-  el.innerHTML = `
-    <div class="isp-avatar">🤖</div>
-    <div class="isp-bubble" style="padding:10px 13px">
-      <div class="isp-typing"><span></span><span></span><span></span></div>
-    </div>`;
-  thread.appendChild(el);
-  thread.scrollTop = thread.scrollHeight;
-}
-
-function ispRemoveTyping() {
-  const el = document.getElementById('isp-typing-indicator');
-  if (el) el.remove();
-}
-
-function ispEnableReply(placeholder) {
-  _ispWaitingReply = true;
-  const bar   = document.getElementById('isp-reply-bar');
-  const input = document.getElementById('isp-reply-input');
-  bar.classList.remove('disabled');
-  input.placeholder = placeholder || 'Répondez à l\'agent…';
-  input.value = '';
-  input.focus();
-}
-
-function ispDisableReply() {
-  _ispWaitingReply = false;
-  document.getElementById('isp-reply-bar').classList.add('disabled');
-}
-
-function ispHandleKey(e) {
-  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); ispSendReply(); }
-}
-
-function ispSendReply() {
-  if (!_ispWaitingReply) return;
-  const input = document.getElementById('isp-reply-input');
-  const val = input.value.trim();
-  if (!val) return;
-  ispDisableReply();
-  ispAddMsg('user', val);
-  if (_ispResolveReply) { _ispResolveReply(val); _ispResolveReply = null; }
-}
-
-function ispAsk(question, placeholder) {
-  return new Promise(resolve => {
-    ispRemoveTyping();
-    ispAddMsg('agent', question);
-    ispEnableReply(placeholder);
-    _ispResolveReply = resolve;
-  });
-}
-
-function delay(ms) { return new Promise(r => setTimeout(r, ms)); }
-
-async function runImportSession(proj, sbId, file, model) {
-  _ispRunning = true;
-  _ispProj = proj;
-
-  const entityId = proj.entity;
-  const entityObj = (ENTITIES[sbId] || []).find(c => c.id === entityId);
-  const entityPath = entityObj ? entityObj.path : `workspace/${entityId}`;
-
-  // ── Init ECA-web panel + session header ────────────────────
-  initEcaWebPanel(proj, sbId, model);
-  ispSetPhase('iph-parse');
-  ispAddMsg('system', `Session démarrée · sandbox <strong>${sbId}</strong> · contexte <code>${entityPath}</code> · modèle <code>${model}</code>`);
-  ispAddMsg('agent',
-    `Import de <strong>${proj.name}</strong> (<code>${file.name}</code>) dans le sandbox <code>${sbId}</code> — session ECA headless réelle (skill <code>chorus-import-project</code>, agent <code>code</code>).`
-  );
-  ispAddTyping();
-
-  const form = new FormData();
-  form.append('file', file);
-  form.append('projId', proj.id);
-
-  const url = `${API}/api/sandboxes/${sbId}/entities/${entityId}/projects/import`;
-
-  // Real phase markers are not emitted individually by the backend route
-  // (a single ECA session streams free-form tool-call logs, not a fixed
-  // phase sequence) — the isp-phase UI is kept but only toggled between
-  // "running" (iph-parse, lit for the whole session) and "done"
-  // (iph-done, lit on the real `done` SSE event below), rather than
-  // simulating phases 2 to 5 that have no real counterpart to report.
-  let first = true;
-
-  function fail(message) {
-    if (first) { ispRemoveTyping(); first = false; }
-    ispAddMsg('agent', `❌ <strong>Erreur</strong> — ${message}`);
-    ispAddMsg('system', 'Session en erreur · vous pouvez fermer cette fenêtre et réessayer.');
-    ecaWebDone();
-    _ispRunning = false;
-    proj.state = 'error';
-    if (currentSandbox && currentSandbox.id === sbId) {
-      renderProjectsTab();
-      renderGlobalDashboard();
-      renderSidebar();
-    }
-  }
-
-  try {
-    const r = await fetch(url, { method: 'POST', body: form });
-    if (!r.ok || !r.body) throw new Error(`HTTP ${r.status}`);
-    const reader  = r.body.getReader();
-    const decoder = new TextDecoder();
-    let buf = '';
-
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buf += decoder.decode(value, { stream: true });
-      const parts = buf.split('\n\n');
-      buf = parts.pop();
-      for (const part of parts) {
-        const eMatch = part.match(/^event: (\w+)/m);
-        const dMatch = part.match(/^data: (.+)/m);
-        if (!eMatch || !dMatch) continue;
-        let data;
-        try { data = JSON.parse(dMatch[1]); } catch { continue; }
-
-        if (eMatch[1] === 'log') {
-          if (first) { ispRemoveTyping(); first = false; }
-          ecaWebLog(`<span class="eca-web-streaming">${data.line}</span>`);
-          ispAddMsg('agent', data.line, null);
-        } else if (eMatch[1] === 'ping') {
-          // Keep-alive only — no UI effect, mirrors runPipeline()'s silent
-          // handling of events it does not act on.
-        } else if (eMatch[1] === 'done') {
-          if (first) { ispRemoveTyping(); first = false; }
-          ispSetPhase('iph-done');
-          ecaWebDone();
-
-          // Real project state from the backend (server/routes/projects.js
-          // § finish()) — never Math.random(). `frames: 0` right after a
-          // plain import is expected (frames only populate after run.pl,
-          // see TODO.org § [#K]) — surfaced explicitly below rather than
-          // silently, to avoid the user reading it as a failure.
-          //
-          // proj.id MUST be overwritten with real.id: the frontend creates
-          // the project with a provisional id (`'import-' + Date.now()`,
-          // cf. startImport()) before the backend even runs, but the
-          // backend's real file on disk is named using the "flat" naming
-          // convention (`project-<projId>.json`, cf. chorus/scanner.js §
-          // scanEntity regex) — i.e. prefixed with `project-`. Without this
-          // reassignment, proj.id kept the unprefixed provisional value,
-          // and any subsequent action using proj.id (e.g. "Lancer run.pl",
-          // selectProjectPipeline() → POST .../projects/:projId/run) sent
-          // the wrong id to the backend, which could not find the file
-          // on disk (bug observed in real session: "Projet introuvable :
-          // ni import-<ts>.json ni sources/import-<ts>/frames.pl").
-          const real = data.project || {};
-          if (real.id) proj.id = real.id;
-          proj.state      = real.state || 'imported';
-          proj.frames     = real.frames ?? 0;
-          proj.evidence   = real.evidence ?? proj.evidence ?? 0;
-          proj.sourcePath = real.sourcePath || proj.sourcePath;
-          proj.lastRun    = new Date().toISOString().slice(0,10);
-
-          const framesNote = (real.frames ?? 0) === 0
-            ? `<span style="color:var(--text-muted);font-size:11px">0 frames est normal à ce stade — elles ne sont extraites qu'à la prochaine exécution de <code>run.pl</code>.</span>`
-            : `<span style="color:var(--text-muted);font-size:11px">${real.frames} frames.</span>`;
-          ispAddMsg('agent',
-            `🎉 Import terminé.<br>
-             <strong>${proj.name}</strong> est maintenant disponible dans le sandbox <code>${sbId}</code>.<br>
-             ${framesNote}<br><br>
-             Vous pouvez maintenant lancer <code>run.pl</code> depuis l'onglet <strong>Pipeline</strong>.`
-          );
-          ispAddMsg('system', 'Session terminée · vous pouvez fermer cette fenêtre.');
-
-          if (currentSandbox && currentSandbox.id === sbId) {
-            renderProjectsTab();
-            renderGlobalDashboard();
-            renderSidebar();
-          }
-          _ispRunning = false;
-        } else if (eMatch[1] === 'error') {
-          fail(data.message);
-        }
-      }
-    }
-  } catch (err) {
-    fail(err.message);
-  }
-}
-
-function openImportSession(proj, sbId, file, model) {
-  const entityId = proj.entity;
-  const entities = ENTITIES[sbId] || [];
-  const entityObj = entities.find(c => c.id === entityId);
-  const ctxPath = entityObj ? entityObj.path : `workspace/${entityId}`;
-  document.getElementById('isp-title').textContent = proj.name;
-  document.getElementById('isp-sub').textContent   =
-    `chorus-import-project · ${sbId}/${ctxPath} · agent code (ECA headless)`;
-  document.getElementById('isp-thread').innerHTML  = '';
-  ispDisableReply();
-  ISP_PHASES.forEach(p => {
-    const el = document.getElementById(p.id);
-    if (el) el.className = 'isp-phase';
-  });
-  // Reset ECA-web panel
-  _ecaWebCollapsed = false;
-  const ecaBody = document.getElementById('eca-web-body');
-  if (ecaBody) ecaBody.style.display = 'flex';
-  const toggleBtn = document.getElementById('eca-web-toggle-btn');
-  if (toggleBtn) toggleBtn.textContent = '▼ collapse';
-  const ecaLog = document.getElementById('eca-web-log');
-  if (ecaLog) ecaLog.innerHTML = `<div style="color:#1E3A5F">Connexion au serveur ECA (session réelle)…</div>`;
-  const ecaDot = document.getElementById('eca-web-dot');
-  if (ecaDot) { ecaDot.style.background = '#F59E0B'; ecaDot.style.animation = 'pulse 0.8s infinite'; }
-  const ecaStatus = document.getElementById('eca-web-status');
-  if (ecaStatus) ecaStatus.textContent = 'connecting';
-  document.getElementById('import-session-overlay').hidden = false;
-  runImportSession(proj, sbId, file, 'code (ECA headless)');
-}
-
-function closeImportSession() {
-  document.getElementById('import-session-overlay').hidden = true;
-  ispDisableReply();
-  _ispWaitingReply = false;
-  _ispResolveReply = null;
-
-}
-
 // ─── IMPORT ───────────────────────────────────────────────────
 function openHistoryModal(projId) {
   const sbId = currentSandbox ? currentSandbox.id : null;
@@ -6530,17 +6247,51 @@ function startImport() {
     imports: [],
     reports: [],
   };
-  PROJECTS[currentSandbox.id] = PROJECTS[currentSandbox.id] || [];
-  PROJECTS[currentSandbox.id].push(newProj);
+  const sbId = currentSandbox.id;
+  PROJECTS[sbId] = PROJECTS[sbId] || [];
+  PROJECTS[sbId].push(newProj);
   renderProjectsTab();
 
-  // Open interactive import session instead of silent quickImport —
-  // the 4th arg (formerly a fake 'opus'/'sonnet' model selector, leftover
-  // from the fully-simulated mock UI) is no longer used: the real ECA
-  // headless session always routes to the 'code' agent server-side
-  // (server/routes/projects.js § setChatAgent(chatId, 'code')), never
-  // configurable from this form.
-  openImportSession(newProj, currentSandbox.id, file);
+  // Unified with the re-import flow (startImport() § reimportId branch
+  // above): upload the file server-side first (no ECA session triggered
+  // by the upload itself — see server/routes/projects.js §
+  // '/projects/upload'), then open a precontextualised, real interactive
+  // ECA terminal running the actual chorus-import-project command —
+  // instead of the former custom "ISP" preview panel (openImportSession()
+  // / #import-session-overlay), which ran a real headless session behind
+  // the scenes but was mislabelled "APERÇU SIMULÉ" in its own UI and gave
+  // no genuine interactive terminal access, unlike re-import.
+  const form = new FormData();
+  form.append('file', file);
+  form.append('projId', id);
+
+  fetch(`${API}/api/sandboxes/${sbId}/entities/${context}/projects/upload`, {
+    method: 'POST', body: form,
+  })
+    .then(async (r) => {
+      if (!r.ok) {
+        const d = await r.json().catch(() => ({}));
+        throw new Error(d.error || `HTTP ${r.status}`);
+      }
+      return r.json();
+    })
+    .then(({ path: destFile, outFile }) => {
+      newProj.sourceFile = destFile;
+
+      const cmd = `chorus-import-project ${sbId} ${destFile} --context ${context} --out ${outFile}`;
+
+      openLevelTerminal('project', {
+        sbId,
+        entityId: context,
+        projId:   id,
+        projName: name,
+      }, cmd);
+    })
+    .catch((err) => {
+      newProj.state = 'error';
+      renderProjectsTab();
+      alert(`Échec de l'upload du fichier source : ${err.message}`);
+    });
 }
 
 function openNewSandboxModal() {
@@ -7291,62 +7042,6 @@ function drawLatencySparkline(history) {
 document.getElementById('services-modal-overlay').addEventListener('click', function(e) {
   if (e.target === this) closeServicesModal();
 });
-
-// ─── ECA-WEB PANEL ────────────────────────────────────────────
-let _ecaWebCollapsed = false;
-
-function toggleEcaWeb() {
-  _ecaWebCollapsed = !_ecaWebCollapsed;
-  document.getElementById('eca-web-body').style.display = _ecaWebCollapsed ? 'none' : 'flex';
-  document.getElementById('eca-web-toggle-btn').textContent = _ecaWebCollapsed ? '▶ expand' : '▼ collapse';
-}
-
-function ecaWebLog(html) {
-  const log = document.getElementById('eca-web-log');
-  if (!log) return;
-  const div = document.createElement('div');
-  div.innerHTML = html;
-  log.appendChild(div);
-  log.scrollTop = log.scrollHeight;
-}
-
-async function initEcaWebPanel(proj, sbId, model) {
-  // Formerly a fully scripted "demo" preview (random sessionId/latency,
-  // no real request) — now reflects a genuinely spawned ECA headless
-  // session (chatId `eca-import-${sbId}-${projId}`, see
-  // server/routes/projects.js § POST .../projects/import). Session id
-  // shown here is a display label only (the real chatId lives server-side
-  // and is never exposed to the frontend) — latency is not meaningfully
-  // measurable client-side for a multi-event SSE stream, so it is omitted
-  // rather than faked.
-  document.getElementById('eca-web-addr').textContent = `session réelle · ${sbId}/${proj.entity}`;
-  document.getElementById('eca-web-session-id').textContent = `projet: ${proj.id}`;
-  document.getElementById('eca-web-model-label').textContent = 'model: ' + model;
-  document.getElementById('eca-web-skill').textContent = 'chorus-import-project';
-  document.getElementById('eca-web-latency').textContent = 'streaming SSE';
-
-  const log = document.getElementById('eca-web-log');
-  if (log) log.innerHTML = '';
-  ecaWebLog(`<span style="color:#2A5A8A">Session ECA headless réelle — agent code, skill chorus-import-project</span>`);
-
-  // Update status dot
-  document.getElementById('eca-web-dot').style.background = '#10B981';
-  document.getElementById('eca-web-dot').style.animation  = 'pulse 2s infinite';
-  document.getElementById('eca-web-status').textContent = 'connecté';
-}
-
-function ecaWebPhase(phase) {
-  ecaWebLog(`<span class="eca-web-streaming">Phase: <strong style="color:#6AB0E0">${phase}</strong></span>`);
-  const log = document.getElementById('eca-web-log');
-  if (log) log.scrollTop = log.scrollHeight;
-}
-
-function ecaWebDone() {
-  ecaWebLog(`<span class="eca-web-ok">Session terminée ✓</span>`);
-  document.getElementById('eca-web-dot').style.animation = 'none';
-  document.getElementById('eca-web-dot').style.background = '#10B981';
-  document.getElementById('eca-web-status').textContent = 'terminé';
-}
 
 // ─── PIPELINE ECA-DISPATCH LOGS ──────────────────────────────
 // Wrap runPipeline to add ECA dispatch prefix logs

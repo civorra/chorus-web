@@ -213,6 +213,65 @@ router.post(
   }
 );
 
+// ── POST .../projects/upload ───────────────────────────────────────────────
+//
+// Upload-only route (no ECA session triggered) — used by the webapp's
+// "Import project" modal to copy the source file into
+// workspace/<entityId>/sources/<projId>/ and return its server-side path,
+// so the webapp can then open a precontextualised ECA terminal
+// (openLevelTerminal()) with the real chorus-import-project command,
+// exactly as the existing re-import flow already does (chorus-web.js §
+// startImport() reimportId branch). This avoids duplicating the whole
+// "parse multipart, copy across device, sanitise filename" logic that
+// already exists in the /import route below, while NOT launching a
+// headless ECA session server-side (the terminal itself drives the
+// session, interactively, from the user's own chat).
+router.post(
+  '/sandboxes/:sbId/entities/:entityId/projects/upload',
+  upload.single('file'),
+  (req, res) => {
+    const { sbId, entityId } = req.params;
+    const projId = req.body.projId || `proj-${Date.now()}`;
+    const uploadedFile = req.file;
+
+    if (!uploadedFile) return res.status(400).json({ error: 'Fichier manquant' });
+    if (!entityId)     return res.status(400).json({ error: 'entityId manquant dans l\'URL' });
+
+    let sbPath;
+    try { sbPath = path.join(chorus.SANDBOXES_DIR(), sbId); }
+    catch (e) { return res.status(400).json({ error: e.message }); }
+
+    const entityPath = path.join(sbPath, 'workspace', entityId);
+    const srcDir      = path.join(entityPath, 'sources', projId);
+    fs.mkdirSync(srcDir, { recursive: true });
+
+    // Même sanitisation que la route /import ci-dessous.
+    const safeOrigName = uploadedFile.originalname
+      .replace(/[^a-zA-Z0-9._\- ]/g, '_')
+      .replace(/\s+/g, '_')
+      .slice(0, 200) || `source${path.extname(uploadedFile.originalname) || '.pdf'}`;
+    const destFile = path.join(srcDir, safeOrigName);
+
+    // copyFileSync + unlinkSync : voir commentaire détaillé dans la route
+    // /import ci-dessous (EXDEV cross-device en environnement Docker).
+    try {
+      fs.copyFileSync(uploadedFile.path, destFile);
+      fs.unlinkSync(uploadedFile.path);
+    } catch (e) {
+      return res.status(500).json({ error: `Copie du fichier échouée : ${e.message}` });
+    }
+
+    const outFile = path.join(entityPath, `project-${projId}.json`);
+
+    res.json({
+      projId,
+      path:    destFile,
+      outFile,
+      entityPath,
+    });
+  }
+);
+
 // ── POST .../projects/:projId/run ─────────────────────────────────────────
 router.post('/sandboxes/:sbId/entities/:entityId/projects/:projId/run', (req, res) => {
   sseInit(res);
