@@ -1497,10 +1497,18 @@ function auditNextAction(audit, projId, compact, sp = '', entityId = null) {
   const steps = [];
   if (audit.gapsPartiels > 0)
     steps.push(`<div style="font-size:11px;color:var(--text-muted);margin-top:5px">⚠️ <strong>${audit.gapsPartiels}</strong> élément(s) partiels — pages source incomplètes. Identifier les éléments concernés dans le rapport, extraire les pages manquantes, relancer <code>chorus-import-project</code>, puis <code>chorus-audit-import</code>.</div>`);
-  if (audit.gapsMapping > 0)
-    steps.push(`<div style="font-size:11px;color:var(--text-muted);margin-top:5px">🔄 <strong>${audit.gapsMapping}</strong> mapping(s) à confirmer — termes du document non reconnus par le KB. Enrichir le KB (<code>chorus-feed --enrich</code>) ou confirmer manuellement dans le rapport d'audit, puis relancer <code>chorus-audit-import</code>.</div>`);
-  if (audit.framesManquantes > 0)
-    steps.push(`<div style="font-size:11px;color:var(--text-muted);margin-top:5px">🚫 <strong>${audit.framesManquantes}</strong> type(s) de Frame manquant(s) dans le KB — ces éléments ne peuvent pas être classifiés. Consulter le rapport d'audit pour les identifiants concernés, puis ajouter les Frames manuellement au JSON.</div>`);
+  if (audit.gapsMapping > 0) {
+    steps.push(`<div style="font-size:11px;color:var(--text-muted);margin-top:5px">🔄 <strong>${audit.gapsMapping}</strong> mapping(s) à confirmer — termes du document non reconnus par le KB.</div>`);
+    steps.push(`<button class="btn btn-ghost btn-sm" style="margin-top:4px;font-size:11px"
+      onclick="startAuditResolveMapping('${projId}','${entityId}')"
+      title="Relancer chorus-import-project depuis la même source après résolution du thésaurus">🔄 Ré-importer après thésaurus</button>`);
+  }
+  if (audit.framesManquantes > 0) {
+    steps.push(`<div style="font-size:11px;color:var(--text-muted);margin-top:5px">🚫 <strong>${audit.framesManquantes}</strong> type(s) de Frame manquant(s) — non classifiables par le KB actuel.</div>`);
+    steps.push(`<button class="btn btn-ghost btn-sm" style="margin-top:4px;font-size:11px"
+      onclick="startAuditEnrichKb('${entityId}')"
+      title="Ouvrir un terminal chorus-feed --enrich pour ajouter le(s) type(s) de Frame manquant(s)">🚫 Enrichir KB</button>`);
+  }
   if (audit.gapsAbsents > 0)
     steps.push(`<div style="font-size:11px;color:var(--text-muted);margin-top:5px">❌ <strong>${audit.gapsAbsents}</strong> élément(s) structurellement absents du document source — hors périmètre. Aucune action requise.</div>`);
   // Bouton rapport détaillé (si rapport disponible et contexte connu)
@@ -1511,6 +1519,41 @@ function auditNextAction(audit, projId, compact, sp = '', entityId = null) {
     steps.push(`<button class="btn btn-ghost btn-sm" style="margin-top:8px;font-size:11px" onclick="openMdView('${sbId}','${entityId}','${projId}','${rpFile}')" title="${audit.report}">📄 Rapport détaillé</button>`);
   }
   return steps.join('');
+}
+
+// ── startAuditResolveMapping ──────────────────────────────────────────────
+// Opens a pre-contextualised ECA terminal to resolve 🔄 mapping gaps:
+// re-run chorus-import-project from the same source after thesaurus update.
+function startAuditResolveMapping(projId, entityId) {
+  const sbId = currentSandbox ? currentSandbox.id : '';
+  if (!sbId) return;
+  const proj = (PROJECTS[sbId] || []).find(p => p.id === projId);
+  const srcFile = proj?.sourceFile || proj?.sourcePath || proj?.path || '';
+  const outFile = `workspace/${entityId}/${projId}.json`;
+
+  const cmd = srcFile
+    ? `chorus-import-project ${sbId} ${srcFile} --context ${entityId} --out ${outFile}\n`
+      + `ℹ️ Résoudre les mappings 🔄 : mettre à jour le thésaurus (global.org ou <client>.org)\n`
+      + `puis relancer chorus-audit-import ${sbId} ${outFile}`
+    : `chorus-audit-import ${sbId} ${outFile}\n`
+      + `ℹ️ Résoudre les mappings 🔄 dans le thésaurus, puis relancer chorus-audit-import.`;
+
+  openLevelTerminal('project', { sbId, entityId, projId, projName: proj?.name || projId }, cmd);
+}
+
+// ── startAuditEnrichKb ────────────────────────────────────────────────────
+// Opens a pre-contextualised ECA terminal to resolve 🚫 missing Frame types:
+// run chorus-feed --enrich to add the missing type(s) to the KB.
+function startAuditEnrichKb(entityId) {
+  const sbId = currentSandbox ? currentSandbox.id : '';
+  if (!sbId) return;
+
+  const cmd = `chorus-feed ${sbId} --enrich\n`
+    + `ℹ️ Ajouter le(s) type(s) de Frame manquant(s) (🚫) signalés dans le rapport d'audit.\n`
+    + `Consulter d'abord le rapport pour identifier les type_element concernés,\n`
+    + `puis relancer chorus-audit-import après enrichissement.`;
+
+  openLevelTerminal('corpus', { sbId }, cmd);
 }
 
 // Rendu du badge _audit (chorus-audit-import) sur les cartes de projets importés.
