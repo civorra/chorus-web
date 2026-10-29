@@ -314,7 +314,11 @@ function parseSandboxReadme(sbPath) {
   // ── * Session notes ───────────────────────────────────────────────────
   let enrichmentCount    = 0;
   let enrichmentLastDate = null;
-  let bugsFixed          = 0;
+  let infraBugsFixed     = 0;
+  let infraBugsTable     = null;
+  let kbGapsFixed        = 0;
+  let kbGapsTable        = null;
+  let bugsFixed          = 0;   // backward-compat aggregate
   let bugsTable          = null;
   let finalValidation    = null;
   {
@@ -330,14 +334,16 @@ function parseSandboxReadme(sbPath) {
         const dates = dateMatches.map(m => m[1]).sort();
         enrichmentLastDate = dates[dates.length - 1];
       }
-      const bugsHeadingRe = /\*{2}\s+🐛\s+(\d+)\s+bugs?\s+(?:bloquants|résolus)[^\n]*/gi;
-      const bugsMatches = [...notesText.matchAll(bugsHeadingRe)];
-      if (bugsMatches.length) {
-        bugsFixed = bugsMatches.reduce((sum, m) => sum + parseInt(m[1]), 0);
-        const multiSection = bugsMatches.length > 1;
+      // ── Helper : extract count + combined table for one bug category ──────
+      // re must have one capture group for the numeric count.
+      const _buildBugsSection = (re) => {
+        const matches = [...notesText.matchAll(re)];
+        if (!matches.length) return { count: 0, table: null };
+        const count = matches.reduce((s, m) => s + parseInt(m[1]), 0);
+        const multi = matches.length > 1;
         let combinedHeaders = null;
         const combinedRows = [];
-        bugsMatches.forEach((m, idx) => {
+        matches.forEach((m, idx) => {
           const headingIdx = notesText.indexOf(m[0]);
           const afterHeading = notesText.slice(headingIdx + m[0].length);
           const lines = afterHeading.split('\n');
@@ -354,16 +360,43 @@ function parseSandboxReadme(sbPath) {
             rows.push(cells);
           }
           if (rows.length) {
-            if (!combinedHeaders) combinedHeaders = multiSection ? ['Session', ...headers] : headers;
+            if (!combinedHeaders) combinedHeaders = multi ? ['Session', ...headers] : headers;
             const dateMatch = m[0].match(/\d{4}-\d{2}-\d{2}/);
             const sessionLabel = dateMatch ? dateMatch[0] : `Session ${idx + 1}`;
-            rows.forEach(r => combinedRows.push(multiSection ? [sessionLabel, ...r] : r));
+            rows.forEach(r => combinedRows.push(multi ? [sessionLabel, ...r] : r));
           }
         });
-        if (combinedRows.length) {
-          bugsTable = { headers: combinedHeaders, rows: combinedRows };
-        }
-      }
+        const table = combinedRows.length ? { headers: combinedHeaders, rows: combinedRows } : null;
+        return { count, table };
+      };
+
+      // Type 1 — "bugs bloquants" : YAML/Perl implementation bugs that broke
+      //           the pipeline (wrong variable scope, missing branches, etc.)
+      //           Documented after chorus-check debugging sessions.
+      // "bloquants?" handles "bloquant" (singular) as well.
+      const _infraSection = _buildBugsSection(
+        /\*{2}\s+🐛\s+(\d+)\s+bugs?\s+bloquants?[^\n]*/gi
+      );
+
+      // Type 2 — "bugs résolus" : KB semantic gaps (rules computed a verdict
+      //           but never propagated it to the `conforme` slot read by run.pl).
+      //           Documented after chorus-strengthen + fix sessions.
+      // "résolus?" handles "résolu" (singular, e.g. "1 bug résolu") as well.
+      const _kbSection = _buildBugsSection(
+        /\*{2}\s+🐛\s+(\d+)\s+bugs?\s+résolus?[^\n]*/gi
+      );
+
+      // Assign to the outer-scope let variables (const here would shadow them)
+      infraBugsFixed = _infraSection.count;
+      infraBugsTable = _infraSection.table;
+      kbGapsFixed    = _kbSection.count;
+      kbGapsTable    = _kbSection.table;
+
+      // Backward-compat aggregate
+      bugsFixed = infraBugsFixed + kbGapsFixed;
+      bugsTable = infraBugsFixed && !kbGapsFixed ? infraBugsTable
+               : kbGapsFixed  && !infraBugsFixed ? kbGapsTable
+               : null; // mixed — callers should use the typed fields instead
       const finalSection = (notesText.match(/\*{2}\s+Résultat final[\s\S]*?(?=\n\s*\*{2}\s|\n\s*\*\s[^*]|$)/) || [])[0] || '';
       const mSolved = finalSection.match(/Pipeline\s*[:\-]\s*(SOLVED|FAILED)\s*(✅|❌)?/i);
       const mConf   = finalSection.match(/Conformes?\s*[:\-]\s*(\d+)\s*\/\s*(\d+)/i);
@@ -381,7 +414,11 @@ function parseSandboxReadme(sbPath) {
     title, date, status, corpusTable,
     coverageEntries, coverageLastUpdate,
     agentStatusTable,
-    enrichmentCount, enrichmentLastDate, bugsFixed, bugsTable, finalValidation,
+    enrichmentCount, enrichmentLastDate,
+    infraBugsFixed, infraBugsTable,   // Type 1 — YAML/Perl implementation bugs
+    kbGapsFixed,    kbGapsTable,      // Type 2 — KB semantic gaps (strengthen/fix)
+    bugsFixed, bugsTable,             // ← backward-compat aggregate (sum of both)
+    finalValidation,
   };
 }
 

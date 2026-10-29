@@ -276,6 +276,8 @@ function buildSandboxEntry(sb, iconIndex) {
       name: p.name,
       type: 'pdf',
       entity: e.id,
+      sourceFile:     p.sourceFile     || null,
+      sourceBasename: p.sourceBasename || null,
       frames: p.frames || 0,
       evidence: 0,
       state: p.state,
@@ -624,9 +626,9 @@ function renderProjectPage(proj, entLabel) {
   }
   apercuHtml += `</div>`;
 
-  // ── Audit qualité panel ───────────────────────────────────────
+  // ── Audit import panel ────────────────────────────────────────
   const aud = proj.audit || null;
-  apercuHtml += `<div class="pv-panel"><div class="pv-panel-title">🔬 Audit qualité</div>`;
+  apercuHtml += `<div class="pv-panel"><div class="pv-panel-title">🔬 Audit import</div>`;
   if (!aud) {
     apercuHtml += `
       <div class="pv-empty" style="margin-bottom:8px">Audit non effectué — <code>chorus-audit-import</code> jamais lancé sur ce projet.</div>
@@ -1469,7 +1471,7 @@ function renderProjectsTab() {
   document.getElementById('available-list').innerHTML = availableHtml;
 }
 
-// ─── AUDIT QUALITÉ ──────────────────────────────────────────────
+// ─── AUDIT IMPORT ───────────────────────────────────────────────
 // Calcule le bouton d'action contextuelle selon l'état d'audit du projet.
 //   compact=true  → bouton court pour projCard / projRow (sp = stopPropagation prefix)
 //   compact=false → bouton + guidance texte pour le panel aperçu
@@ -1481,7 +1483,7 @@ function auditNextAction(audit, projId, compact, sp = '', entityId = null) {
   if (!audit) {
     // Jamais audité
     return compact
-      ? `<button class="btn btn-ghost btn-sm" onclick="${sp}startAudit('${projId}')" title="Lancer l'audit qualité (chorus-audit-import)">🔬</button>`
+      ? `<button class="btn btn-ghost btn-sm" onclick="${sp}startAudit('${projId}')" title="Lancer l'audit import (chorus-audit-import)">🔬</button>`
       : `<button class="btn btn-ghost btn-sm" onclick="startAudit('${projId}')" style="font-size:11px">🔬 Auditer</button>`;
   }
   if (audit.gapsComblables > 0 && !audit.patchApplied) {
@@ -1516,13 +1518,13 @@ function auditNextAction(audit, projId, compact, sp = '', entityId = null) {
 //              | gaps > 0    → N gaps (comblables/partiels/mapping/frames manquantes)
 function renderAuditBadge(audit) {
   if (!audit) {
-    return `<span class="badge audit-none" title="Audit qualité non effectué (chorus-audit-import)">🔬 Non audité</span>`;
+    return `<span class="badge audit-none" title="Audit import non effectué (chorus-audit-import)">🔬 Non audité</span>`;
   }
   const actionable = (audit.gapsComblables || 0) + (audit.gapsPartiels || 0)
                    + (audit.gapsMapping || 0)  + (audit.framesManquantes || 0);
   if (actionable === 0) {
     const d = audit.date ? ` · ${audit.date}` : '';
-    return `<span class="badge audit-ok" title="Audit qualité OK${d}">🔬 Audité</span>`;
+    return `<span class="badge audit-ok" title="Audit import OK${d}">🔬 Audité</span>`;
   }
   const parts = [];
   if (audit.gapsComblables)   parts.push(`✅ ${audit.gapsComblables} comblable${audit.gapsComblables > 1 ? 's' : ''}`);
@@ -1941,112 +1943,140 @@ function renderStrengthenPanel(report, sbId) {
 
 // ─── FIX HISTORY PANEL ───────────────────────────────────────────────────
 // Panneau affiché dans l'onglet Tests quand .last-fix-history.json existe.
-// Visible même après convergence (total_gaps=0) — conserve la traçabilité des
-// corrections appliquées par chorus-fix.
+// Panneau log chorus-fix — déplié sur demande (collapsed par défaut).
+// Séparé volontairement du compteur "🎯 N gaps KB résolus" (README.org)
+// qui est un cumulatif historique multi-sessions.
 function renderFixHistoryPanel(report) {
   if (!report) return '';
 
-  const ts = (report.timestamp || '').replace('T', ' ').slice(0, 16);
-  const dryRunTag = report.dryRun
-    ? `<span style="font-size:10px;background:rgba(99,102,241,.15);color:var(--info);padding:1px 5px;border-radius:3px;margin-left:6px">dry-run</span>`
-    : '';
+  // Construit tous les runs (dernier en tête + précédents à la suite) pour
+  // éviter une hiérarchie confuse "run courant / runs précédents".
+  const allRuns = [report, ...(report.previousRuns || [])];
+  const totalResolved = allRuns.reduce((s, r) => s + (r.gaps_resolved || 0), 0);
+  const totalApplied  = allRuns.reduce((s, r) =>
+    s + (r.patches || []).filter(p => p.status === 'applied').length, 0);
 
-  // ── Compteurs ──────────────────────────────────────────────────────────
-  const applied  = report.patches.filter(p => p.status === 'applied').length;
-  const blocked  = report.patches.filter(p => p.status === 'blocked').length;
-  const skipped  = report.patches.filter(p => p.status === 'skipped').length;
+  // ── En-tête toujours visible ───────────────────────────────────────────
+  // Montre le résumé en un coup d'œil sans ouvrir le panneau.
+  const summaryBadge = totalResolved > 0
+    ? `<span style="font-size:11px;color:var(--success);font-weight:600">
+         ✓ ${totalResolved} gap${totalResolved > 1 ? 's' : ''} résolu${totalResolved > 1 ? 's' : ''}</span>`
+    : `<span style="font-size:11px;color:var(--text-muted)">0 gap résolu</span>`;
 
-  const deltaTxt = (report.gapsBefore != null && report.gapsAfter != null)
-    ? `<span style="color:var(--text-muted)">${report.gapsBefore} gap(s) → ${report.gapsAfter} gap(s)</span>
-       ${report.gapsResolved > 0 ? `<span style="color:var(--success);margin-left:4px">−${report.gapsResolved} résolus</span>` : ''}`
-    : `<span style="color:var(--text-muted)">dry-run — aucun résultat mesuré</span>`;
+  const runCount = allRuns.length;
+  const runLabel = `${runCount} run${runCount > 1 ? 's' : ''}`;
+  const lastTs   = (report.timestamp || '').replace('T', ' ').slice(0, 16);
 
-  // ── Lignes de patches ──────────────────────────────────────────────────
-  const patchRows = report.patches.map(p => {
-    const statusColor = p.status === 'applied'  ? 'var(--success)'
-                      : p.status === 'blocked'  ? 'var(--error)'
-                      : 'var(--text-muted)';
-    const statusIcon  = p.status === 'applied'  ? '✅'
-                      : p.status === 'blocked'  ? '🛑'
-                      : '⏭';
-    return `<details style="font-size:11px;border-bottom:1px solid var(--border);padding:4px 0">
-      <summary style="cursor:pointer;display:flex;align-items:center;gap:6px;list-style:none">
-        <span style="color:${statusColor};min-width:16px">${statusIcon}</span>
-        <span style="color:var(--text-muted)">#${p.gap_id}</span>
-        <span>${(p.gap_type || '?').replace(/_/g, ' ')}</span>
-        <span style="color:var(--text-muted)">·</span>
-        <span style="font-family:'JetBrains Mono',monospace">${p.element_id || '?'}</span>
-      </summary>
-      <div style="padding:5px 0 2px 22px;color:var(--text-secondary)">
-        ${p.rule_file ? `<div><strong>Règle :</strong> ${p.rule_file}${p.agent ? ` <span style="color:var(--text-muted)">(${p.agent})</span>` : ''}</div>` : ''}
-        ${p.change    ? `<div><strong>Patch :</strong> <code style="font-size:10px">${p.change}</code></div>` : ''}
-        ${p.blocked_reason ? `<div style="color:var(--error)"><strong>Bloqué :</strong> ${p.blocked_reason}</div>` : ''}
-      </div>
-    </details>`;
-  }).join('') || `<div style="font-size:11px;color:var(--text-muted);padding:4px 0">Aucun patch enregistré.</div>`;
+  // ── Ligne de détail par run ────────────────────────────────────────────
+  const _runRow = (r, idx) => {
+    const rTs      = (r.timestamp || '').replace('T', ' ').slice(0, 16);
+    const rApp     = (r.patches || []).filter(p => p.status === 'applied').length;
+    const rBlk     = (r.patches || []).filter(p => p.status === 'blocked').length;
+    const rSkp     = (r.patches || []).filter(p => p.status === 'skipped').length;
+    const rDry     = r.dry_run
+      ? `<span style="font-size:9px;padding:1px 4px;background:rgba(99,102,241,.15);color:var(--info);border-radius:3px">dry-run</span>`
+      : '';
+    const rDelta   = (r.gaps_before != null && r.gaps_after != null)
+      ? `<span style="color:var(--text-muted)">${r.gaps_before} gap${r.gaps_before !== 1 ? 's' : ''} → ${r.gaps_after} gap${r.gaps_after !== 1 ? 's' : ''}</span>`
+      : '';
+    const rResolved = (r.gaps_resolved || 0) > 0
+      ? `<span style="color:var(--success)">✓ ${r.gaps_resolved} résolu${r.gaps_resolved > 1 ? 's' : ''}</span>`
+      : `<span style="color:var(--text-muted)">0 résolu</span>`;
 
-  // ── Corpus-correctif ───────────────────────────────────────────────────
-  const ccHtml = report.corpusCorrectif
-    ? `<div style="font-size:11px;margin-top:6px">
-        📄 Corpus-correctif généré : <code>${report.corpusCorrectif}</code>
-       </div>`
-    : '';
+    // Patches de ce run
+    // Détecte si un patch porte sur un seuil numérique de conformité.
+    // Pattern: >=N→>=M, >N→>M, <=N→<=M, ou mots-clés bits/niveau/seuil/taille.
+    const _isThresholdPatch = (p) => {
+      if (!p.change) return false;
+      if (/>=?\d+\s*[→>-]+\s*>=?\d+/.test(p.change)) return true;
+      if (/<=?\d+\s*[→>-]+\s*<=?\d+/.test(p.change)) return true;
+      if (/\b(bits?|niveau|seuil|taille|score|longueur)\b/i.test(p.change)) return true;
+      return false;
+    };
 
-  // ── Bucket A ───────────────────────────────────────────────────────────
-  const bAHtml = report.bucketACount > 0
-    ? `<div style="font-size:11px;color:var(--text-muted);margin-top:4px">
-        🔍 ${report.bucketACount} item(s) Bucket A — clarification corpus requise (révision humaine).
-       </div>`
-    : '';
+    const patchRows = (r.patches || []).map(p => {
+      const stIcon  = p.status === 'applied' ? '✅' : p.status === 'blocked' ? '🛑' : '⏭';
+      const stColor = p.status === 'applied' ? 'var(--success)' : p.status === 'blocked' ? 'var(--error)' : 'var(--text-muted)';
+      const isThreshold = _isThresholdPatch(p);
+      const thresholdWarn = isThreshold
+        ? `<span style="font-size:9px;padding:1px 5px;border-radius:3px;font-weight:600;
+               background:rgba(239,68,68,.12);color:var(--error);border:1px solid rgba(239,68,68,.3);
+               margin-left:4px" title="Seuil numérique de conformité modifié — validation humaine requise">
+             ⚠️ seuil</span>`
+        : '';
+      return `<details style="font-size:11px;border-bottom:1px solid var(--border-light);padding:3px 0${isThreshold ? ';background:rgba(239,68,68,.04)' : ''}">
+        <summary style="cursor:pointer;list-style:none;display:flex;align-items:center;gap:5px">
+          <span style="color:${stColor}">${stIcon}</span>
+          <span style="color:var(--text-muted)">#${p.gap_id}</span>
+          <span>${(p.gap_type || '?').replace(/_/g, ' ')}</span>
+          <span style="color:var(--text-muted)">·</span>
+          <code style="font-size:10px">${p.element_id || '?'}</code>
+          ${thresholdWarn}
+        </summary>
+        <div style="padding:4px 0 2px 20px;color:var(--text-secondary);font-size:10.5px">
+          ${p.rule_file ? `<div>Règle : <code>${p.rule_file}</code>${p.agent ? ` <span style="color:var(--text-muted)">(${p.agent})</span>` : ''}</div>` : ''}
+          ${p.change    ? `<div>Patch : <code>${p.change}</code>${isThreshold ? `<span style="font-size:10px;color:var(--error);margin-left:6px">— seuil de conformité : validation humaine requise (voir chorus-fix.md § SECURITY GUARD)</span>` : ''}</div>` : ''}
+          ${p.blocked_reason ? `<div style="color:var(--error)">Bloqué : ${p.blocked_reason}</div>` : ''}
+        </div>
+      </details>`;
+    }).join('') || `<div style="font-size:11px;color:var(--text-muted);padding:2px 0">Aucun patch dans ce run.</div>`;
 
-  // ── Runs précédents ────────────────────────────────────────────────────
-  const prevRuns = report.previousRuns || [];
-  const prevHtml = prevRuns.length === 0 ? '' : `
-    <details style="margin-top:10px">
-      <summary style="cursor:pointer;font-size:11px;color:var(--text-muted);list-style:none;display:flex;align-items:center;gap:6px">
-        <span>🕓</span>
-        <span>${prevRuns.length} run(s) précédent(s)</span>
-      </summary>
-      <div style="margin-top:6px;display:flex;flex-direction:column;gap:4px">
-        ${prevRuns.map(r => {
-          const rTs  = (r.timestamp || '').replace('T', ' ').slice(0, 16);
-          const rApp = (r.patches || []).filter(p => p.status === 'applied').length;
-          const rBlk = (r.patches || []).filter(p => p.status === 'blocked').length;
-          const rDelta = (r.gaps_before != null && r.gaps_after != null)
-            ? `${r.gaps_before}→${r.gaps_after}` : '—';
-          const rDry = r.dry_run
-            ? `<span style="font-size:9px;color:var(--info);margin-left:4px">dry-run</span>` : '';
-          return `<div style="font-size:11px;padding:4px 8px;background:var(--bg-tertiary);border-radius:4px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
-            <span style="color:var(--text-muted)">${rTs}</span>${rDry}
-            <span>gaps : <strong>${rDelta}</strong></span>
-            <span style="color:var(--text-muted)">✅ ${rApp} · 🛑 ${rBlk}</span>
-            ${r.corpus_correctif ? `<span style="color:var(--text-muted)">📄 ${r.corpus_correctif}</span>` : ''}
-          </div>`;
-        }).join('')}
-      </div>
-    </details>`;
+    const ccLine = r.corpus_correctif
+      ? `<div style="font-size:11px;margin-top:4px;color:var(--text-muted)">📄 ${r.corpus_correctif}</div>` : '';
+    const bALine = (r.bucket_a_count || 0) > 0
+      ? `<div style="font-size:11px;margin-top:2px;color:var(--text-muted)">🔍 ${r.bucket_a_count} item(s) Bucket A — clarification corpus requise</div>` : '';
+    const borderStyle = idx === 0
+      ? 'border-left:3px solid var(--accent);'
+      : 'border-left:3px solid var(--border);opacity:.8;';
 
-  return `<div class="pv-panel" style="margin-top:18px">
-    <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;cursor:pointer"
-         onclick="this.closest('.pv-panel').querySelector('.fix-history-body').classList.toggle('hidden')">
-      <span style="font-weight:600;font-size:12px">🛠️ Historique des corrections (chorus-fix)</span>
-      ${dryRunTag}
-      <span style="font-size:10px;color:var(--text-muted);margin-left:auto">${ts}</span>
-      <span style="font-size:11px;color:var(--text-muted)">▾</span>
+    return `
+      <div style="padding:8px 10px;margin-bottom:8px;background:var(--bg-elevated);border-radius:6px;${borderStyle}">
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px">
+          <span style="font-size:11px;font-weight:600;color:var(--text-primary)">${idx === 0 ? 'Dernier run' : `Run ${runCount - idx}`}</span>
+          ${rDry}
+          <span style="font-size:10px;color:var(--text-muted)">${rTs}</span>
+          <span style="margin-left:auto;display:flex;gap:8px;font-size:11px;align-items:center">
+            ${rDelta}
+            ${rResolved}
+          </span>
+        </div>
+        <div style="font-size:10.5px;color:var(--text-muted);margin-bottom:4px">
+          ✅ ${rApp} appliqué${rApp > 1 ? 's' : ''} · 🛑 ${rBlk} bloqué${rBlk > 1 ? 's' : ''} · ⏭ ${rSkp} ignoré${rSkp > 1 ? 's' : ''}
+        </div>
+        <div style="border:1px solid var(--border);border-radius:4px;padding:2px 6px;max-height:180px;overflow-y:auto">
+          ${patchRows}
+        </div>
+        ${ccLine}${bALine}
+      </div>`;
+  };
+
+  const runsHtml = allRuns.map((r, i) => _runRow(r, i)).join('');
+
+  return `<div class="pv-panel" style="margin-top:10px">
+    <div style="display:flex;align-items:center;gap:8px;cursor:pointer"
+         onclick="toggleFixHistoryPanel(this)">
+      <span class="cov-chevron">▸</span>
+      <span style="font-weight:600;font-size:12px">🛠️ chorus-fix</span>
+      <span style="font-size:11px;color:var(--text-muted)">${runLabel} · dernier : ${lastTs}</span>
+      ${summaryBadge}
     </div>
-    <div class="fix-history-body">
-      <div style="display:flex;gap:16px;font-size:12px;margin-bottom:8px;flex-wrap:wrap">
-        ${deltaTxt}
-        <span style="color:var(--text-muted);margin-left:auto">✅ ${applied} appliqué(s) · 🛑 ${blocked} bloqué(s) · ⏭ ${skipped} ignoré(s)</span>
+    <div class="fix-history-body hidden" style="margin-top:8px">
+      <div style="font-size:10.5px;color:var(--text-muted);margin-bottom:8px;padding:4px 8px;
+                  background:var(--bg-elevated);border-radius:4px;border:1px solid var(--border-light)">
+        ℹ️ Log technique des runs <code>chorus-fix</code> sur ce sandbox — distinct du
+        compteur <em>🎯 gaps KB résolus</em> ci-dessus qui totalise l'ensemble des
+        corrections documentées dans <code>README.org § Session notes</code>.
       </div>
-      <div style="max-height:220px;overflow-y:auto;border:1px solid var(--border);border-radius:4px;padding:4px 8px">
-        ${patchRows}
-      </div>
-      ${ccHtml}
-      ${bAHtml}
-      ${prevHtml}
+      ${runsHtml}
     </div>
   </div>`;
+}
+
+function toggleFixHistoryPanel(header) {
+  const body    = header.closest('.pv-panel').querySelector('.fix-history-body');
+  const chevron = header.querySelector('.cov-chevron');
+  body.classList.toggle('hidden');
+  if (chevron) chevron.classList.toggle('open');
 }
 
 // ─── STRENGTHEN FULL-SUITE LAUNCHER ──────────────────────────────────────
@@ -2435,11 +2465,25 @@ function computeAutoResolvedBugs(strengthenReport, testing) {
 }
 
 function renderTestingBugsSection(readme, sbId, strengthenReport, testing) {
-  const autoCount = computeAutoResolvedBugs(strengthenReport, testing);
-  const n = Math.max(readme?.bugsFixed || 0, autoCount);
-  if (!n) return ''; // nothing to display — no resolved bug found in README.org or reports
+  // Only Type-2 KB semantic gaps belong in the Tests tab — infrastructure
+  // bugs (Type 1, "bloquants") are one-time historical events, not test KPIs.
+  const autoCount   = computeAutoResolvedBugs(strengthenReport, testing);
+  const kbGaps      = readme?.kbGapsFixed || 0;
+  const n           = Math.max(kbGaps, autoCount);
+  if (!n) return '';
 
-  const tbl = readme.bugsTable;
+  // Infrastructure bugs are shown in the KB tab — add a small cross-link here.
+  const infraCount  = readme?.infraBugsFixed || 0;
+  const infraNote   = infraCount
+    ? `<span style="font-size:11px;color:var(--text-muted);margin-left:8px">
+         (+ <a onclick="openSandboxCorpusToKb('${sbId}')" style="cursor:pointer;color:var(--text-muted);text-decoration:underline dotted" title="Voir les bugs infrastructure dans l'onglet KB">🔧 ${infraCount} bug${infraCount > 1 ? 's' : ''} infrastructure</a>)
+       </span>`
+    : '';
+
+  // Detail table : prefer kbGapsTable (explicit README entries). If autoCount
+  // is the winning source (strengthen converged but README not yet updated),
+  // no detail table is available yet.
+  const tbl = (n === kbGaps || (n === autoCount && kbGaps > 0)) ? readme?.kbGapsTable : null;
   const hasSessionCol = tbl && tbl.headers[0] === 'Session';
 
   // Groups rows by session (if "Session" column present), otherwise
@@ -2480,13 +2524,14 @@ function renderTestingBugsSection(readme, sbId, strengthenReport, testing) {
   return `
     <div class="pv-panel">
       <div style="display:flex;align-items:center;gap:10px;cursor:pointer" onclick="toggleTestingBugsSection()">
-        <span style="font-size:15px">🐛</span>
-        <span style="font-weight:600;font-size:13px">${n} divergence${n > 1 ? 's' : ''} résolue${n > 1 ? 's' : ''} durant les tests</span>
-        <span style="font-size:11px;color:var(--text-muted)">découverts via chorus-strengthen / chorus-stress</span>
+        <span style="font-size:15px">🎯</span>
+        <span style="font-weight:600;font-size:13px">${n} gap${n > 1 ? 's' : ''} KB résolu${n > 1 ? 's' : ''}</span>
+        <span style="font-size:11px;color:var(--text-muted)">cumulatif · source README.org § Session notes</span>
+        ${infraNote}
         <span id="testing-bugs-chevron" class="cov-chevron${_testingBugsOpen ? ' open' : ''}" style="margin-left:auto">▸</span>
       </div>
       <div id="testing-bugs-detail" class="${_testingBugsOpen ? '' : 'hidden'}" style="margin-top:10px">
-        ${cardsHtml || '<div class="pv-empty">Détail indisponible — voir README.org § Session notes.</div>'}
+        ${cardsHtml || `<div class="pv-empty">${autoCount > kbGaps ? `${autoCount} gap${autoCount > 1 ? 's' : ''} résolus (source : .last-strengthen-report.json) — README.org § Session notes pas encore mis à jour.` : 'Détail indisponible — voir README.org § Session notes.'}</div>`}
         <div style="margin-top:4px">
           <button class="btn btn-ghost btn-sm" style="font-size:11px" onclick="openSandboxCorpusToKb('${sbId}')">
             📚 Voir dans Knowledge Base
@@ -3557,27 +3602,27 @@ function updateRvCheckButtons() {
     resolved[kind] = fresh || linked;  // null → Analyse button
   }
 
-  // ── Case: neither summary nor explain exists → single "Analyse" button ──
+  // ── Case: neither summary nor explain exists → two separate "--from-report" buttons ──
+  // ⛔ NE PAS combiner --summary --explain en une seule session : l'agent architect
+  // (extended thinking) génère trop de contenu → timeout Java backend → "Error in
+  // input stream". Un rapport par session = dans les limites de streaming.
   if (!resolved.summary && !resolved.explain) {
-    // Hide both individual buttons
-    ['summary', 'explain'].forEach(k => {
-      const b = document.getElementById(`rv-${k}-btn`);
-      if (b) b.style.display = 'none';
-    });
-    // Ensure "Analyse" button exists (create once, reuse on subsequent calls)
-    let analyseBtn = document.getElementById('rv-analyse-btn');
-    if (!analyseBtn) {
-      analyseBtn = document.createElement('button');
-      analyseBtn.id        = 'rv-analyse-btn';
-      analyseBtn.className = 'btn btn-ghost btn-sm';
-      // Insert just before rv-complete-btn in the footer
-      const completeBtn = document.getElementById('rv-complete-btn');
-      if (completeBtn) completeBtn.parentNode.insertBefore(analyseBtn, completeBtn);
+    // Hide the legacy combined "Analyse" button if it still exists in the DOM
+    const analyseBtn = document.getElementById('rv-analyse-btn');
+    if (analyseBtn) analyseBtn.style.display = 'none';
+
+    // Show both individual buttons in "--from-report" generate mode
+    for (const kind of ['summary', 'explain']) {
+      const btn = document.getElementById(`rv-${kind}-btn`);
+      if (!btn) continue;
+      btn.style.display     = '';
+      btn.innerHTML         = kind === 'summary' ? '📋 Summary' : '💡 Explain';
+      btn.style.color       = '';
+      btn.style.borderColor = '';
+      btn.title             = `Générer --${kind} depuis ce run (sans relancer le pipeline)`;
+      const k = kind;
+      btn.onclick = () => openAnalyseFromReport(k);
     }
-    analyseBtn.style.display  = '';
-    analyseBtn.innerHTML      = '🔎 Analyse';
-    analyseBtn.title          = 'Produire --summary + --explain depuis ce run (sans relance pipeline)';
-    analyseBtn.onclick        = () => openAnalyseFromReport();
     return;
   }
 
@@ -3617,11 +3662,16 @@ function updateRvCheckButtons() {
 }
 
 /**
- * Opens a pre-contextualised ECA terminal to generate --summary + --explain
- * from the current run-report WITHOUT relaunching the pipeline (--from-report mode).
- * Called by the "🔎 Analyse" button displayed when no linked report exists.
+ * Opens a pre-contextualised ECA terminal to generate ONE report (--summary OR
+ * --explain) from the current run-report WITHOUT relaunching the pipeline.
+ *
+ * ⛔ --summary et --explain ne sont JAMAIS combinés en une seule session :
+ * l'agent architect (extended thinking) génère trop de contenu en un tour →
+ * timeout Java backend → "Error in input stream". Chaque rapport = une session.
+ *
+ * @param {string} kind  'summary' | 'explain'
  */
-function openAnalyseFromReport() {
+function openAnalyseFromReport(kind = 'summary') {
   const ctx      = window._rvCtx || {};
   const sbId     = ctx.sbId;
   const entityId = ctx.entityId;
@@ -3634,7 +3684,7 @@ function openAnalyseFromReport() {
 
   const runReportPath = `workspace/${entityId}/reports/${runReportFile}`;
 
-  const cmd = `chorus-check ${sbId} --from-report ${runReportPath} --summary --explain\n`
+  const cmd = `chorus-check ${sbId} --from-report ${runReportPath} --${kind}\n`
     + `Mode --from-report : charger les éléments directement depuis $SANDBOX/${runReportPath}.\n`
     + `⚠ NE PAS relancer run.pl, NE PAS appeler chorus_process ni le pipeline MCP.\n`
     + `Extraire RUN_TIMESTAMP du nom de fichier pour nommer les rapports produits.\n`
@@ -5194,6 +5244,157 @@ function closeHistoryModal() {
   document.getElementById('history-modal-overlay').hidden = true;
 }
 
+// ─── ORG-MODE RENDERER ──────────────────────────────────────────
+// Lightweight Org-mode → HTML converter for import-report-*.org files.
+// Handles: #+TITLE/KEYWORDS header, * headings, #+BEGIN_SRC/QUOTE/EXAMPLE,
+// org pipe tables, - lists, inline ~code~ *bold* /italic/ markup.
+// Output uses standard HTML elements (.mdv-content h1/h2/table/pre/blockquote)
+// so the existing CSS applies without modification (except .org-meta below).
+
+function _orgEsc(s) {
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+function _orgInline(s) {
+  let r = _orgEsc(s);
+  // ~code~ and =verbatim=
+  r = r.replace(/~([^~\n]{1,100})~/g,    '<code>$1</code>');
+  r = r.replace(/=([^=\n]{1,100})=/g,    '<code>$1</code>');
+  // *bold* — only between word boundaries / spaces (avoid false matches in tables)
+  r = r.replace(/(^|[\s(])\*([^*\n]{1,120})\*(?=$|[\s),.])/gm, '$1<strong>$2</strong>');
+  // /italic/
+  r = r.replace(/(^|[\s(])\/([^/\n]{1,80})\/(?=$|[\s),.])/gm, '$1<em>$2</em>');
+  return r;
+}
+
+function _orgTable(lines) {
+  const isSep = l => /^\s*\|[-+| \t]+\|\s*$/.test(l) && !/[^|\-+ \t]/.test(l);
+  const dataLines = lines.filter(l => !isSep(l));
+  const sepIdx    = lines.findIndex(isSep);
+
+  function rowHtml(line, tag) {
+    const cells = line.split('|').slice(1, -1).map(c => c.trim());
+    return '<tr>' + cells.map(c => `<${tag}>${_orgInline(c)}</${tag}>`).join('') + '</tr>';
+  }
+
+  if (sepIdx < 1) {
+    // No separator → all tbody
+    return '<table>' + dataLines.map(l => rowHtml(l, 'td')).join('') + '</table>';
+  }
+
+  const headLines = lines.slice(0, sepIdx).filter(l => !isSep(l));
+  const bodyLines = lines.slice(sepIdx + 1).filter(l => !isSep(l));
+  return '<table>'
+    + '<thead>' + headLines.map(l => rowHtml(l, 'th')).join('') + '</thead>'
+    + '<tbody>' + bodyLines.map(l => rowHtml(l, 'td')).join('') + '</tbody>'
+    + '</table>';
+}
+
+function renderOrgMode(src) {
+  const lines = src.split('\n');
+  const out   = [];
+  let i       = 0;
+
+  // ── Collect #+KEYWORD: header lines at the very top ────────────────────
+  const meta = {};
+  while (i < lines.length && /^#\+\w/.test(lines[i])) {
+    const m = lines[i].match(/^#\+(\w+):\s*(.*)/);
+    if (m && !/^(BEGIN|END)_/i.test(m[1])) meta[m[1].toUpperCase()] = m[2].trim();
+    i++;
+  }
+
+  if (meta.TITLE) out.push(`<h1>${_orgEsc(meta.TITLE)}</h1>`);
+  const bits = [];
+  if (meta.DATE)    bits.push(`📅 ${_orgEsc(meta.DATE)}`);
+  if (meta.SANDBOX) bits.push(`🗂 ${_orgEsc(meta.SANDBOX)}`);
+  if (meta.CONTEXT) bits.push(`🏢 ${_orgEsc(meta.CONTEXT)}`);
+  if (bits.length) out.push(`<div class="org-meta">${bits.join('&emsp;·&emsp;')}</div>`);
+
+  // ── Body ────────────────────────────────────────────────────────────────
+  let paraLines = [];
+
+  function flushPara() {
+    const txt = paraLines.join('\n').trim();
+    if (txt) out.push(`<p>${_orgInline(txt)}</p>`);
+    paraLines = [];
+  }
+
+  while (i < lines.length) {
+    const line = lines[i];
+
+    // Ignore stray #+KEY: lines in body
+    if (/^#\+\w+:/.test(line) && !/^#\+(BEGIN|END)_/i.test(line)) { i++; continue; }
+
+    // #+BEGIN_xxx … #+END_xxx blocks
+    const bm = line.match(/^#\+BEGIN_(\w+)/i);
+    if (bm) {
+      flushPara();
+      const kind = bm[1].toUpperCase();
+      const blockLines = [];
+      i++;
+      while (i < lines.length && !/^#\+END_/i.test(lines[i])) { blockLines.push(lines[i]); i++; }
+      i++; // consume #+END_xxx
+      const raw = blockLines.join('\n').replace(/^\n+|\n+$/g, '');
+      if      (kind === 'SRC')   out.push(`<pre><code>${_orgEsc(raw)}</code></pre>`);
+      else if (kind === 'QUOTE') out.push(`<blockquote>${_orgInline(raw)}</blockquote>`);
+      else                       out.push(`<pre class="org-example">${_orgEsc(raw)}</pre>`);
+      continue;
+    }
+
+    // * Headings  ** Sub  *** Sub-sub  (→ h2, h3, h4)
+    const hm = line.match(/^(\*+) +(.*)/);
+    if (hm) {
+      flushPara();
+      const lvl = Math.min(hm[1].length + 1, 5); // * → h2, ** → h3, *** → h4, **** → h5
+      out.push(`<h${lvl}>${_orgInline(hm[2])}</h${lvl}>`);
+      i++; continue;
+    }
+
+    // Org pipe tables
+    if (/^\s*\|/.test(line)) {
+      flushPara();
+      const tLines = [];
+      while (i < lines.length && /^\s*\|/.test(lines[i])) { tLines.push(lines[i]); i++; }
+      out.push(_orgTable(tLines));
+      continue;
+    }
+
+    // - / + Unordered list
+    if (/^[ \t]*[-+] /.test(line)) {
+      flushPara();
+      const items = [];
+      while (i < lines.length && /^[ \t]*[-+] /.test(lines[i])) {
+        items.push(lines[i].replace(/^[ \t]*[-+] /, ''));
+        i++;
+      }
+      out.push('<ul>' + items.map(t => `<li>${_orgInline(t)}</li>`).join('') + '</ul>');
+      continue;
+    }
+
+    // N. Ordered list
+    if (/^[ \t]*\d+\. /.test(line)) {
+      flushPara();
+      const items = [];
+      while (i < lines.length && /^[ \t]*\d+\. /.test(lines[i])) {
+        items.push(lines[i].replace(/^[ \t]*\d+\. /, ''));
+        i++;
+      }
+      out.push('<ol>' + items.map(t => `<li>${_orgInline(t)}</li>`).join('') + '</ol>');
+      continue;
+    }
+
+    // Blank line → flush paragraph
+    if (/^\s*$/.test(line)) { flushPara(); i++; continue; }
+
+    // Regular text line → accumulate
+    paraLines.push(line);
+    i++;
+  }
+
+  flushPara();
+  return out.join('\n');
+}
+
 // ─── MARKDOWN REPORT VIEWER ─────────────────────────────────────
 // Displays the real content of a .md report (explain-/synthese-/
 // compliance-report-) rendered as HTML via marked.js.
@@ -5211,8 +5412,11 @@ async function openMdView(sbId, entityId, projId, filename) {
     const r = await fetch(`${API}/api/sandboxes/${sbId}/entities/${entityId}/projects/${projId}/reports/${filename}`);
     if (!r.ok) throw new Error(await r.text());
     const text = await r.text();
+    const isOrg = filename.endsWith('.org');
     document.getElementById('mdv-content').innerHTML =
-      (typeof marked !== 'undefined') ? marked.parse(text) : `<pre>${text}</pre>`;
+      isOrg
+        ? renderOrgMode(text)
+        : (typeof marked !== 'undefined') ? marked.parse(text) : `<pre>${text}</pre>`;
     updateMdvCrossArea(filename, text);
   } catch (e) {
     document.getElementById('mdv-content').innerHTML =
@@ -5246,7 +5450,7 @@ async function exportMdReport(format) {
     const blobUrl = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = blobUrl;
-    a.download = filename.replace(/\.md$/, `.${format}`);
+    a.download = filename.replace(/\.(md|org)$/, `.${format}`);
     document.body.appendChild(a);
     a.click();
     a.remove();
@@ -5648,35 +5852,53 @@ async function openSandboxCorpus() {
       </div>`;
 
     // ── SESSION — enrichissements + validation ────────────────────────────
-    const fv = readme?.finalValidation;
-    const confPct = fv?.total ? Math.round(fv.conformes / fv.total * 100) : null;
-    const validHtml = fv
-      ? `<span style="display:inline-flex;align-items:center;gap:6px;padding:3px 10px;border-radius:5px;
-           background:${fv.solved ? 'var(--success-dim)' : 'var(--error-dim)'};
-           border:1px solid ${fv.solved ? 'var(--success)' : 'var(--error)'};
-           color:${fv.solved ? 'var(--success)' : 'var(--error)'};font-size:11px;font-weight:600">
-           ${fv.solved ? '✅ SOLVED' : '❌ FAILED'}
-           &nbsp;·&nbsp; ${fv.conformes}/${fv.total} (${confPct} %) — projet test
-         </span>`
-      : '';
 
-    const bugsTbl = readme?.bugsTable;
-    const bugsDetailHtml = bugsTbl
-      ? `<div id="session-bugs-detail" class="hidden" style="margin-top:8px;overflow-x:auto">
+
+    // Helper — renders an expandable detail table for a bug/gap section.
+    // domId must be unique across the two categories (infra vs kbgaps).
+    const _bugDetailBlock = (tbl, domId) => {
+      if (!tbl?.rows?.length) return '';
+      return `
+        <div id="${domId}" class="hidden" style="margin-top:8px;overflow-x:auto">
           <table style="width:100%;border-collapse:collapse;font-size:10px">
-            ${bugsTbl.headers.length ? `<thead><tr style="border-bottom:1px solid var(--border-light)">
-              ${bugsTbl.headers.map(h => `<th style="text-align:left;padding:2px 6px;color:var(--text-muted);font-weight:600">${h}</th>`).join('')}
+            ${tbl.headers?.length ? `<thead><tr style="border-bottom:1px solid var(--border-light)">
+              ${tbl.headers.map(h => `<th style="text-align:left;padding:2px 6px;color:var(--text-muted);font-weight:600">${h}</th>`).join('')}
             </tr></thead>` : ''}
-            <tbody>${bugsTbl.rows.map(r => `
+            <tbody>${tbl.rows.map(r => `
               <tr style="border-bottom:1px solid var(--border-light)">
                 ${r.map(c => `<td style="padding:2px 6px;color:var(--text-secondary);vertical-align:top">${c}</td>`).join('')}
               </tr>`).join('')}
             </tbody>
           </table>
-        </div>`
+        </div>`;
+    };
+
+    // Type 1 — infrastructure bugs (YAML/Perl, found during chorus-check)
+    const infraTbl   = readme?.infraBugsTable;
+    const infraToggle = infraTbl?.rows?.length
+      ? ` style="cursor:pointer" onclick="document.getElementById('kb-infra-bugs-detail').classList.toggle('hidden');this.querySelector('.cov-chevron').classList.toggle('open')"`
       : '';
-    const bugsToggle = bugsTbl
-      ? ` style="cursor:pointer" onclick="document.getElementById('session-bugs-detail').classList.toggle('hidden');this.querySelector('.cov-chevron').classList.toggle('open')"`
+    const infraHtml = (readme?.infraBugsFixed || 0) > 0
+      ? `<span${infraToggle} title="${infraTbl ? 'Cliquer pour voir le détail' : 'Bugs Perl/YAML qui empêchaient le pipeline de tourner'}"
+           style="font-size:12px;color:var(--text-secondary)${infraTbl ? ';cursor:pointer' : ''}">
+           🔧 <strong>${readme.infraBugsFixed}</strong> bug${readme.infraBugsFixed > 1 ? 's' : ''} infrastructure
+           <span style="font-size:10px;color:var(--text-muted)">(implémentation YAML/Perl)</span>
+           ${infraTbl ? `<span class="cov-chevron">▸</span>` : ''}
+         </span>`
+      : '';
+
+    // Type 2 — KB semantic gaps (found by chorus-strengthen / chorus-fix)
+    const kbTbl    = readme?.kbGapsTable;
+    const kbToggle = kbTbl?.rows?.length
+      ? ` style="cursor:pointer" onclick="document.getElementById('kb-gaps-detail').classList.toggle('hidden');this.querySelector('.cov-chevron').classList.toggle('open')"`
+      : '';
+    const kbGapsHtml = (readme?.kbGapsFixed || 0) > 0
+      ? `<span${kbToggle} title="${kbTbl ? 'Cliquer pour voir le détail' : 'Gaps sémantiques dans les règles YAML'}"
+           style="font-size:12px;color:var(--text-secondary)${kbTbl ? ';cursor:pointer' : ''}">
+           🎯 <strong>${readme.kbGapsFixed}</strong> gap${readme.kbGapsFixed > 1 ? 's' : ''} KB résolus
+           <span style="font-size:10px;color:var(--text-muted)">(strengthen / fix)</span>
+           ${kbTbl ? `<span class="cov-chevron">▸</span>` : ''}
+         </span>`
       : '';
 
     const sessionHtml = `
@@ -5684,15 +5906,14 @@ async function openSandboxCorpus() {
         ${hdr('Session (README.org § Session notes)')}
         <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:center">
           ${readme?.enrichmentCount
-            ? `<span style="font-size:12px;color:var(--text-secondary)">🔧 <strong>${readme.enrichmentCount}</strong> enrichissement(s)
+            ? `<span style="font-size:12px;color:var(--text-secondary)">📝 <strong>${readme.enrichmentCount}</strong> enrichissement(s)
                ${readme.enrichmentLastDate ? `<span style="color:var(--text-muted)">· dernier : ${readme.enrichmentLastDate}</span>` : ''}</span>`
             : ''}
-          ${readme?.bugsFixed
-            ? `<span${bugsToggle} title="${bugsTbl ? 'Cliquer pour voir le détail' : ''}" style="font-size:12px;color:var(--text-secondary)${bugsTbl ? ';cursor:pointer' : ''}">🐛 <strong>${readme.bugsFixed}</strong> divergence(s) résolue(s)${bugsTbl ? ` <span class="cov-chevron">▸</span>` : ''}</span>`
-            : ''}
-          ${validHtml}
+          ${infraHtml}
+          ${kbGapsHtml}
         </div>
-        ${bugsDetailHtml}
+        ${_bugDetailBlock(infraTbl, 'kb-infra-bugs-detail')}
+        ${_bugDetailBlock(kbTbl,   'kb-gaps-detail')}
       </div>`;
 
     document.getElementById('sbc-overview-content').innerHTML =
@@ -5920,45 +6141,64 @@ function openImportModal(reimportProjId) {
   const contextGroup   = document.getElementById('import-context-group');
 
   if (reimportProjId) {
-    // Re-import: the source (type + path) and entity do not change —
-    // only a NEW project name (proposed by default, editable) is required.
-    // Source/entity fields hidden (frozen internally).
+    // Replace mode — the existing project is overwritten in place.
+    // No new name, no new entity, no new source file: just confirm and go.
     const sbId = currentSandbox ? currentSandbox.id : null;
     const proj = (PROJECTS[sbId]||[]).find(p=>p.id===reimportProjId);
-    modal.dataset.reimportId = reimportProjId;
-    modal.dataset.reimportEntity = proj ? proj.entity : '';
-    modal.dataset.reimportSourceType = proj ? (proj.type || '') : '';
+    modal.dataset.reimportId      = reimportProjId;
+    modal.dataset.reimportEntity  = proj ? proj.entity : '';
+    modal.dataset.reimportReplace = 'true';
+
     const titleEl = modal.querySelector('h2');
-    if (titleEl) titleEl.textContent = 'Ré-importer un projet';
+    if (titleEl) titleEl.textContent = 'Ré-importer — remplacer le projet';
 
-    nameLabel.textContent = 'Nom du nouveau projet';
-    sourceGroup.hidden    = true;
-    pathGroup.hidden      = true;
-    contextGroup.hidden   = true;
+    // Hide all form fields (no user input required)
+    nameGroup.hidden    = true;
+    sourceGroup.hidden  = true;
+    pathGroup.hidden    = true;
+    contextGroup.hidden = true;
 
-    const sourcePath = proj ? (proj.sourceFile || proj.sourcePath || proj.path || '—') : '—';
+    // Confirmation block (created once, reused on subsequent calls)
+    let infoEl = document.getElementById('reimport-replace-info');
+    if (!infoEl) {
+      infoEl = document.createElement('div');
+      infoEl.id = 'reimport-replace-info';
+      nameGroup.parentNode.insertBefore(infoEl, nameGroup);
+    }
+    infoEl.hidden = false;
+    const srcFile  = proj ? (proj.sourceFile || proj.sourcePath || proj.path || '') : '';
+    const srcLabel = (proj?.sourceBasename && proj.sourceBasename + (srcFile.match(/\.[^./]+$/) || [''])[0])
+                   || srcFile.split('/').pop()
+                   || '(source inconnue)';
+    infoEl.innerHTML = `
+      <div style="padding:14px;background:var(--bg-elevated);border:1px solid var(--border);
+                  border-radius:8px">
+        <div style="font-size:13px;color:var(--text-primary);margin-bottom:10px">
+          Le projet <strong>${escapeHtml(proj?.name || reimportProjId)}</strong>
+          sera <strong>remplacé</strong> par un ré-import depuis la même source.
+        </div>
+        <div style="font-size:11px;color:var(--text-secondary);display:flex;flex-direction:column;gap:4px">
+          <div>📄 Source : <code>${escapeHtml(srcLabel)}</code></div>
+          <div>🏢 Entity : <code>${escapeHtml(proj?.entity || '—')}</code></div>
+          <div style="color:var(--text-muted);margin-top:6px;font-size:10.5px">
+            ℹ️ Le fichier <code>${escapeHtml(reimportProjId)}.json</code> sera écrasé.
+            Les rapports existants restent disponibles jusqu'au prochain chorus-check.
+          </div>
+        </div>
+      </div>`;
 
-    // Default name proposal, derived from the current project name
-    // (increments an existing "vN" suffix, or appends one).
-    const baseName = proj ? (proj.name || '') : '';
-    const vMatch = baseName.match(/^(.*)\sv(\d+)$/);
-    const proposedName = vMatch
-      ? `${vMatch[1]} v${parseInt(vMatch[2], 10) + 1}`
-      : `${baseName} v2`;
-    document.getElementById('import-name').value = proposedName;
-    document.getElementById('import-name').select();
-
-    // Source fields frozen internally (not displayed) for startImport() compat.
+    // Freeze source fields for startImport() compat (never displayed)
     document.getElementById('import-source').value = proj ? (proj.type || 'pdf') : 'pdf';
-    document.getElementById('import-path').value = sourcePath === '—' ? '' : sourcePath;
+    document.getElementById('import-path').value   = srcFile;
 
-    // Immediate live validation — the button reflects the state of the
-    // proposed name before the user's first keystroke.
+    // No user input → button enabled immediately
     validateImportName();
   } else {
     delete modal.dataset.reimportId;
     delete modal.dataset.reimportEntity;
-    delete modal.dataset.reimportSourceType;
+    delete modal.dataset.reimportReplace;
+    const infoEl = document.getElementById('reimport-replace-info');
+    if (infoEl) infoEl.hidden = true;
     const titleEl = modal.querySelector('h2');
     if (titleEl) titleEl.textContent = 'Importer un projet';
 
@@ -6119,6 +6359,11 @@ function validateImportName() {
   const hint = document.getElementById('import-name-hint');
   if (!btn || !hint) return;
 
+  // Replace mode — no name field, button always enabled
+  if (modal.dataset.reimportReplace === 'true') {
+    btn.disabled = false; btn.title = ''; hint.textContent = ''; return;
+  }
+
   if (!reimportId) { btn.disabled = false; btn.title = ''; hint.textContent = ''; return; }
   if (!currentSandbox) return;
 
@@ -6144,73 +6389,38 @@ function startImport() {
   const modal = document.getElementById('modal-overlay');
   const reimportId = modal.dataset.reimportId || null;
 
-  // Re-import mode: source and entity are frozen (groups hidden by
-  // openImportModal) — only a NEW project name is requested; it creates
-  // a distinct new project (does not replace the existing one).
+  // Re-import mode: replace the existing project in place (same JSON file,
+  // same entity, same source — content is overwritten by chorus-import-project).
   if (reimportId) {
     if (!currentSandbox) return;
     const sbId = currentSandbox.id;
     const existingProj = (PROJECTS[sbId]||[]).find(p=>p.id===reimportId);
     if (!existingProj) return;
 
-    const newName = document.getElementById('import-name').value.trim();
-    // Same validation as validateImportName() — defence in depth:
-    // the button is already disabled if invalid, but we re-validate here
-    // just in case (keyboard submission, desynchronised DOM state, etc.).
-    const result = computeReimportSlug(newName, sbId, existingProj);
-    if (!result.ok) {
-      alert(result.reason);
-      document.getElementById('import-name').focus();
-      validateImportName();
-      return;
-    }
-    const newId = result.id;
-
     closeModal();
 
     const entityId   = modal.dataset.reimportEntity || existingProj.entity;
-    const sourceType  = modal.dataset.reimportSourceType || existingProj.type;
-    const sourceFile  = existingProj.sourceFile || existingProj.sourcePath || existingProj.path || '';
-    // ⚠️ Le serveur (chorus.js § scanEntity) ne détecte comme projet que les
-    // fichiers respectant la convention `project-*.json` / `projet-*.json` à
-    // la racine de l'entity — tout autre préfixe (ex: "import-<ts>.json")
-    // est silencieusement ignoré par le scan, et le projet n'apparaît jamais
-    // dans l'UI même après un ré-import réussi. slug/newId déjà calculés et
-    // validated (anti-collision) by computeReimportSlug() above.
-    const outFile     = `${newId}.json`;
+    const sourceFile = existingProj.sourceFile || existingProj.sourcePath || existingProj.path || '';
+    // --out points to the SAME file → overwrites the existing project JSON.
+    // Resolved as workspace/<entityId>/<existingProj.id>.json (the flat
+    // convention recognised by scanEntity, cf. scanner.js § scanFlatProject).
+    const outFile = `workspace/${entityId}/${existingProj.id}.json`;
 
-    // Nouveau projet distinct — entity et source héritées de l'original,
-    // jamais redemandées.
-    const newProj = {
-      id: newId, name: newName,
-      type: sourceType,
-      entity: entityId,
-      sourceFile,
-      frames: 0, evidence: 0,
-      state: 'importing',
-      progress: 2,
-      imports: [{
-        date: new Date().toISOString().slice(0,10),
-        version: 'v1',
-        frames: 0,
-      }],
-      reports: [],
-    };
-    PROJECTS[sbId] = PROJECTS[sbId] || [];
-    PROJECTS[sbId].push(newProj);
+    // Mark existing project as "re-importing" in place — no new entry.
+    existingProj.state    = 'importing';
+    existingProj.progress = 2;
     renderProjectsTab();
 
-    // Terminal ECA pré-contextualisé — sandbox, entity, source originale
-    // (jamais redemandée), et nom du nouveau projet.
     const cmd = `chorus-import-project ${sbId} ${sourceFile} --context ${entityId} --out ${outFile}\n`
-      + `ℹ️ Ré-import de "${existingProj.name}" sous un nouveau nom : "${newName}" · source inchangée (${sourceFile})\n`
-      + `⚠️ Ne pas redemander la source : réutilise le document ci-dessus.`;
+      + `ℹ️ REMPLACEMENT de "${existingProj.name}" — source et entity inchangées.\n`
+      + `⚠️ Ne pas redemander la source : réutilise le document ci-dessus.\n`
+      + `✅ Écrire dans ${outFile} (écrase le fichier existant).`;
 
     openLevelTerminal('project', {
       sbId,
       entityId,
-      projId:   newId,
-      projName: newName,
+      projId:   existingProj.id,
+      projName: existingProj.name,
     }, cmd);
     return;
   }
