@@ -3647,16 +3647,12 @@ function updateRvCheckButtons() {
       btn.innerHTML         = kind === 'summary' ? '📋 Summary' : '💡 Explain';
       btn.style.borderColor = '';
       btn.style.color       = '';
-      btn.title             = `chorus-check --${kind} — générer une nouvelle analyse`;
-      btn.onclick           = () => {
-        closeReportView();
-        if (!currentSandbox || currentSandbox.id !== sbId)
-          currentSandbox = SANDBOXES.find(s => s.id === sbId) || { id: sbId, name: sbId };
-        if (!currentProject || currentProject.id !== projId)
-          currentProject = (PROJECTS[sbId] || []).find(p => p.id === projId)
-            || { id: projId, entity: entityId, name: ctx.projName || projId };
-        openChorusCheckTerminal(kind);
-      };
+      // ⛔ NE PAS appeler openChorusCheckTerminal(kind) ici — relancerait le
+      // pipeline complet (run.pl + regen infra) alors qu'un run-report existe.
+      // openAnalyseFromReport() utilise --from-report : pipeline-free.
+      btn.title   = `Générer --${kind} depuis ce run (sans relancer le pipeline)`;
+      const k = kind;
+      btn.onclick = () => openAnalyseFromReport(k);
     }
   }
 }
