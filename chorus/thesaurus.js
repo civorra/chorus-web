@@ -68,32 +68,104 @@ function _resolveSourceImportBasename(sbPath, sourceImport) {
   return null;
 }
 
-// ── Scan de tous les shards ────────────────────────────────────────────────
+// ── Scan des thésaurus ────────────────────────────────────────────────────
+//
+// WEB-027 — Architecture thésaurus refonte :
+//
+//   NOUVEAU (prioritaire) : workspace/<entity>/thesaurus.org
+//     Un fichier par entity. Isolation totale. Aucun global cross-entity.
+//
+//   LEGACY (compat descendante) : agent/thesaurus/<context>.org
+//     Sandboxes existants avant WEB-027. Lus en priorité si le fichier
+//     workspace/<entity>/thesaurus.org n'existe pas encore.
+//     Migration automatique au premier accès (voir _migrateThesaurusShard).
+//
+// Le champ `entity` remplace `shard` dans les objets retournés.
+// L'ancien `shard` est conservé comme alias pour la compat des appelants.
+
+function _thesaurusPathForEntity(sbPath, entity) {
+  return path.join(sbPath, 'workspace', entity, 'thesaurus.org');
+}
+
+function _legacyThesaurusDir(sbPath) {
+  return path.join(sbPath, 'agent', 'thesaurus');
+}
+
+/**
+ * Migre silencieusement un shard legacy agent/thesaurus/<shard>.org vers
+ * workspace/<entity>/thesaurus.org si le fichier destination n'existe pas.
+ * Ne supprime pas le fichier source (transition douce).
+ * Retourne le chemin effectivement utilisé.
+ */
+function _migrateThesaurusShard(sbPath, entity, legacyFile) {
+  const dest = _thesaurusPathForEntity(sbPath, entity);
+  if (fileExists(dest)) return dest;          // déjà migré
+  if (!legacyFile || !fileExists(legacyFile)) return dest; // rien à migrer
+  try {
+    const content = fs.readFileSync(legacyFile, 'utf8');
+    const migrated = `# MIGRATED from agent/thesaurus/ by WEB-027 — do not edit the legacy file\n${content}`;
+    fs.mkdirSync(path.dirname(dest), { recursive: true });
+    fs.writeFileSync(dest, migrated, 'utf8');
+  } catch { /* migration non-bloquante */ }
+  return dest;
+}
+
+/**
+ * Collecte la liste des entities connues pour ce sandbox.
+ * Sources (par ordre de priorité) :
+ *  1. workspace/<entity>/thesaurus.org      ← nouveau (WEB-027)
+ *  2. agent/thesaurus/<context>.org         ← legacy (pre-WEB-027)
+ * Les entities "global" du legacy sont gardées comme entité "global" dans
+ * les résultats de transition mais ne doivent plus être créées par de
+ * nouveaux imports.
+ */
+function _collectThesaurusEntities(sbPath) {
+  const entities = new Map(); // entity → { newPath, legacyPath }
+
+  // Sources nouvelles (workspace/<entity>/thesaurus.org)
+  const workspacePath = path.join(sbPath, 'workspace');
+  try {
+    for (const entry of listDirs(workspacePath)) {
+      const p = _thesaurusPathForEntity(sbPath, entry);
+      if (fileExists(p)) entities.set(entry, { newPath: p, legacyPath: null });
+    }
+  } catch {}
+
+  // Sources legacy (agent/thesaurus/*.org)
+  const legacyDir = _legacyThesaurusDir(sbPath);
+  try {
+    const files = fs.readdirSync(legacyDir, { withFileTypes: true })
+      .filter(e => e.isFile() && e.name.endsWith('.org'));
+    for (const f of files) {
+      const entity = f.name.replace(/\.org$/, '');
+      if (!entities.has(entity)) {
+        // Pas encore de fichier nouveau → déclenche migration silencieuse
+        const legacyPath = path.join(legacyDir, f.name);
+        const migratedPath = _migrateThesaurusShard(sbPath, entity, legacyPath);
+        entities.set(entity, { newPath: migratedPath, legacyPath });
+      }
+    }
+  } catch {}
+
+  return entities;
+}
 
 function scanSandboxThesaurus(sbPath) {
-  const thesDir = path.join(sbPath, 'agent', 'thesaurus');
-  let files = [];
-  try {
-    files = fs.readdirSync(thesDir, { withFileTypes: true })
-      .filter(e => e.isFile() && e.name.endsWith('.org'))
-      .map(e => e.name);
-  } catch { return []; }
-
-  // Mémoïsation locale (par appel) — évite de relire le même import-report-NNN.org
-  // plusieurs fois si plusieurs lignes thésaurus le référencent.
   const resolveCache = new Map();
   const resolve = (sourceImport) => {
     if (!sourceImport) return null;
-    if (!resolveCache.has(sourceImport)) {
+    if (!resolveCache.has(sourceImport))
       resolveCache.set(sourceImport, _resolveSourceImportBasename(sbPath, sourceImport));
-    }
     return resolveCache.get(sourceImport);
   };
 
-  return files.map(fname => {
-    const content = readFileSafe(path.join(thesDir, fname));
-    const shard = fname.replace(/\.org$/, '');
-    if (!content) return { shard, aliasesTypeElement: [], aliasesSlotValues: [], pending: [], outOfScope: [] };
+  const entities = _collectThesaurusEntities(sbPath);
+  if (!entities.size) return [];
+
+  return Array.from(entities.entries()).map(([entity, { newPath }]) => {
+    const content = readFileSafe(newPath);
+    // `entity` est le nouveau nom canonique ; `shard` maintenu pour compat appelants
+    if (!content) return { entity, shard: entity, aliasesTypeElement: [], aliasesSlotValues: [], pending: [], outOfScope: [] };
 
     const aliasesTypeElement = extractOrgTable(content, /^\*\s+Aliases\s*(—|-)\s*type_element/i)
       .slice(1).map(r => ({ term: r[0], target: r[1], confidence: r[2], sourceImport: r[3] || null,
@@ -104,13 +176,13 @@ function scanSandboxThesaurus(sbPath) {
     const pending = extractOrgTable(content, /^\*\s+Pending/i)
       .slice(1).map(r => ({
         term: r[0], proposed: r[1], flag: r[2], sourceImport: r[3] || null,
-        scope: r[4] ? r[4].trim() : null,  // 5e colonne ajoutée (backward-compat : null → 'global')
+        scope: r[4] ? r[4].trim() : null,
         sourceBasename: resolve(r[3] || null),
       }));
     const outOfScope = extractOrgTable(content, /^\*\s+Out-of-scope/i)
       .slice(1).map(r => ({ term: r[0], reason: r[1] }));
 
-    return { shard, aliasesTypeElement, aliasesSlotValues, pending, outOfScope };
+    return { entity, shard: entity, aliasesTypeElement, aliasesSlotValues, pending, outOfScope };
   });
 }
 
@@ -189,7 +261,7 @@ function _createClientShard(shardPath, sbName, scopeLabel) {
     `#+UPDATED: ${new Date().toISOString().slice(0, 10)}`,
     `#+DESCRIPTION: Validated project-term → KB-slot mappings for this sandbox, Scope=${scopeLabel}.`,
     `               Maintained automatically by chorus-import-project / chorus-web.`,
-    `               Part of a sharded thesaurus — see agent/thesaurus/global.org for Pending/Out-of-scope/Conflicts.`,
+    `               WEB-027: this file is the canonical location (workspace/<entity>/thesaurus.org).`,
     `               Do NOT edit KB org files to add project aliases — use this file instead.`,
     '',
     '* Aliases — type_element',
@@ -208,13 +280,33 @@ function _createClientShard(shardPath, sbName, scopeLabel) {
   fs.writeFileSync(shardPath, header, 'utf8');
 }
 
+// ── Helpers de résolution de chemin (WEB-027) ────────────────────────────
+//
+// Règle : workspace/<entity>/thesaurus.org est le chemin canonique.
+// Fallback lecture : agent/thesaurus/<entity>.org (legacy pré-WEB-027).
+// Écriture : toujours vers workspace/<entity>/thesaurus.org,
+//            sauf "global" (legacy maintenu en lecture/écriture pour compat).
+
+function _thesaurusReadPathForShard(sbPath, shard) {
+  if (shard === 'global') return path.join(sbPath, 'agent', 'thesaurus', 'global.org');
+  const newPath = _thesaurusPathForEntity(sbPath, shard);
+  if (fileExists(newPath)) return newPath;
+  return path.join(sbPath, 'agent', 'thesaurus', `${shard}.org`); // legacy fallback
+}
+
+function _thesaurusWritePathForShard(sbPath, shard) {
+  if (shard === 'global') return path.join(sbPath, 'agent', 'thesaurus', 'global.org');
+  const newPath = _thesaurusPathForEntity(sbPath, shard);
+  fs.mkdirSync(path.dirname(newPath), { recursive: true });
+  return newPath;
+}
+
 function resolveThesaurusPending(sbId, shard, term, sourceImport, action, opts = {}) {
   const sbPath   = path.join(SANDBOXES_DIR(), sbId);
-  const shardDir = path.join(sbPath, 'agent', 'thesaurus');
-  // * Pending vit toujours dans global.org (shard = 'global' in practice).
-  const globalPath = path.join(shardDir, `${shard}.org`);
+  // WEB-027 : lire depuis workspace/<entity>/thesaurus.org (ou legacy agent/thesaurus/)
+  const globalPath = _thesaurusReadPathForShard(sbPath, shard);
   const content    = readFileSafe(globalPath);
-  if (content == null) throw new Error(`Shard thesaurus introuvable : ${shard}.org`);
+  if (content == null) throw new Error(`Shard thesaurus introuvable : ${shard}`);
 
   const lines = content.split('\n');
 
@@ -246,16 +338,16 @@ function resolveThesaurusPending(sbId, shard, term, sourceImport, action, opts =
                       'global';
 
   // 3) Déterminer le shard cible pour les Aliases confirmés.
-  //    Reject → toujours global.org (Out-of-scope est sandbox-wide)
-  //    Confirm → shard du Scope cible (peut être différent de global.org)
+  //    Reject → même fichier que Pending (Out-of-scope dans le même thésaurus)
+  //    Confirm → workspace/<targetScope>/thesaurus.org (WEB-027)
   const targetShardPath = (action === 'confirm' && targetScope !== 'global')
-    ? path.join(shardDir, `${targetScope}.org`)
+    ? _thesaurusWritePathForShard(sbPath, targetScope)
     : globalPath;
   const targetShardName = (action === 'confirm' && targetScope !== 'global')
     ? targetScope
     : shard;
 
-  // 4) Backup avant écriture (global.org toujours ; target shard si différent).
+  // 4) Backup avant écriture.
   const backupDir = path.join(sbPath, 'agent', '.backups');
   fs.mkdirSync(backupDir, { recursive: true });
   const ts = new Date().toISOString().replace(/[-:]/g, '').replace('T', '-').slice(0, 15);
@@ -372,10 +464,10 @@ function resolveThesaurusPending(sbId, shard, term, sourceImport, action, opts =
 //          pour les lignes Pending.
 function unconfirmThesaurusAlias(sbId, shard, term, sourceImport, opts = {}) {
   const sbPath    = path.join(SANDBOXES_DIR(), sbId);
-  const shardDir  = path.join(sbPath, 'agent', 'thesaurus');
-  const shardPath = path.join(shardDir, `${shard}.org`);
+  // WEB-027 : lire depuis workspace/<entity>/ ou legacy agent/thesaurus/
+  const shardPath = _thesaurusReadPathForShard(sbPath, shard);
   const content   = readFileSafe(shardPath);
-  if (content == null) throw new Error(`Shard thesaurus introuvable : ${shard}.org`);
+  if (content == null) throw new Error(`Shard thesaurus introuvable : ${shard}`);
 
   const lines = content.split('\n');
 
@@ -419,42 +511,33 @@ function unconfirmThesaurusAlias(sbId, shard, term, sourceImport, opts = {}) {
     );
   }
 
-  // 3) Backup avant écriture (shard source ; global.org si différent, pour la réécriture de Pending).
+  // 3) Backup avant écriture.
   const backupDir = path.join(sbPath, 'agent', '.backups');
   fs.mkdirSync(backupDir, { recursive: true });
   const ts = new Date().toISOString().replace(/[-:]/g, '').replace('T', '-').slice(0, 15);
   fs.writeFileSync(path.join(backupDir, `${shard}.org.bak-${ts}`), content, 'utf8');
 
-  const globalPath = path.join(shardDir, 'global.org');
-  const isGlobalShard = shard === 'global';
-  if (!isGlobalShard) {
-    const globalContent = readFileSafe(globalPath);
-    if (globalContent) {
-      fs.writeFileSync(path.join(backupDir, `global.org.bak-${ts}`), globalContent, 'utf8');
-    }
-  }
-
   // 4) Supprimer la ligne Aliases du shard source.
   lines.splice(found.rowIdx, 1);
   fs.writeFileSync(shardPath, lines.join('\n'), 'utf8');
 
-  // 5) Reconstruire une ligne Pending à partir des données de l'alias supprimé,
-  //    et l'ajouter dans global.org (section * Pending est toujours sandbox-wide).
+  // 5) Reconstruire une ligne Pending dans le même fichier (WEB-027 — Pending
+  //    est entity-scoped, pas global). Compat descendante : si shard = 'global',
+  //    écrire dans global.org comme avant.
   const proposed = found.kind === 'type_element'
     ? `type_element: ${found.cells[1]} ?`
     : `${found.cells[1]}: ${found.cells[2]} ?`;
   const pendingRow = _makeOrgRow([term, proposed, '⚠️ _a_confirmer', sourceImport, shard]);
 
-  const globalLines = isGlobalShard ? lines : (readFileSafe(globalPath) || '').split('\n');
-  const pendingBounds = _findOrgSectionBounds(globalLines, /^\*\s+Pending/i);
-  if (!pendingBounds) throw new Error(`Section "Pending" introuvable dans global.org`);
-  const pendingInsertion = _findTableInsertionPoint(globalLines, pendingBounds.start, pendingBounds.end);
+  const pendingBounds = _findOrgSectionBounds(lines, /^\*\s+Pending/i);
+  if (!pendingBounds) throw new Error(`Section "Pending" introuvable dans ${shard}`);
+  const pendingInsertion = _findTableInsertionPoint(lines, pendingBounds.start, pendingBounds.end);
   if (pendingInsertion) {
-    globalLines.splice(pendingInsertion.lastRowIdx + 1, 0, pendingRow);
+    lines.splice(pendingInsertion.lastRowIdx + 1, 0, pendingRow);
   } else {
-    globalLines.splice(pendingBounds.end, 0, pendingRow);
+    lines.splice(pendingBounds.end, 0, pendingRow);
   }
-  fs.writeFileSync(globalPath, globalLines.join('\n'), 'utf8');
+  fs.writeFileSync(shardPath, lines.join('\n'), 'utf8');
 
   // 6) Journal de décisions terminologiques (best-effort — jamais bloquant).
   try {
