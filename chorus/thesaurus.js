@@ -9,7 +9,7 @@
 
 const fs   = require('fs');
 const path = require('path');
-const { SANDBOXES_DIR, readFileSafe, listDirs } = require('./fs');
+const { SANDBOXES_DIR, readFileSafe, listDirs, fileExists } = require('./fs');
 const { extractOrgTable, parseImportReportOrg } = require('./parser');
 
 // ── Résolution "Source import" → vrai fichier source ──────────────────────
