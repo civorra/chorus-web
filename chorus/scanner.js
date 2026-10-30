@@ -386,7 +386,13 @@ function scanEntity(sbPath, entityId, runReportIndex) {
       .map(e => e.name);
   } catch {}
 
-  const projectJsonFiles = rootFiles.filter(f => /^(projet|project)[-_].*\.json$/i.test(f));
+  // Exclure les sidecars connus : *.label.json (WEB-026) et *.thesaurus.json (WEB-027 Niveau 2)
+  // qui finissent aussi en .json mais ne sont pas des projets.
+  const projectJsonFiles = rootFiles.filter(f =>
+    /^(projet|project)[-_].*\.json$/i.test(f) &&
+    !f.endsWith('.label.json') &&
+    !f.endsWith('.thesaurus.json')
+  );
   const flatSlugs = new Set(projectJsonFiles.map(f => f.replace(/\.json$/i, '')));
 
   const flatProjects = [...flatSlugs].map(slug =>
