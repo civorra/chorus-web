@@ -6513,6 +6513,7 @@ function startImport() {
   const form = new FormData();
   form.append('file', file);
   form.append('projId', id);
+  if (name) form.append('name', name);   // WEB-026 — nom saisi dans le formulaire
 
   fetch(`${API}/api/sandboxes/${sbId}/entities/${context}/projects/upload`, {
     method: 'POST', body: form,

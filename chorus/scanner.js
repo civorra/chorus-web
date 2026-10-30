@@ -195,7 +195,15 @@ function scanFlatProject(entityPath, slug, jsonFile, runReportIndex) {
     }
   }
 
-  const name = slug.replace(/[-_]/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+  // WEB-026 — lire le sidecar .label.json en priorité (nom saisi dans le formulaire)
+  // Fallback : dériver depuis le slug (comportement historique).
+  const labelSidecar = path.join(path.dirname(jsonFile), `${slug}.label.json`);
+  let name;
+  try {
+    const lbl = JSON.parse(fs.readFileSync(labelSidecar, 'utf8') || '{}');
+    name = (lbl.label || '').trim() || null;
+  } catch { name = null; }
+  if (!name) name = slug.replace(/[-_]/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
 
   let sourceFile = null;
   let auditData  = null;

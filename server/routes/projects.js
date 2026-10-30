@@ -263,11 +263,23 @@ router.post(
 
     const outFile = path.join(entityPath, `project-${projId}.json`);
 
+    // WEB-026 — persister le nom saisi dans le formulaire comme sidecar
+    // `project-<projId>.label.json`. Le scanner le lit en priorité sur le
+    // nom dérivé du slug (ex. "Project Import 1793350612073").
+    const labelName = (req.body.name || '').trim();
+    if (labelName) {
+      const labelFile = path.join(entityPath, `project-${projId}.label.json`);
+      try {
+        fs.writeFileSync(labelFile, JSON.stringify({ label: labelName }), 'utf8');
+      } catch (e) { /* non bloquant — fallback sur le nom dérivé du slug */ }
+    }
+
     res.json({
       projId,
       path:    destFile,
       outFile,
       entityPath,
+      label:   labelName || null,
     });
   }
 );
