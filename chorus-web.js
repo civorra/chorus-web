@@ -921,7 +921,8 @@ async function renderPvThesaurusTab() {
                 <label style="display:block;font-size:10px;color:var(--text-muted);margin-bottom:2px">value (optionnel)</label>
                 <input class="form-input" style="font-size:12px;padding:4px 8px;width:160px" id="pv-thes-val-${i}" value="${_pvGuessSlotHint(p.proposed).value}">
               </div>
-              <button class="btn btn-primary" style="font-size:11px;padding:4px 10px" onclick="pvThesConfirm(${i})">Valider</button>
+              <button class="btn btn-primary" style="font-size:11px;padding:4px 10px" onclick="pvThesConfirm(${i})" title="Confirmer pour ce projet (sourceImport conservé)">Valider</button>
+              <button class="btn btn-ghost" style="font-size:11px;padding:4px 10px;color:#A78BFA;border-color:#A78BFA" onclick="pvThesPromote(${i})" title="Confirmer pour TOUTE l'entity ${escapeHtml(currentProject?.entity||'')} — s'appliquera à tous les futurs imports sans restriction de projet">🏢 Promouvoir à l'entity</button>
               <button class="btn btn-ghost" style="font-size:11px;padding:4px 10px" onclick="pvThesToggleConfirm(${i})">Annuler</button>
             </div>
           </td>
@@ -988,10 +989,34 @@ async function pvThesConfirm(i) {
   await _pvThesSubmitResolve({
     shard: p.shard, term: p.term, sourceImport: p.sourceImport, action: 'confirm',
     typeElement, slot: slot || undefined, value: value || undefined,
-    scope:       p.scope || undefined,   // colonne 4 de * Pending (null → 'global' côté serveur)
+    scope:       p.scope || undefined,
     projectId:   currentProject?.id,
     entityId:    currentProject?.entity,
     projectName: currentProject?.name,
+  });
+}
+
+// WEB-027 — Promouvoir à l'entity : même que pvThesConfirm mais avec
+// entityPromote:true → confidence "entity-promoted" + sourceImport effacé.
+// L'alias s'applique à TOUS les futurs imports de cette entity (pas de
+// restriction par projet/sourceImport), explicitement marqué dans le .org.
+async function pvThesPromote(i) {
+  const p = _pvPendingRows[i];
+  if (!p || !currentSandbox) return;
+  const typeElement = document.getElementById(`pv-thes-te-${i}`)?.value.trim();
+  if (!typeElement) { alert('type_element requis pour promouvoir à l\'entity.'); return; }
+  const slot  = document.getElementById(`pv-thes-slot-${i}`)?.value.trim();
+  const value = document.getElementById(`pv-thes-val-${i}`)?.value.trim();
+  const entity = currentProject?.entity || '?';
+  if (!confirm(`Promouvoir "${p.term}" → ${typeElement} pour TOUTE l'entity "${entity}" ?\nCe mapping s'appliquera à tous les futurs imports sans restriction de projet.`)) return;
+  await _pvThesSubmitResolve({
+    shard: p.shard, term: p.term, sourceImport: p.sourceImport, action: 'confirm',
+    typeElement, slot: slot || undefined, value: value || undefined,
+    scope:       p.scope || undefined,
+    projectId:   currentProject?.id,
+    entityId:    currentProject?.entity,
+    projectName: currentProject?.name,
+    entityPromote: true,  // ← signale au serveur : confidence entity-promoted + sourceImport effacé
   });
 }
 

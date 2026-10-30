@@ -385,7 +385,12 @@ function resolveThesaurusPending(sbId, shard, term, sourceImport, action, opts =
     const typeElement = (opts.typeElement || '').trim();
     if (!typeElement) throw new Error('typeElement requis pour confirmer un alignement type_element');
 
-    const confidence = `✅ confirmed (validated via chorus-web ${today})`;
+    // WEB-027 — Promote to entity : confidence distincte + sourceImport effacé
+    // (l'alias s'applique à TOUS les futurs imports de l'entity, sans restriction).
+    const isEntityPromote = opts.entityPromote === true;
+    const confidence = isEntityPromote
+      ? `✅ entity-promoted (validated via chorus-web ${today})`
+      : `✅ confirmed (validated via chorus-web ${today})`;
 
     // Supprimer la ligne de Pending dans global.org.
     lines.splice(pendingRowIdx, 1);
@@ -398,8 +403,13 @@ function resolveThesaurusPending(sbId, shard, term, sourceImport, action, opts =
     const targetContent  = readFileSafe(targetShardPath) || '';
     const targetLines    = targetContent.split('\n');
 
+    // sourceImport dans l'alias :
+    //   - promote → marqueur "entity-promotion YYYY-MM-DD" (pas de restriction d'import)
+    //   - confirm normal → sourceImport original conservé (projet-spécifique)
+    const aliasSourceImport = isEntityPromote ? `entity-promotion ${today}` : sourceImport;
+
     // Ajouter dans Aliases — type_element du shard cible.
-    const teRow = _makeOrgRow([cleanTerm, typeElement, confidence, sourceImport, '—', targetScope]);
+    const teRow = _makeOrgRow([cleanTerm, typeElement, confidence, aliasSourceImport, '—', targetScope]);
     const teBounds = _findOrgSectionBounds(targetLines, /^\*\s+Aliases\s*(—|-)\s*type_element/i);
     if (!teBounds) throw new Error(`Section "Aliases — type_element" introuvable dans ${targetShardName}.org`);
     const teInsertion = _findTableInsertionPoint(targetLines, teBounds.start, teBounds.end);
@@ -411,7 +421,7 @@ function resolveThesaurusPending(sbId, shard, term, sourceImport, action, opts =
 
     // Ajouter dans Aliases — slot values si slot+valeur fournis.
     if (opts.slot && opts.value) {
-      const svRow = _makeOrgRow([cleanTerm, opts.slot.trim(), opts.value.trim(), confidence, sourceImport, '—', targetScope]);
+      const svRow = _makeOrgRow([cleanTerm, opts.slot.trim(), opts.value.trim(), confidence, aliasSourceImport, '—', targetScope]);
       const svBounds = _findOrgSectionBounds(targetLines, /^\*\s+Aliases\s*(—|-)\s*slot values/i);
       if (!svBounds) throw new Error(`Section "Aliases — slot values" introuvable dans ${targetShardName}.org`);
       const svInsertion = _findTableInsertionPoint(targetLines, svBounds.start, svBounds.end);
