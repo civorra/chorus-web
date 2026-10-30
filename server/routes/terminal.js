@@ -250,12 +250,15 @@ router.post('/sandboxes/:sbId/terminal', (req, res) => {
     };
     // Pour tout message contenant un déclencheur Chorus connu, forcer eca__skill
     const knownSkillPatterns = [
-      { re: /\bchorus-strengthen\b/, skill: 'chorus-strengthen' },
-      { re: /\bchorus-check\b/,      skill: 'chorus-check'      },
-      { re: /\bchorus-feed\b/,       skill: 'chorus-feed'       },
+      { re: /\bchorus-strengthen\b/,     skill: 'chorus-strengthen'     },
+      { re: /\bchorus-check\b/,          skill: 'chorus-check'          },
+      { re: /\bchorus-feed\b/,           skill: 'chorus-feed'           },
       { re: /\bchorus-create-project\b/, skill: 'chorus-create-project' },
-      { re: /\bchorus-fix\b/,        skill: 'chorus-fix'        },
-      { re: /\bchorus-stress\b/,     skill: 'chorus-stress'     },
+      { re: /\bchorus-fix\b/,            skill: 'chorus-fix'            },
+      { re: /\bchorus-stress\b/,         skill: 'chorus-stress'         },
+      // chorus-import-project : force skill load pour la logique _a_confirmer
+      // (3 tiers — voir chorus-import-project.md § "_a_confirmer resolution")
+      { re: /\bchorus-import-project\b/, skill: 'chorus-import-project' },
     ];
     const detectedSkill = (() => {
       if (CHORUS_SKILL_MAP[kind]) return CHORUS_SKILL_MAP[kind];
@@ -291,6 +294,14 @@ router.post('/sandboxes/:sbId/terminal', (req, res) => {
       ],
       'chorus-feed': [
         '✅ § 0-bis : appeler eca__task(op="plan",...) pour le taskboard au démarrage.',
+      ],
+      'chorus-import-project': [
+        '✅ _a_confirmer résolution INTERACTIVE (3 tiers) — lire § "_a_confirmer resolution — three tiers" du skill OBLIGATOIREMENT avant toute résolution.',
+        '✅ Obvious tier : appeler eca__ask_user avec option [auto] en description → countdown 30s → auto-appliqué si pas de réponse.',
+        '✅ Ambiguous tier : appeler eca__ask_user SANS [auto] → bloquer jusqu\'à réponse ingénieur.',
+        '✅ Unresolvable tier : gap structurel → jamais auto-résolu.',
+        '⛔ Ne jamais promouvoir un ⚠️ Pending vers ✅ Aliases sans passer par eca__ask_user (sauf si déjà ✅ dans le thésaurus existant).',
+        '⛔ Ne jamais appeler eca__ask_user depuis un sous-agent (AUTONOMOUS_MODE si sub-agent détecté).',
       ],
     };
 
