@@ -14,14 +14,15 @@ const router = Router({ mergeParams: true });
 router.post('/sandboxes/:sbId/thesaurus/resolve', (req, res) => {
   const { shard, term, sourceImport, action,
           typeElement, slot, value, scope,
-          projectId, entityId, projectName } = req.body || {};
+          projectId, entityId, projectName,
+          entityPromote } = req.body || {};
   if (!shard || !term || !sourceImport || !action) {
     return res.status(400).json({ ok: false, error: 'shard, term, sourceImport, action requis' });
   }
   try {
     const result = chorus.resolveThesaurusPending(
       req.params.sbId, shard, term, sourceImport, action,
-      { typeElement, slot, value, scope, projectId, entityId, projectName }
+      { typeElement, slot, value, scope, projectId, entityId, projectName, entityPromote }
     );
     res.json(result);
   } catch (err) {

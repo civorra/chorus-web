@@ -734,6 +734,13 @@ function _basenameNoExt(p) {
 // chorus-import-project.md § "Write format per section" vs
 // thesaurus.js § resolveThesaurusPending.
 function _pvThesOrigin(confidence) {
+  // WEB-027 Niveau 2 — project-scoped (validé manuellement, scopé au projet)
+  const mProject = (confidence || '').match(/validated via chorus-web ([\d-]+)\s*—\s*project-scoped/);
+  if (mProject) return { kind: 'manual-project', date: mProject[1] };
+  // WEB-027 Niveau 3 — entity-promoted (valide pour tous les projets de l'entity)
+  const mEntity = (confidence || '').match(/entity-promoted.*?validated via chorus-web ([\d-]+)/);
+  if (mEntity) return { kind: 'manual-entity', date: mEntity[1] };
+  // Legacy : confirmé manuellement via webapp (pré-Level2)
   const m = (confidence || '').match(/validated via chorus-web ([\d-]+)/);
   if (m) return { kind: 'manual', date: m[1] };
   return { kind: 'import', date: null };
@@ -743,6 +750,15 @@ function _pvThesOrigin(confidence) {
 // import report) or ✍️ Résolution manuelle (with the validation date).
 function _pvThesOriginBadge(confidence, sourceImport) {
   const origin = _pvThesOrigin(confidence);
+  // WEB-027 Niveau 2 — scopé au projet uniquement
+  if (origin.kind === 'manual-project') {
+    return `<span style="color:var(--ok,#30D158)" title="Confirmé pour ce projet uniquement le ${origin.date} (Niveau 2 — project-scoped)">🔑 Projet (${origin.date})</span>`;
+  }
+  // WEB-027 Niveau 3 — valide pour toute l'entity
+  if (origin.kind === 'manual-entity') {
+    return `<span style="color:#A78BFA" title="Promu à l'entity le ${origin.date} — s'applique à tous les projets (Niveau 3 — entity-wide)">🏢 Entity (${origin.date})</span>`;
+  }
+  // Legacy : confirmé manuellement
   if (origin.kind === 'manual') {
     return `<span style="color:var(--accent)" title="Confirmé manuellement le ${origin.date}">✍️ Manuel (${origin.date})</span>`;
   }
@@ -888,7 +904,11 @@ async function renderPvThesaurusTab() {
           <td style="padding:4px 8px;color:var(--accent);font-family:'JetBrains Mono',monospace">${a.kind === 'type_element' ? `type_element = ${a.target}` : `${a.slot} = ${a.value}`}</td>
           <td style="padding:4px 8px;color:var(--success);font-size:11px">${a.confidence || ''}</td>
           <td style="padding:4px 8px;font-size:11px">${_pvThesOriginBadge(a.confidence, a.sourceImport)}</td>
-          <td style="padding:4px 8px;white-space:nowrap">${_pvThesOrigin(a.confidence).kind === 'manual'
+          <td style="padding:4px 8px;white-space:nowrap">${
+            // "Annuler" disponible pour les confirmations legacy 'manual' uniquement.
+            // Niveau 2 (manual-project) : annulation non encore supportée (future tâche).
+            // Niveau 3 entity-promoted : annulation non applicable.
+            _pvThesOrigin(a.confidence).kind === 'manual'
             ? `<button class="btn btn-ghost" style="font-size:11px;padding:2px 8px;color:var(--text-muted)" onclick="pvThesUnconfirm(${i})" title="Remet ce terme en attente de confirmation">↩️ Annuler</button>`
             : ''}</td>
         </tr>`).join('')}
@@ -940,7 +960,7 @@ async function renderPvThesaurusTab() {
                 <label style="display:block;font-size:10px;color:var(--text-muted);margin-bottom:2px">value (optionnel)</label>
                 <input class="form-input" style="font-size:12px;padding:4px 8px;width:160px" id="pv-thes-val-${i}" value="${_pvGuessSlotHint(p.proposed).value}">
               </div>
-              <button class="btn btn-primary" style="font-size:11px;padding:4px 10px" onclick="pvThesConfirm(${i})" title="Confirmer pour ce projet (sourceImport conservé)">Valider</button>
+              <button class="btn btn-primary" style="font-size:11px;padding:4px 10px" onclick="pvThesConfirm(${i})" title="Confirmer pour ce projet uniquement — enregistré en Niveau 2 (project-scoped, workspace/${escapeHtml(currentProject?.entity||'entity')}/${escapeHtml(currentProject?.id||'projId')}.thesaurus.json)">🔑 Valider (projet)</button>
               <button class="btn btn-ghost" style="font-size:11px;padding:4px 10px;color:#A78BFA;border-color:#A78BFA" onclick="pvThesPromote(${i})" title="Confirmer pour TOUTE l'entity ${escapeHtml(currentProject?.entity||'')} — s'appliquera à tous les futurs imports sans restriction de projet">🏢 Promouvoir à l'entity</button>
               <button class="btn btn-ghost" style="font-size:11px;padding:4px 10px" onclick="pvThesToggleConfirm(${i})">Annuler</button>
             </div>

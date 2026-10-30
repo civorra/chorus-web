@@ -150,6 +150,80 @@ function _collectThesaurusEntities(sbPath) {
   return entities;
 }
 
+// Helper local (miroir de chorus-web.js § _basenameNoExt)
+function _basenameNoExt(p) {
+  if (!p) return null;
+  const base = p.split('/').pop();
+  return base.replace(/\.[^.]+$/, '');
+}
+
+// ── Niveau 2 — Thésaurus projet (workspace/<entity>/<projId>.thesaurus.json) ──
+//
+// WEB-027 architecture 3 niveaux :
+//   Niveau 1 — KB / CBOM-oid-registry.yml (automatique, hors thésaurus)
+//   Niveau 2 — Projet : workspace/<entity>/<projId>.thesaurus.json
+//              Défaut pour les confirmations manuelles de la webapp.
+//              N'affecte que le projet concerné.
+//   Niveau 3 — Entity : workspace/<entity>/thesaurus.org
+//              Promotion explicite uniquement (bouton "Promouvoir à l'entity").
+//              Jamais cross-entity. Jamais automatique.
+//
+// La confirmation via "Valider" dans le panneau thésaurus → Niveau 2.
+// La confirmation via "Promouvoir à l'entity" → Niveau 3 (entityPromote: true).
+
+function _projectThesaurusPath(sbPath, entity, projId) {
+  return path.join(sbPath, 'workspace', entity, `${projId}.thesaurus.json`);
+}
+
+function _readProjectThesaurus(sbPath, entity, projId) {
+  const p = _projectThesaurusPath(sbPath, entity, projId);
+  const content = readFileSafe(p);
+  if (!content) return { _meta: {}, aliases_type_element: [], aliases_slot_values: [], pending: [], out_of_scope: [] };
+  try { return JSON.parse(content); }
+  catch { return { _meta: {}, aliases_type_element: [], aliases_slot_values: [], pending: [], out_of_scope: [] }; }
+}
+
+function _writeToProjectThesaurus(sbPath, entity, projId, section, entry) {
+  const p = _projectThesaurusPath(sbPath, entity, projId);
+  fs.mkdirSync(path.dirname(p), { recursive: true });
+  const data = _readProjectThesaurus(sbPath, entity, projId);
+  const today = new Date().toISOString().slice(0, 10);
+  if (!data._meta.proj_id) {
+    data._meta = { sandbox: path.basename(sbPath), entity, proj_id: projId, created: today, updated: today };
+  } else {
+    data._meta.updated = today;
+  }
+  data[section] = data[section] || [];
+  // Dédoublonnage : ne pas écrire deux fois le même terme dans la même section.
+  const isDuplicate = data[section].some(e =>
+    e.term === entry.term &&
+    (section === 'aliases_type_element' ? e.type_element === entry.type_element :
+     section === 'aliases_slot_values'  ? e.slot === entry.slot && e.value === entry.value : false)
+  );
+  if (!isDuplicate) data[section].push(entry);
+  fs.writeFileSync(p, JSON.stringify(data, null, 2), 'utf8');
+}
+
+/**
+ * Collecte tous les fichiers <projId>.thesaurus.json présents dans
+ * workspace/<entity>/ pour un sandbox donné.
+ * Retourne [{projId, path}].
+ */
+function _collectProjectThesauri(sbPath, entity) {
+  const entityWsPath = path.join(sbPath, 'workspace', entity);
+  const results = [];
+  try {
+    const files = fs.readdirSync(entityWsPath, { withFileTypes: true });
+    for (const f of files) {
+      if (f.isFile() && f.name.endsWith('.thesaurus.json')) {
+        const projId = f.name.replace(/\.thesaurus\.json$/, '');
+        results.push({ projId, path: path.join(entityWsPath, f.name) });
+      }
+    }
+  } catch { /* entity dir absente ou illisible — non-bloquant */ }
+  return results;
+}
+
 function scanSandboxThesaurus(sbPath) {
   const resolveCache = new Map();
   const resolve = (sourceImport) => {
@@ -162,10 +236,11 @@ function scanSandboxThesaurus(sbPath) {
   const entities = _collectThesaurusEntities(sbPath);
   if (!entities.size) return [];
 
-  return Array.from(entities.entries()).map(([entity, { newPath }]) => {
+  // ── Niveau 3 — shards entity (workspace/<entity>/thesaurus.org) ──────────
+  const level3Shards = Array.from(entities.entries()).map(([entity, { newPath }]) => {
     const content = readFileSafe(newPath);
     // `entity` est le nouveau nom canonique ; `shard` maintenu pour compat appelants
-    if (!content) return { entity, shard: entity, aliasesTypeElement: [], aliasesSlotValues: [], pending: [], outOfScope: [] };
+    if (!content) return { entity, shard: entity, level: 3, projId: null, aliasesTypeElement: [], aliasesSlotValues: [], pending: [], outOfScope: [] };
 
     const aliasesTypeElement = extractOrgTable(content, /^\*\s+Aliases\s*(—|-)\s*type_element/i)
       .slice(1).map(r => ({ term: r[0], target: r[1], confidence: r[2], sourceImport: r[3] || null,
@@ -182,8 +257,39 @@ function scanSandboxThesaurus(sbPath) {
     const outOfScope = extractOrgTable(content, /^\*\s+Out-of-scope/i)
       .slice(1).map(r => ({ term: r[0], reason: r[1] }));
 
-    return { entity, shard: entity, aliasesTypeElement, aliasesSlotValues, pending, outOfScope };
+    return { entity, shard: entity, level: 3, projId: null, aliasesTypeElement, aliasesSlotValues, pending, outOfScope };
   });
+
+  // ── Niveau 2 — shards projet (workspace/<entity>/<projId>.thesaurus.json) ─
+  const level2Shards = [];
+  for (const [entity] of entities.entries()) {
+    for (const { projId, path: projPath } of _collectProjectThesauri(sbPath, entity)) {
+      const content = readFileSafe(projPath);
+      if (!content) continue;
+      let data;
+      try { data = JSON.parse(content); } catch { continue; }
+      level2Shards.push({
+        entity,
+        shard: entity,
+        level: 2,
+        projId,
+        aliasesTypeElement: (data.aliases_type_element || []).map(a => ({
+          term: a.term, target: a.type_element, confidence: a.confidence,
+          sourceImport: a.source_import || null,
+          sourceBasename: a.source_import ? _basenameNoExt(a.source_import) : null,
+        })),
+        aliasesSlotValues: (data.aliases_slot_values || []).map(a => ({
+          term: a.term, slot: a.slot, value: a.value, confidence: a.confidence,
+          sourceImport: a.source_import || null,
+          sourceBasename: a.source_import ? _basenameNoExt(a.source_import) : null,
+        })),
+        pending: [],
+        outOfScope: (data.out_of_scope || []).map(a => ({ term: a.term, reason: a.reason || '' })),
+      });
+    }
+  }
+
+  return [...level3Shards, ...level2Shards];
 }
 
 // ── Helpers internes pour l'édition org-mode en place ────────────────────
@@ -385,54 +491,78 @@ function resolveThesaurusPending(sbId, shard, term, sourceImport, action, opts =
     const typeElement = (opts.typeElement || '').trim();
     if (!typeElement) throw new Error('typeElement requis pour confirmer un alignement type_element');
 
-    // WEB-027 — Promote to entity : confidence distincte + sourceImport effacé
-    // (l'alias s'applique à TOUS les futurs imports de l'entity, sans restriction).
     const isEntityPromote = opts.entityPromote === true;
-    const confidence = isEntityPromote
-      ? `✅ entity-promoted (validated via chorus-web ${today})`
-      : `✅ confirmed (validated via chorus-web ${today})`;
 
-    // Supprimer la ligne de Pending dans global.org.
-    lines.splice(pendingRowIdx, 1);
-    fs.writeFileSync(globalPath, lines.join('\n'), 'utf8');
+    // WEB-027 — Niveau 2 : écriture dans workspace/<entity>/<projId>.thesaurus.json
+    // quand confirm normal (pas de promote) + projectId disponible.
+    // Niveau 3 : entity-promote OU pas de projectId → comportement org existant.
+    const useLevel2 = !isEntityPromote && !!opts.projectId && !!opts.entityId && targetScope !== 'global';
 
-    // Charger (ou créer) le shard cible pour écrire les Aliases.
-    if (targetShardPath !== globalPath && !fs.existsSync(targetShardPath)) {
-      _createClientShard(targetShardPath, sbId, targetScope);
-    }
-    const targetContent  = readFileSafe(targetShardPath) || '';
-    const targetLines    = targetContent.split('\n');
-
-    // sourceImport dans l'alias :
-    //   - promote → marqueur "entity-promotion YYYY-MM-DD" (pas de restriction d'import)
-    //   - confirm normal → sourceImport original conservé (projet-spécifique)
-    const aliasSourceImport = isEntityPromote ? `entity-promotion ${today}` : sourceImport;
-
-    // Ajouter dans Aliases — type_element du shard cible.
-    const teRow = _makeOrgRow([cleanTerm, typeElement, confidence, aliasSourceImport, '—', targetScope]);
-    const teBounds = _findOrgSectionBounds(targetLines, /^\*\s+Aliases\s*(—|-)\s*type_element/i);
-    if (!teBounds) throw new Error(`Section "Aliases — type_element" introuvable dans ${targetShardName}.org`);
-    const teInsertion = _findTableInsertionPoint(targetLines, teBounds.start, teBounds.end);
-    if (teInsertion) {
-      targetLines.splice(teInsertion.lastRowIdx + 1, 0, teRow);
-    } else {
-      targetLines.splice(teBounds.end, 0, teRow);
-    }
-
-    // Ajouter dans Aliases — slot values si slot+valeur fournis.
-    if (opts.slot && opts.value) {
-      const svRow = _makeOrgRow([cleanTerm, opts.slot.trim(), opts.value.trim(), confidence, aliasSourceImport, '—', targetScope]);
-      const svBounds = _findOrgSectionBounds(targetLines, /^\*\s+Aliases\s*(—|-)\s*slot values/i);
-      if (!svBounds) throw new Error(`Section "Aliases — slot values" introuvable dans ${targetShardName}.org`);
-      const svInsertion = _findTableInsertionPoint(targetLines, svBounds.start, svBounds.end);
-      if (svInsertion) {
-        targetLines.splice(svInsertion.lastRowIdx + 1, 0, svRow);
-      } else {
-        targetLines.splice(svBounds.end, 0, svRow);
+    if (useLevel2) {
+      // ── Niveau 2 : écriture JSON projet ──────────────────────────────────
+      const confidence = `✅ confirmed (validated via chorus-web ${today} — project-scoped)`;
+      _writeToProjectThesaurus(sbPath, opts.entityId, opts.projectId, 'aliases_type_element', {
+        term: cleanTerm, type_element: typeElement, confidence,
+        source_import: sourceImport, scope: opts.entityId, date: today,
+      });
+      if (opts.slot && opts.value) {
+        _writeToProjectThesaurus(sbPath, opts.entityId, opts.projectId, 'aliases_slot_values', {
+          term: cleanTerm, slot: opts.slot.trim(), value: opts.value.trim(),
+          confidence, source_import: sourceImport, scope: opts.entityId, date: today,
+        });
       }
+      // Supprimer la ligne Pending du thésaurus entity (Niveau 3).
+      lines.splice(pendingRowIdx, 1);
+      fs.writeFileSync(globalPath, lines.join('\n'), 'utf8');
+
+    } else {
+      // ── Niveau 3 : écriture org entity (comportement existant) ────────────
+      const confidence = isEntityPromote
+        ? `✅ entity-promoted (validated via chorus-web ${today})`
+        : `✅ confirmed (validated via chorus-web ${today})`;
+
+      // Supprimer la ligne de Pending dans global.org.
+      lines.splice(pendingRowIdx, 1);
+      fs.writeFileSync(globalPath, lines.join('\n'), 'utf8');
+
+      // Charger (ou créer) le shard cible pour écrire les Aliases.
+      if (targetShardPath !== globalPath && !fs.existsSync(targetShardPath)) {
+        _createClientShard(targetShardPath, sbId, targetScope);
+      }
+      const targetContent  = readFileSafe(targetShardPath) || '';
+      const targetLines    = targetContent.split('\n');
+
+      const aliasSourceImport = isEntityPromote ? `entity-promotion ${today}` : sourceImport;
+
+      const teRow = _makeOrgRow([cleanTerm, typeElement, confidence, aliasSourceImport, '—', targetScope]);
+      const teBounds = _findOrgSectionBounds(targetLines, /^\*\s+Aliases\s*(—|-)\s*type_element/i);
+      if (!teBounds) throw new Error(`Section "Aliases — type_element" introuvable dans ${targetShardName}.org`);
+      const teInsertion = _findTableInsertionPoint(targetLines, teBounds.start, teBounds.end);
+      if (teInsertion) {
+        targetLines.splice(teInsertion.lastRowIdx + 1, 0, teRow);
+      } else {
+        targetLines.splice(teBounds.end, 0, teRow);
+      }
+
+      if (opts.slot && opts.value) {
+        const svRow = _makeOrgRow([cleanTerm, opts.slot.trim(), opts.value.trim(), confidence, aliasSourceImport, '—', targetScope]);
+        const svBounds = _findOrgSectionBounds(targetLines, /^\*\s+Aliases\s*(—|-)\s*slot values/i);
+        if (!svBounds) throw new Error(`Section "Aliases — slot values" introuvable dans ${targetShardName}.org`);
+        const svInsertion = _findTableInsertionPoint(targetLines, svBounds.start, svBounds.end);
+        if (svInsertion) {
+          targetLines.splice(svInsertion.lastRowIdx + 1, 0, svRow);
+        } else {
+          targetLines.splice(svBounds.end, 0, svRow);
+        }
+      }
+
+      fs.writeFileSync(targetShardPath, targetLines.join('\n'), 'utf8');
     }
 
-    fs.writeFileSync(targetShardPath, targetLines.join('\n'), 'utf8');
+    // Mise à jour du targetShardName pour le log
+    if (useLevel2) {
+      Object.assign(opts, { _resolvedShard: opts.projectId, _resolvedLevel: 2 });
+    }
 
   } else {
     throw new Error(`action invalide : ${action} (attendu "confirm" ou "reject")`);
@@ -453,7 +583,9 @@ function resolveThesaurusPending(sbId, shard, term, sourceImport, action, opts =
     });
   } catch { /* ne jamais bloquer la résolution pour le log */ }
 
-  return { ok: true, targetShard: action === 'confirm' ? targetShardName : shard, scope: targetScope };
+  const resolvedLevel = opts._resolvedLevel || 3;
+  const resolvedShard = opts._resolvedLevel === 2 ? opts.projectId : (action === 'confirm' ? targetShardName : shard);
+  return { ok: true, targetShard: resolvedShard, scope: targetScope, level: resolvedLevel };
 }
 
 // ── Annulation d'une confirmation manuelle ────────────────────────────────
