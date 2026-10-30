@@ -769,12 +769,19 @@ async function renderPvThesaurusTab() {
     const target = proj.sourceBasename; // ex: "project-simul-01" — null si _import absent/illisible
     const hasFilter = !!target;
 
-    // Merges all shards (global.org + optional client shards) — per-project
-    // filtering does not need to distinguish Scopes; only the
-    // Source import column matters here.
-    const allTypeElement = thesaurus.flatMap(s => s.aliasesTypeElement.map(a => ({ ...a, shard: s.shard })));
-    const allSlotValues  = thesaurus.flatMap(s => s.aliasesSlotValues.map(a => ({ ...a, shard: s.shard })));
-    const allPending     = thesaurus.flatMap(s => s.pending.map(a => ({ ...a, shard: s.shard })));
+    // WEB-027 — isolation par entity : ne consulter que le shard de l'entity
+    // courante (workspace/<entity>/thesaurus.org). Pas de croisement cross-entity.
+    // Fallback : si aucun shard ne correspond (sandbox pré-WEB-027 non encore
+    // migré), utiliser tous les shards disponibles (compat descendante silencieuse).
+    const entityId = proj.entity || null;
+    const entityShards = entityId
+      ? thesaurus.filter(s => (s.entity || s.shard) === entityId)
+      : thesaurus;
+    const shardsToUse = entityShards.length > 0 ? entityShards : thesaurus;
+
+    const allTypeElement = shardsToUse.flatMap(s => s.aliasesTypeElement.map(a => ({ ...a, shard: s.shard })));
+    const allSlotValues  = shardsToUse.flatMap(s => s.aliasesSlotValues.map(a => ({ ...a, shard: s.shard })));
+    const allPending     = shardsToUse.flatMap(s => s.pending.map(a => ({ ...a, shard: s.shard })));
 
     // Matching priority: server-resolved sourceBasename (from the import
     // report's own #+SOURCE: header — reliable, handles the common case
@@ -789,6 +796,8 @@ async function renderPvThesaurusTab() {
     cached = {
       hasFilter,
       hasAnyThesaurus: thesaurus.length > 0,
+      entityId,
+      entityIsolated: entityShards.length > 0, // false = compat descendante (tous shards)
       resolvedTypeElement: hasFilter ? allTypeElement.filter(matches) : allTypeElement,
       resolvedSlotValues:  hasFilter ? allSlotValues.filter(matches)  : allSlotValues,
       pending:             hasFilter ? allPending.filter(matches)     : allPending,
@@ -796,7 +805,7 @@ async function renderPvThesaurusTab() {
     _pvThesaurusCache[cacheKey] = cached;
   }
 
-  const { hasFilter, hasAnyThesaurus, resolvedTypeElement, resolvedSlotValues, pending } = cached;
+  const { hasFilter, hasAnyThesaurus, entityId, entityIsolated, resolvedTypeElement, resolvedSlotValues, pending } = cached;
 
   if (!hasAnyThesaurus) {
     panel.innerHTML = '<div class="pv-empty">Aucun thesaurus trouvé pour ce sandbox — aucun import avec alignement terminologique n\'a encore été effectué.</div>';
@@ -811,8 +820,25 @@ async function renderPvThesaurusTab() {
 
   let html = '';
 
+  // ── WEB-027 : badge entity ──────────────────────────────────────────────
+  if (entityId) {
+    const isolBadge = entityIsolated
+      ? `<span style="color:var(--ok,#30D158);font-size:10px">● isolé</span>`
+      : `<span style="color:var(--warn,#FEBC2E);font-size:10px">⚠ compat legacy</span>`;
+    html += `<div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;
+        padding:5px 10px;background:var(--surface2,#1c1c1e);border-radius:6px;
+        border:1px solid var(--border,#30363d);font-size:11px">
+      <span style="color:var(--text-muted)">Entity :</span>
+      <code style="color:var(--accent,#58A6FF);font-weight:600">${escapeHtml(entityId)}</code>
+      ${isolBadge}
+      <span style="color:var(--text-muted);font-size:10px;margin-left:4px">
+        — données isolées, aucun partage cross-entity (WEB-027)
+      </span>
+    </div>`;
+  }
+
   if (!hasFilter) {
-    html += `<div class="pv-empty" style="margin-bottom:12px">Origine du projet non résolue (<code>_import</code> absent ou illisible dans le fichier source) — filtrage par pertinence impossible, thesaurus complet du sandbox affiché ci-dessous.</div>`;
+    html += `<div class="pv-empty" style="margin-bottom:12px">Origine du projet non résolue (<code>_import</code> absent ou illisible dans le fichier source) — filtrage par pertinence impossible, thesaurus de l'entity <code>${escapeHtml(entityId||'?')}</code> affiché ci-dessous.</div>`;
   }
 
   // ── Resolved (✅) ───────────────────────────────────────────────
