@@ -781,7 +781,26 @@ async function renderPvThesaurusTab() {
 
     const allTypeElement = shardsToUse.flatMap(s => s.aliasesTypeElement.map(a => ({ ...a, shard: s.shard })));
     const allSlotValues  = shardsToUse.flatMap(s => s.aliasesSlotValues.map(a => ({ ...a, shard: s.shard })));
-    const allPending     = shardsToUse.flatMap(s => s.pending.map(a => ({ ...a, shard: s.shard })));
+
+    // WEB-027 : inclure aussi les Pending de l'entité 'global' dont le scope
+    // correspond à l'entity courante (migration legacy — global.org contient des
+    // Pending avec scope=<entity> qui n'ont pas encore été redistribués).
+    // Inclut également les Pending sans scope (scope=null/'global') pour compat.
+    const globalShard = entityId
+      ? thesaurus.find(s => (s.entity || s.shard) === 'global')
+      : null;
+    const globalPending = (globalShard && entityId)
+      ? globalShard.pending
+          .filter(p => !p.scope || p.scope === 'global' || p.scope === entityId)
+          .map(p => ({ ...p, shard: globalShard.shard }))
+      : [];
+    const allPending = [
+      ...shardsToUse.flatMap(s => s.pending.map(a => ({ ...a, shard: s.shard }))),
+      // Dédoublonnage : exclure les Pending global déjà présents dans shardsToUse
+      ...globalPending.filter(gp =>
+        !shardsToUse.some(s => s.pending.some(p => p.term === gp.term && p.sourceImport === gp.sourceImport))
+      ),
+    ];
 
     // Matching priority: server-resolved sourceBasename (from the import
     // report's own #+SOURCE: header — reliable, handles the common case
