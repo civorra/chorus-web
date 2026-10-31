@@ -307,6 +307,7 @@ router.post('/sandboxes/:sbId/terminal', (req, res) => {
         '⛔ Ne jamais appeler eca__ask_user — AUTONOMOUS_MODE actif sur cette branche (pas de WEB-025).',
         '⛔ Ne jamais promouvoir un ⚠️ Pending vers ✅ Aliases automatiquement (sauf si déjà ✅ dans le thésaurus existant).',
         '⛔ KB gap ≠ _a_confirmer : si le type_element est reconnu mais absent de la KB (ex. Argon2id) → classer dans gaps (_import.gaps) UNIQUEMENT, jamais _a_confirmer. _a_confirmer = interprétations KB concurrentes. gap = KB ne couvre pas encore cet algorithme.',
+        '⛔ Post-import audit obligatoire : après chorus-audit-import, écrire le bloc _audit dans le JSON produit (run, date, report, gaps_comblables, gaps_partiels, gaps_absents, gaps_mapping, frames_manquantes, patch_applied). Ne JAMAIS se contenter d\'écrire uniquement le rapport .md sans patcher le JSON.',
       ],
     };
 
