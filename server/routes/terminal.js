@@ -296,6 +296,7 @@ router.post('/sandboxes/:sbId/terminal', (req, res) => {
         '✅ § 0-bis : appeler eca__task(op="plan",...) pour le taskboard au démarrage.',
       ],
       'chorus-import-project': [
+        '✅ Appeler eca__task(op="plan",...) en Phase 0 pour afficher la progression des phases dans le bandeau.',
         '✅ _a_confirmer résolution AUTONOME (3 tiers) — lire § "_a_confirmer resolution — three tiers" du skill OBLIGATOIREMENT avant toute résolution.',
         '✅ Obvious tier : auto-confirmer silencieusement (appliquer le défaut sans eca__ask_user — pas de terminal interactif sur cette branche).',
         '✅ Ambiguous tier : NE PAS bloquer — conserver _a_confirmer:1, jamais promouvoir vers ✅ sans décision explicite ingénieur.',
