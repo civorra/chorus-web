@@ -297,6 +297,8 @@ router.post('/sandboxes/:sbId/terminal', (req, res) => {
       ],
       'chorus-import-project': [
         '✅ Appeler eca__task(op="plan",...) en Phase 0 pour afficher la progression des phases dans le bandeau.',
+        '⛔ Phase 2 (inventaire brut) : ne JAMAIS lire de fichier <slug>.org — inventaire brut uniquement, zéro lookup KB, zéro lecture thésaurus.',
+        '⛔ Les fichiers <slug>.org sont chargés UNIQUEMENT en Phase 3, la première fois qu\'un terme nécessite cet agent (lazy loading WEB-029).',
         '✅ _a_confirmer résolution AUTONOME (3 tiers) — lire § "_a_confirmer resolution — three tiers" du skill OBLIGATOIREMENT avant toute résolution.',
         '✅ Obvious tier : auto-confirmer silencieusement (appliquer le défaut sans eca__ask_user — pas de terminal interactif sur cette branche).',
         '✅ Ambiguous tier : NE PAS bloquer — conserver _a_confirmer:1, jamais promouvoir vers ✅ sans décision explicite ingénieur.',
