@@ -854,8 +854,14 @@ async function renderPvThesaurusTab() {
     return;
   }
 
+  // Dédoublonnage Pending/Resolved : masquer les Pending pour lesquels le terme
+  // est déjà résolu en Niveau 2 (thesaurus.json project-scoped). Sans ce filtre,
+  // un terme certaine en N2 + encore en Pending N3 apparaîtrait dans les 2 sections.
+  const resolvedTerms = new Set(resolvedTypeElement.map(a => a.term));
+  const filteredPending = pending.filter(p => !resolvedTerms.has(p.term));
+
   const nResolved = resolvedTypeElement.length + resolvedSlotValues.length;
-  const nPending  = pending.length;
+  const nPending  = filteredPending.length;
   const nManual   = [...resolvedTypeElement, ...resolvedSlotValues]
     .filter(a => _pvThesOrigin(a.confidence).kind === 'manual').length;
   const nImport   = nResolved - nManual;
