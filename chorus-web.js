@@ -433,16 +433,31 @@ function pvReportButtons(r, proj, sbId) {
     title="Terminal ECA — ${r.label}"
     onclick="openLevelTerminal('report',{sbId:'${sbId}',entityId:'${proj.entity}',projId:'${proj.id}',projName:'${safeProj}',reportFile:'${r.label}',explainFile:${r.explain_file ? `'${r.explain_file}'` : 'null'},syntheseFile:${r.synthese_file ? `'${r.synthese_file}'` : 'null'}})">🖥️</button>`;
 
-  // 🔍 Analyse — remplace les anciens boutons 📋 / 💡 — génère summary + explain
-  // en une seule commande sans relancer le pipeline (--from-report).
-  const analyseBtn = isJson
-    ? `<button class="btn btn-ghost btn-sm"
-         style="padding:2px 8px;font-size:10px;flex-shrink:0;border:1px solid var(--text-muted);opacity:.8"
-         title="chorus-check --summary --explain --from-report (sans pipeline)"
-         onclick="lvlTermAnalyseRun('${sbId}','${proj.entity}','${proj.id}','${safeProj}','${r.label}',${r.explain_file ? `'${r.explain_file}'` : 'null'},${r.synthese_file ? `'${r.synthese_file}'` : 'null'})">🔍 Analyse</button>`
-    : '';
+  // 📋 + 💡 si les deux rapports existent — sinon 🔍 Analyse pour les générer.
+  let miniIcons = '';
+  if (isJson) {
+    const hasSyn = !!r.synthese_file;
+    const hasExp = !!r.explain_file;
+    if (hasSyn && hasExp) {
+      // Les deux existent → boutons de visualisation directs
+      miniIcons =
+        `<button class="btn btn-ghost btn-sm" title="${r.synthese_file}"
+           onclick="openMdView('${sbId}','${proj.entity}','${proj.id}','${r.synthese_file}')"
+           style="font-size:13px;padding:2px 6px">📋</button>` +
+        `<button class="btn btn-ghost btn-sm" title="${r.explain_file}"
+           onclick="openMdView('${sbId}','${proj.entity}','${proj.id}','${r.explain_file}')"
+           style="font-size:13px;padding:2px 6px">💡</button>`;
+    } else {
+      // Au moins un manque → 🔍 Analyse pour générer les deux
+      miniIcons =
+        `<button class="btn btn-ghost btn-sm"
+           style="padding:2px 8px;font-size:10px;flex-shrink:0;border:1px solid var(--text-muted);opacity:.8"
+           title="chorus-check --summary --explain --from-report (sans pipeline)"
+           onclick="lvlTermAnalyseRun('${sbId}','${proj.entity}','${proj.id}','${safeProj}','${r.label}',${r.explain_file ? `'${r.explain_file}'` : 'null'},${r.synthese_file ? `'${r.synthese_file}'` : 'null'})">🔍 Analyse</button>`;
+    }
+  }
 
-  return `<div style="display:flex;align-items:center;gap:2px">${analyseBtn}${viewBtn}${termBtn}</div>`;
+  return `<div style="display:flex;align-items:center;gap:2px">${miniIcons}${viewBtn}${termBtn}</div>`;
 }
 
 // Generates the HTML for a full report row with the same buttons as the history modal.
@@ -3727,58 +3742,54 @@ function updateRvCheckButtons() {
     resolved[kind] = fresh || linked;  // null → Analyse button
   }
 
-  // ── Case: neither summary nor explain exists → two separate "--from-report" buttons ──
-  // ⛔ NE PAS combiner --summary --explain en une seule session : l'agent architect
-  // (extended thinking) génère trop de contenu → timeout Java backend → "Error in
-  // input stream". Un rapport par session = dans les limites de streaming.
-  if (!resolved.summary && !resolved.explain) {
-    // Hide the legacy combined "Analyse" button if it still exists in the DOM
-    const analyseBtn = document.getElementById('rv-analyse-btn');
+  const analyseBtn  = document.getElementById('rv-analyse-btn');
+  const summaryBtn  = document.getElementById('rv-summary-btn');
+  const explainBtn  = document.getElementById('rv-explain-btn');
+
+  // ── Cas : au moins un rapport existe → 🔍 Analyse caché, boutons 📋/💡 visibles ──
+  if (resolved.summary || resolved.explain) {
     if (analyseBtn) analyseBtn.style.display = 'none';
 
-    // Show both individual buttons in "--from-report" generate mode
     for (const kind of ['summary', 'explain']) {
-      const btn = document.getElementById(`rv-${kind}-btn`);
+      const btn   = kind === 'summary' ? summaryBtn : explainBtn;
       if (!btn) continue;
-      btn.style.display     = '';
-      btn.innerHTML         = kind === 'summary' ? '📋 Summary' : '💡 Explain';
-      btn.style.color       = '';
-      btn.style.borderColor = '';
-      btn.title             = `Générer --${kind} depuis ce run (sans relancer le pipeline)`;
-      const k = kind;
-      btn.onclick = () => openAnalyseFromReport(k);
+      const existing = resolved[kind];
+      const fresh    = hasCurrentRun ? sessionReports.find(r => r.kind === kind) : null;
+
+      if (existing) {
+        btn.style.display     = '';
+        btn.innerHTML         = kind === 'summary' ? '📋 Summary' : '💡 Explain';
+        btn.style.borderColor = fresh ? 'var(--success)' : '';
+        btn.style.color       = fresh ? 'var(--success)' : '';
+        btn.title             = existing.label;
+        btn.onclick           = () => openMdView(sbId, entityId, projId, existing.label);
+      } else {
+        btn.style.display = 'none'; // rapport manquant → généré via Analyse
+      }
     }
     return;
   }
 
-  // ── Case: at least one exists → hide Analyse btn, show per-kind buttons ──
-  const analyseBtn = document.getElementById('rv-analyse-btn');
-  if (analyseBtn) analyseBtn.style.display = 'none';
-
-  for (const kind of ['summary', 'explain']) {
-    const btn = document.getElementById(`rv-${kind}-btn`);
-    if (!btn) continue;
-    btn.style.display = '';
-    const existing = resolved[kind];
-    const fresh    = hasCurrentRun ? sessionReports.find(r => r.kind === kind) : null;
-
-    if (existing) {
-      btn.innerHTML         = kind === 'summary' ? '📋 Summary' : '💡 Explain';
-      btn.style.borderColor = fresh ? 'var(--success)' : '';
-      btn.style.color       = fresh ? 'var(--success)' : '';
-      btn.title             = existing.label;
-      btn.onclick           = () => openMdView(sbId, entityId, projId, existing.label);
-    } else {
-      btn.innerHTML         = kind === 'summary' ? '📋 Summary' : '💡 Explain';
-      btn.style.borderColor = '';
-      btn.style.color       = '';
-      // ⛔ NE PAS appeler openChorusCheckTerminal(kind) ici — relancerait le
-      // pipeline complet (run.pl + regen infra) alors qu'un run-report existe.
-      // openAnalyseFromReport() utilise --from-report : pipeline-free.
-      btn.title   = `Générer --${kind} depuis ce run (sans relancer le pipeline)`;
-      const k = kind;
-      btn.onclick = () => openAnalyseFromReport(k);
-    }
+  // ── Cas : aucun rapport n'existe → bouton unique 🔍 Analyse ──
+  if (summaryBtn)  summaryBtn.style.display  = 'none';
+  if (explainBtn)  explainBtn.style.display  = 'none';
+  if (analyseBtn) {
+    const runReportFile = _rvCurrentReport?.label;
+    analyseBtn.style.display = '';
+    analyseBtn.innerHTML     = '🔍 Analyse';
+    analyseBtn.title         = 'chorus-check --summary --explain --from-report (sans pipeline)';
+    analyseBtn.onclick       = () => {
+      const ctx    = window._rvCtx || {};
+      const rFile  = runReportFile || '';
+      const rPath  = `workspace/${ctx.entityId}/reports/${rFile}`;
+      const cmd    = `chorus-check ${ctx.sbId} ${ctx.projId} --summary --explain --from-report ${rFile}\n`
+        + `Mode --from-report : charger les éléments depuis $SANDBOX/${rPath}.\n`
+        + `⚠ NE PAS relancer run.pl ni le pipeline MCP.\n`
+        + `Extraire RUN_TIMESTAMP du nom de fichier pour nommer les rapports produits.`;
+      closeReportView();
+      openLevelTerminal('project', { sbId: ctx.sbId, entityId: ctx.entityId,
+        projId: ctx.projId, projName: ctx.projName || ctx.projId }, cmd);
+    };
   }
 }
 
