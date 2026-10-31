@@ -301,7 +301,7 @@ router.post('/sandboxes/:sbId/terminal', (req, res) => {
         '⛔ Phase 2 (inventaire brut) : ne JAMAIS lire de fichier <slug>.org — inventaire brut uniquement, zéro lookup KB, zéro lecture thésaurus.',
         '⛔ Les fichiers <slug>.org sont chargés UNIQUEMENT en Phase 3, la première fois qu\'un terme nécessite cet agent (lazy loading WEB-029).',
         '✅ _a_confirmer résolution AUTONOME (3 tiers) — lire § "_a_confirmer resolution — three tiers" du skill OBLIGATOIREMENT avant toute résolution.',
-        '✅ Obvious tier : auto-confirmer silencieusement (appliquer le défaut sans eca__ask_user — pas de terminal interactif sur cette branche).',
+        '✅ Obvious tier : APPELER eca__ask_user avec l\'option retenue préfixée "[auto]" en description et autoSelectAfterSeconds=30 — countdown visible côté terminal, auto-appliqué si pas de réponse dans les 30s.',
         '✅ Ambiguous tier : NE PAS bloquer — conserver _a_confirmer:1, jamais promouvoir vers ✅ sans décision explicite ingénieur.',
         '✅ Unresolvable tier : gap structurel → jamais auto-résolu → _a_confirmer:1.',
         '⛔ Ne jamais appeler eca__ask_user — AUTONOMOUS_MODE actif sur cette branche (pas de WEB-025).',
@@ -545,7 +545,7 @@ router.post('/sandboxes/:sbId/terminal', (req, res) => {
 // ── POST /api/sandboxes/:sbId/terminal/respond ────────────────────────────
 router.post('/sandboxes/:sbId/terminal/respond', async (req, res) => {
   const { sbId } = req.params;
-  const { message, sessionId } = req.body;
+  const { message, sessionId, toolId } = req.body;
   if (!message)   return res.status(400).json({ ok: false, error: 'message manquant' });
   if (!sessionId) return res.status(400).json({ ok: false, error: 'sessionId manquant' });
   const chatId = `eca-term-${sbId}-${sessionId}`;
@@ -555,8 +555,12 @@ router.post('/sandboxes/:sbId/terminal/respond', async (req, res) => {
   // Also resets the timeout so the agent has the full duration to finish.
   const t = activeTerminals.get(sessionId);
   if (t?.clearAskWait) t.clearAskWait();
+  // isAskUserResponse:true + toolId : route vers le tool call ask_user actif
+  // plutôt que de démarrer un nouveau tour de conversation (empiriquement requis).
+  const payload = { message, answer: message, isAskUserResponse: true,
+                    ...(toolId ? { toolId } : {}) };
   try {
-    await eca.ecaRequest(`/api/v1/chats/${encodeURIComponent(chatId)}/prompt`, 'POST', { message });
+    await eca.ecaRequest(`/api/v1/chats/${encodeURIComponent(chatId)}/prompt`, 'POST', payload);
     res.json({ ok: true });
   } catch (err) {
     res.status(502).json({ ok: false, error: err.message });
