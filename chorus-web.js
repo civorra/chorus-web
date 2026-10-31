@@ -4213,6 +4213,11 @@ function openLevelTerminal(level, ctx, autoCmd = null) {
   // Idem pour le panneau de tâches (Engine/TODO.org [#J] Axe 4).
   const taskboardPanel = document.getElementById('lvl-term-taskboard');
   if (taskboardPanel) taskboardPanel.hidden = true;
+  // Réinitialiser zone 3 (Réponse ECA) à chaque nouvelle session
+  const replyZone = document.getElementById('lvl-term-reply-zone');
+  const replyContent = document.getElementById('lvl-term-reply');
+  if (replyZone)    { replyZone.hidden = true; }
+  if (replyContent) { replyContent.innerHTML = ''; }
 
   out.innerHTML = '';
   overlay.hidden = false;
