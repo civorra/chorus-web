@@ -974,7 +974,7 @@ async function renderPvThesaurusTab() {
                 <input class="form-input" style="font-size:12px;padding:4px 8px;width:160px" id="pv-thes-val-${i}" value="${_pvGuessSlotHint(p.proposed).value}">
               </div>
               <button class="btn btn-primary" style="font-size:11px;padding:4px 10px" onclick="pvThesConfirm(${i})" title="Confirmer pour ce projet uniquement — enregistré en Niveau 2 (project-scoped, workspace/${escapeHtml(currentProject?.entity||'entity')}/${escapeHtml(currentProject?.id||'projId')}.thesaurus.json)">🔑 Valider (projet)</button>
-              <button class="btn btn-ghost" style="font-size:11px;padding:4px 10px;color:#A78BFA;border-color:#A78BFA" onclick="pvThesPromote(${i})" title="Confirmer pour TOUTE l'entity ${escapeHtml(currentProject?.entity||'')} — s'appliquera à tous les futurs imports sans restriction de projet">🏢 Promouvoir à l'entity</button>
+              <button class="btn btn-ghost" style="font-size:11px;padding:4px 10px;color:#A78BFA;border-color:#A78BFA" onclick="pvThesPromote(${i})" title="Confirmer pour TOUTE l'entity ${escapeHtml(currentProject?.entity||'')} — s'appliquera à tous les futurs imports sans restriction de projet">🏢 Promouvoir au niveau ${escapeHtml(currentProject?.entity||'entity')}</button>
               <button class="btn btn-ghost" style="font-size:11px;padding:4px 10px" onclick="pvThesToggleConfirm(${i})">Annuler</button>
             </div>
           </td>
