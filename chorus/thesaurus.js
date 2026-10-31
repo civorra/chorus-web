@@ -64,6 +64,13 @@ function _resolveSourceImportBasename(sbPath, sourceImport) {
       const sourcePath = parsed.source.replace(/\s*\([^)]*\)\s*$/, '').trim();
       return path.basename(sourcePath).replace(/\.[^.]+$/, '');
     }
+    // Fallback : ECA écrit le fichier source dans la section "* Source"
+    // sous la forme "  Fichier  : <path>" (pas de #+SOURCE: header).
+    const fichierMatch = content.match(/Fichier\s*:\s*(\S+)/);
+    if (fichierMatch) {
+      const sourcePath = fichierMatch[1].replace(/\s*\([^)]*\)\s*$/, '').trim();
+      return path.basename(sourcePath).replace(/\.[^.]+$/, '');
+    }
   }
   return null;
 }
