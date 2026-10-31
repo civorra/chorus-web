@@ -100,7 +100,7 @@ function sortReportsByDateDesc(reports) {
  * "🔍 Analyse" qui génère les deux rapports sans relancer le pipeline.
  */
 function lvlTermAnalyseRun(sbId, entityId, projId, projName, reportFile, explainFile, syntheseFile) {
-  const cmd = `chorus-check ${sbId} ${projId} --summary --explain --from-report`;
+  const cmd = `chorus-check ${sbId} ${projId} --summary --explain --from-report ${reportFile}`;
   openLevelTerminal(
     'report',
     { sbId, entityId, projId, projName, reportFile, explainFile, syntheseFile },
