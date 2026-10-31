@@ -276,12 +276,12 @@ function scanSandboxThesaurus(sbPath) {
         aliasesTypeElement: (data.aliases_type_element || []).map(a => ({
           term: a.term, target: a.type_element, confidence: a.confidence,
           sourceImport: a.source_import || null,
-          sourceBasename: a.source_import ? _basenameNoExt(a.source_import) : null,
+          sourceBasename: a.source_import ? resolve(a.source_import) : null,
         })),
         aliasesSlotValues: (data.aliases_slot_values || []).map(a => ({
           term: a.term, slot: a.slot, value: a.value, confidence: a.confidence,
           sourceImport: a.source_import || null,
-          sourceBasename: a.source_import ? _basenameNoExt(a.source_import) : null,
+          sourceBasename: a.source_import ? resolve(a.source_import) : null,
         })),
         pending: [],
         outOfScope: (data.out_of_scope || []).map(a => ({ term: a.term, reason: a.reason || '' })),
