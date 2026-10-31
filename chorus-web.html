@@ -640,14 +640,12 @@
       </div>
       <div id="lvl-term-taskboard" hidden
            style="border-bottom:1px solid var(--border);background:var(--surface-2,#1a2332);font-size:11px;font-family:'JetBrains Mono',monospace">
-        <div style="display:flex;align-items:center;gap:6px;padding:4px 12px;cursor:pointer"
-             onclick="document.getElementById('lvl-term-taskboard-list').classList.toggle('hidden');this.querySelector('.tb-chevron').classList.toggle('open')">
+        <div style="display:flex;align-items:center;gap:6px;padding:4px 12px">
           <span>🗂️</span>
           <span>Tâches :</span>
           <span id="lvl-term-taskboard-summary" style="color:var(--text-secondary)"></span>
-          <span class="tb-chevron" style="margin-left:auto;transition:transform .15s">▸</span>
         </div>
-        <div id="lvl-term-taskboard-list" class="hidden" style="padding:0 12px 8px;display:flex;flex-direction:column;gap:3px"></div>
+        <div id="lvl-term-taskboard-list" style="padding:0 12px 8px;display:flex;flex-direction:column;gap:3px"></div>
       </div>
       <!-- Bannière sticky "En attente de réponse" — visible au-dessus du flux de sortie
            même si l'utilisateur a scrollé. Affichée par lvlTermAskUser(), cachée à la soumission. -->
