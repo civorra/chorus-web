@@ -93,32 +93,19 @@ function sortReportsByDateDesc(reports) {
   });
 }
 
-// Generates the 2 "mini-report" icons 📋 (summary) / 💡 (explain) linked to
-// a run-report, clickable if the corresponding file exists (r.synthese_file
-// / r.explain_file), greyed out otherwise with an explicit tooltip.
-// Reference pattern — originally introduced in renderReportsList (pipeline panel),
-// generalised here for reuse by all report lists in the webapp
-// (project page, history, pipeline panel).
-function reportMiniIcons(r, sbId, entityId, projId) {
-  const synBtn = r.synthese_file
-    ? `<button class="btn btn-ghost btn-sm" title="${r.synthese_file}"
-         onclick="openMdView('${sbId}','${entityId}','${projId}','${r.synthese_file}')"
-         style="font-size:13px;padding:2px 6px">📋</button>`
-    : `<span style="font-size:13px;opacity:.25;padding:2px 6px;cursor:default"
-         title="No --summary report for this run">📋</span>`;
-
-  const expBtn = r.explain_file
-    ? `<button class="btn btn-ghost btn-sm" title="${r.explain_file}"
-         onclick="openMdView('${sbId}','${entityId}','${projId}','${r.explain_file}')"
-         style="font-size:13px;padding:2px 6px">💡</button>`
-    : `<span style="font-size:13px;opacity:.25;padding:2px 6px;cursor:default"
-         title="No --explain report for this run">💡</span>`;
-
-  // Returns raw buttons (no wrapper) — the caller is responsible for
-  // grouping them with the other icons (View/Terminal) inside a common
-  // flex container with minimal uniform spacing (gap:2px), for a visually
-  // consistent alignment of all 4 icons.
-  return synBtn + expBtn;
+/**
+ * Ouvre le terminal en mode 'report' et lance automatiquement :
+ *   chorus-check <sbId> <projId> --summary --explain --from-report
+ * Remplace les anciens boutons 📋 (summary) / 💡 (explain) par un seul bouton
+ * "🔍 Analyse" qui génère les deux rapports sans relancer le pipeline.
+ */
+function lvlTermAnalyseRun(sbId, entityId, projId, projName, reportFile, explainFile, syntheseFile) {
+  const cmd = `chorus-check ${sbId} ${projId} --summary --explain --from-report`;
+  openLevelTerminal(
+    'report',
+    { sbId, entityId, projId, projName, reportFile, explainFile, syntheseFile },
+    cmd
+  );
 }
 
 const SANDBOX_ICONS = ['🔐','📜','🏗️','♿','🏥','☁️','⚖️','🌍','📋'];
@@ -446,11 +433,16 @@ function pvReportButtons(r, proj, sbId) {
     title="Terminal ECA — ${r.label}"
     onclick="openLevelTerminal('report',{sbId:'${sbId}',entityId:'${proj.entity}',projId:'${proj.id}',projName:'${safeProj}',reportFile:'${r.label}',explainFile:${r.explain_file ? `'${r.explain_file}'` : 'null'},syntheseFile:${r.synthese_file ? `'${r.synthese_file}'` : 'null'}})">🖥️</button>`;
 
-  // 📋 summary / 💡 explain icons — only relevant on a run-report row
-  // (the summary/explain file itself does not need to reference itself).
-  const miniIcons = isJson ? reportMiniIcons(r, sbId, proj.entity, proj.id) : '';
+  // 🔍 Analyse — remplace les anciens boutons 📋 / 💡 — génère summary + explain
+  // en une seule commande sans relancer le pipeline (--from-report).
+  const analyseBtn = isJson
+    ? `<button class="btn btn-ghost btn-sm"
+         style="padding:2px 8px;font-size:10px;flex-shrink:0;border:1px solid var(--text-muted);opacity:.8"
+         title="chorus-check --summary --explain --from-report (sans pipeline)"
+         onclick="lvlTermAnalyseRun('${sbId}','${proj.entity}','${proj.id}','${safeProj}','${r.label}',${r.explain_file ? `'${r.explain_file}'` : 'null'},${r.synthese_file ? `'${r.synthese_file}'` : 'null'})">🔍 Analyse</button>`
+    : '';
 
-  return `<div style="display:flex;align-items:center;gap:2px">${miniIcons}${viewBtn}${termBtn}</div>`;
+  return `<div style="display:flex;align-items:center;gap:2px">${analyseBtn}${viewBtn}${termBtn}</div>`;
 }
 
 // Generates the HTML for a full report row with the same buttons as the history modal.
@@ -4034,6 +4026,8 @@ function openEcaSessionForProject() {
 //   project  → frames + latest project reports (sources/ + reports/)
 //   report   → content of the specific selected report
 let _lvlTermCtx = null;
+// Chronomètre par tâche : taskId → { startedAt: ms, completedAt?: ms }
+let _taskTimers  = new Map();
 let _lvlTermHistory = [];
 let _lvlTermStartTs = 0;   // timestamp de début de la requête courante
 let _lvlTermHistIdx = -1;
@@ -4185,6 +4179,7 @@ function openLevelTerminal(level, ctx, autoCmd = null) {
   // turns (cf. server.js § ROUTE 5bis /terminal, chatId = `term-${sessionId}`).
   _lvlTermSessionId = 'lvlterm-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8);
   _lvlTermSubagentSections = new Map();
+  _taskTimers = new Map(); // reset chronomètres à chaque nouvelle session
 
   const overlay = document.getElementById('level-terminal-overlay');
   const out     = document.getElementById('lvl-term-output');
@@ -4475,6 +4470,14 @@ function lvlTermUpdateSkillBanner({ name, history }) {
   }
 }
 
+function _fmtDuration(ms) {
+  if (ms < 1000)  return `${ms}ms`;
+  if (ms < 60000) return `${(ms / 1000).toFixed(1)}s`;
+  const m = Math.floor(ms / 60000);
+  const s = Math.round((ms % 60000) / 1000);
+  return `${m}m${String(s).padStart(2, '0')}s`;
+}
+
 const TASKBOARD_STATUS_ICON = {
   pending:     '☐',
   'in-progress': '⏳',
@@ -4507,13 +4510,39 @@ function lvlTermUpdateTaskboard({ tasks, summary, activeSummary }) {
       (activeSummary ? ` — ${activeSummary}` : '');
   }
 
+  // ── Chronomètres — détecter les transitions de statut ─────────────────
+  const now = Date.now();
+  (tasks || []).forEach(t => {
+    const st = t.status;
+    if (st === 'in_progress' || st === 'in-progress') {
+      if (!_taskTimers.has(t.id)) _taskTimers.set(t.id, { startedAt: now });
+    } else if (st === 'done') {
+      const timer = _taskTimers.get(t.id);
+      if (timer && !timer.completedAt) timer.completedAt = now;
+    }
+  });
+
   listEl.innerHTML = (tasks || []).map(t => {
     const icon  = TASKBOARD_STATUS_ICON[t.status] || '☐';
     const color = TASKBOARD_STATUS_COLOR[t.status] || 'var(--text-muted)';
     const strike = t.status === 'done' ? 'text-decoration:line-through;opacity:.7' : '';
+
+    // Badge chrono
+    let timeBadge = '';
+    const timer = _taskTimers.get(t.id);
+    if (timer) {
+      if (t.status === 'done' && timer.completedAt) {
+        const elapsed = _fmtDuration(timer.completedAt - timer.startedAt);
+        timeBadge = `<span style="font-size:10px;opacity:.55;margin-left:4px">${elapsed}</span>`;
+      } else if (t.status === 'in_progress' || t.status === 'in-progress') {
+        timeBadge = `<span style="font-size:10px;opacity:.55;margin-left:4px">⏱</span>`;
+      }
+    }
+
     return `<div style="display:flex;align-items:baseline;gap:6px;color:${color}">
       <span>${icon}</span>
       <span style="${strike}">#${t.id} ${escapeHtml(t.subject || '')}</span>
+      ${timeBadge}
       ${t.isBlocked ? '<span style="color:var(--error,#EF4444);font-size:10px">⛔ bloquée</span>' : ''}
     </div>`;
   }).join('');
