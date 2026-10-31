@@ -4444,6 +4444,21 @@ function lvlTermPruneOldLines() {
 }
 
 function lvlTermAppend(text, cls = 'resp') {
+  // Zone 3 (Réponse ECA) : chunks de réponse texte uniquement
+  if (cls === 'resp') {
+    const replyZone    = document.getElementById('lvl-term-reply-zone');
+    const replyContent = document.getElementById('lvl-term-reply');
+    if (replyZone && replyContent) {
+      replyZone.hidden = false;
+      const line = document.createElement('div');
+      line.className = `eca-session-line ${cls}`;
+      line.textContent = text;
+      replyContent.appendChild(line);
+      replyContent.scrollTop = replyContent.scrollHeight;
+      return line;
+    }
+  }
+  // Zone 2 (Log des actions) : tout le reste
   const out  = document.getElementById('lvl-term-output');
   const line = document.createElement('div');
   line.className = `eca-session-line ${cls}`;
@@ -4929,7 +4944,10 @@ async function levelTerminalExec(cmd) {
             if (!replyLine) replyLine = lvlTermAppend('', 'resp');
             // append plain text; render markdown later on done
             replyLine.textContent += data.text || '';
-            out.scrollTop = out.scrollHeight;
+            // scroll Zone 3 (reply), pas Zone 2 (log)
+            const replyContent = document.getElementById('lvl-term-reply');
+            if (replyContent) replyContent.scrollTop = replyContent.scrollHeight;
+            else out.scrollTop = out.scrollHeight;
 
           } else if (evt === 'tool') {
             ensureThinkingRemoved();
@@ -4985,6 +5003,11 @@ async function levelTerminalExec(cmd) {
             if (replyLine) {
               renderMarkdownInline(replyLine);
               maybeFoldResponse(replyLine);
+              // Séparateur visuel dans zone 3 pour le prochain échange
+              const replySep = document.createElement('hr');
+              replySep.style.cssText = 'border:none;border-top:1px solid var(--border,#30363d);margin:6px 0;opacity:.5';
+              const replyContent = document.getElementById('lvl-term-reply');
+              if (replyContent) replyContent.appendChild(replySep);
             }
             const elapsed = Math.round((Date.now() - _lvlTermStartTs) / 1000);
             const doneLine = lvlTermAppend(`✅ Terminé (${elapsed}s)`, 'ok done-badge');
@@ -5080,6 +5103,27 @@ function reportCountLabel(reports) {
  * - Updates the terminal title with a "⏸" badge (Fix C).
  * The response is submitted via POST /terminal/respond.
  */
+/** Copie le texte brut de la zone Réponse ECA dans le presse-papier. */
+function lvlTermCopyReply() {
+  const el = document.getElementById('lvl-term-reply');
+  if (!el) return;
+  const text = el.innerText || el.textContent || '';
+  navigator.clipboard.writeText(text.trim()).then(() => {
+    const btn = document.querySelector('#lvl-term-reply-zone button[onclick="lvlTermCopyReply()"]');
+    if (btn) { const orig = btn.textContent; btn.textContent = '✅'; setTimeout(() => { btn.textContent = orig; }, 1200); }
+  }).catch(() => {});
+}
+
+/** Réduit / agrandit la zone Réponse ECA. */
+function lvlTermToggleReply() {
+  const el   = document.getElementById('lvl-term-reply');
+  const btn  = document.getElementById('lvl-term-reply-toggle');
+  if (!el) return;
+  const collapsed = el.style.display === 'none';
+  el.style.display = collapsed ? '' : 'none';
+  if (btn) btn.textContent = collapsed ? '─' : '＋';
+}
+
 function lvlTermAskUser(ctx, question, toolId, isApproval = false, options = [], autoSelectAfterSeconds = null) {
   const out    = document.getElementById('lvl-term-output');
   const banner = document.getElementById('lvl-term-ask-banner');
