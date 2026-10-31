@@ -306,6 +306,7 @@ router.post('/sandboxes/:sbId/terminal', (req, res) => {
         '✅ Unresolvable tier : gap structurel → jamais auto-résolu → _a_confirmer:1.',
         '⛔ Ne jamais appeler eca__ask_user — AUTONOMOUS_MODE actif sur cette branche (pas de WEB-025).',
         '⛔ Ne jamais promouvoir un ⚠️ Pending vers ✅ Aliases automatiquement (sauf si déjà ✅ dans le thésaurus existant).',
+        '⛔ KB gap ≠ _a_confirmer : si le type_element est reconnu mais absent de la KB (ex. Argon2id) → classer dans gaps (_import.gaps) UNIQUEMENT, jamais _a_confirmer. _a_confirmer = interprétations KB concurrentes. gap = KB ne couvre pas encore cet algorithme.',
       ],
     };
 
