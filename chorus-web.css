@@ -1181,6 +1181,38 @@ input, select, textarea { font-family: inherit; }
   flex-direction: column;
 }
 /* Cancel the default max-height cap so the output fills the panel height. */
+/* ── Resizers Taskboard↔Log et Log↔Réponse ECA ────────────────────── */
+.lvl-term-resizer {
+  height: 5px;
+  flex-shrink: 0;
+  cursor: row-resize;
+  background: var(--border, #30363d);
+  position: relative;
+  transition: background .15s, height .1s;
+  user-select: none;
+  z-index: 5;
+}
+.lvl-term-resizer::after {          /* poignée visuelle centrée */
+  content: '';
+  display: block;
+  position: absolute;
+  left: 50%; top: 50%;
+  transform: translate(-50%, -50%);
+  width: 32px; height: 3px;
+  border-radius: 2px;
+  background: rgba(255,255,255,.15);
+  transition: background .15s;
+}
+.lvl-term-resizer:hover,
+.lvl-term-resizer.dragging {
+  background: var(--accent, #58A6FF);
+  height: 5px;
+}
+.lvl-term-resizer:hover::after,
+.lvl-term-resizer.dragging::after {
+  background: rgba(255,255,255,.5);
+}
+
 .lvl-term-panel .eca-session-output {
   max-height: none;
 }

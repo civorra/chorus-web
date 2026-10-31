@@ -4213,11 +4213,15 @@ function openLevelTerminal(level, ctx, autoCmd = null) {
   // Idem pour le panneau de tâches (Engine/TODO.org [#J] Axe 4).
   const taskboardPanel = document.getElementById('lvl-term-taskboard');
   if (taskboardPanel) taskboardPanel.hidden = true;
-  // Réinitialiser zone 3 (Réponse ECA) à chaque nouvelle session
+  // Réinitialiser zone 3 + resizers à chaque nouvelle session
   const replyZone = document.getElementById('lvl-term-reply-zone');
   const replyContent = document.getElementById('lvl-term-reply');
-  if (replyZone)    { replyZone.hidden = true; }
+  if (replyZone)    { replyZone.hidden = true; replyZone.style.cssText = ''; }
   if (replyContent) { replyContent.innerHTML = ''; }
+  const rr = document.getElementById('lvl-term-resizer-reply');
+  const rt = document.getElementById('lvl-term-resizer-task');
+  if (rr) { rr.hidden = true; rr._resizerInited = false; }
+  if (rt) { rt.hidden = true; rt._resizerInited = false; }
 
   out.innerHTML = '';
   overlay.hidden = false;
@@ -4455,6 +4459,9 @@ function lvlTermAppend(text, cls = 'resp') {
     const replyContent = document.getElementById('lvl-term-reply');
     if (replyZone && replyContent) {
       replyZone.hidden = false;
+      // Afficher le resizer Log↔Réponse et l'initialiser
+      const r = document.getElementById('lvl-term-resizer-reply');
+      if (r) { r.hidden = false; _lvlTermMakeResizer('lvl-term-resizer-reply', 'lvl-term-output', 'lvl-term-reply-zone', 'bottom'); }
       const line = document.createElement('div');
       line.className = `eca-session-line ${cls}`;
       line.textContent = text;
@@ -4539,6 +4546,9 @@ function lvlTermUpdateTaskboard({ tasks, summary, activeSummary }) {
   const listEl  = document.getElementById('lvl-term-taskboard-list');
   if (!panel || !listEl) return;
   panel.hidden = false;
+  // Afficher le resizer Taskboard↔Log et l'initialiser
+  const rt = document.getElementById('lvl-term-resizer-task');
+  if (rt) { rt.hidden = false; _lvlTermMakeResizer('lvl-term-resizer-task', 'lvl-term-taskboard', 'lvl-term-output', 'top'); }
 
   if (sumEl && summary) {
     sumEl.textContent =
@@ -5108,6 +5118,60 @@ function reportCountLabel(reports) {
  * - Updates the terminal title with a "⏸" badge (Fix C).
  * The response is submitted via POST /terminal/respond.
  */
+/**
+ * Initialise un resizer (drag-bar) entre deux zones du terminal.
+ * @param {string} resizerId  id du div.lvl-term-resizer
+ * @param {string} topId      id de la zone supérieure (hauteur fixée)
+ * @param {string} bottomId   id de la zone inférieure (hauteur ajustée au drag)
+ * @param {'top'|'bottom'}    which  quelle zone change de hauteur au drag
+ */
+function _lvlTermMakeResizer(resizerId, topId, bottomId, which = 'bottom') {
+  const resizer = document.getElementById(resizerId);
+  if (!resizer) return;
+  if (resizer._resizerInited) return; // éviter double-init
+  resizer._resizerInited = true;
+
+  resizer.addEventListener('mousedown', (e) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    const top    = document.getElementById(topId);
+    const bottom = document.getElementById(bottomId);
+    const startY = e.clientY;
+    const startH = which === 'bottom'
+      ? (bottom ? bottom.getBoundingClientRect().height : 0)
+      : (top    ? top.getBoundingClientRect().height    : 0);
+
+    resizer.classList.add('dragging');
+    document.body.style.cursor = 'row-resize';
+    document.body.style.userSelect = 'none';
+
+    function onMove(e) {
+      const dy = e.clientY - startY;
+      const target = which === 'bottom' ? bottom : top;
+      if (!target) return;
+      // 'bottom' zone: drag vers le haut (dy<0) → agrandit
+      const newH = which === 'bottom'
+        ? Math.max(60, startH - dy)
+        : Math.max(60, startH + dy);
+      target.style.height    = newH + 'px';
+      target.style.minHeight = newH + 'px';
+      target.style.maxHeight = newH + 'px';
+      target.style.flex      = `0 0 ${newH}px`;
+    }
+
+    function onUp() {
+      resizer.classList.remove('dragging');
+      document.body.style.cursor  = '';
+      document.body.style.userSelect = '';
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup',   onUp);
+    }
+
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup',   onUp);
+  });
+}
+
 /** Copie le texte brut de la zone Réponse ECA dans le presse-papier. */
 function lvlTermCopyReply() {
   const el = document.getElementById('lvl-term-reply');

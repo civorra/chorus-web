@@ -658,12 +658,18 @@
         <span id="lvl-term-ask-question" style="font-size:11px;color:var(--text-secondary);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></span>
         <span style="font-size:10px;color:var(--text-muted)">↓ scrollez vers le bas ou choisissez ↓</span>
       </div>
-      <div class="eca-session-output" id="lvl-term-output" style="flex:1;min-height:0;overflow-y:auto"></div>
+      <!-- Resizer Taskboard ↔ Log (affiché seulement quand taskboard visible) -->
+      <div id="lvl-term-resizer-task" hidden
+           class="lvl-term-resizer" title="Redimensionner Tâches / Log"></div>
+      <div class="eca-session-output" id="lvl-term-output" style="flex:1;min-height:60px;overflow-y:auto"></div>
+      <!-- Resizer Log ↔ Réponse (affiché seulement quand zone 3 visible) -->
+      <div id="lvl-term-resizer-reply" hidden
+           class="lvl-term-resizer" title="Redimensionner Log / Réponse ECA"></div>
       <!-- Zone 3 : Réponse ECA (sticky, visible dès le 1er chunk de texte) -->
       <div id="lvl-term-reply-zone" hidden style="
           display:flex;flex-direction:column;
-          min-height:120px;max-height:40%;
-          border-top:2px solid var(--accent,#58A6FF);
+          height:200px;min-height:60px;
+          border-top:none;
           background:var(--surface2,#1a2332);flex-shrink:0">
         <div style="display:flex;align-items:center;gap:8px;padding:4px 10px;
             border-bottom:1px solid var(--border,#30363d);
