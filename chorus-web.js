@@ -938,7 +938,7 @@ async function renderPvThesaurusTab() {
   // _pvPendingRows stores rows in render order so that handlers
   // (called by index, cf. inline onclick) can retrieve shard/term/
   // sourceImport without re-escaping these values in the HTML.
-  _pvPendingRows = pending;
+  _pvPendingRows = filteredPending;
 
   html += `<div style="margin-bottom:16px">
     <div style="font-size:11px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px">⚠️ En attente de confirmation (${nPending})</div>`;
@@ -949,7 +949,7 @@ async function renderPvThesaurusTab() {
         <th style="text-align:left;padding:4px 8px;color:var(--text-muted);font-weight:600">Mapping proposé</th>
         <th style="text-align:left;padding:4px 8px;color:var(--text-muted);font-weight:600">Action</th>
       </tr></thead>
-      <tbody>${pending.map((p, i) => `
+      <tbody>${filteredPending.map((p, i) => `
         <tr style="border-bottom:1px solid var(--border-light)">
           <td style="padding:4px 8px;color:var(--text-secondary)">${p.term}</td>
           <td style="padding:4px 8px;color:var(--warn);font-family:'JetBrains Mono',monospace;font-size:11px">${p.proposed || ''}</td>
