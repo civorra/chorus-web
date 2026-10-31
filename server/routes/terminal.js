@@ -577,6 +577,11 @@ router.post('/sandboxes/:sbId/terminal/respond', async (req, res) => {
   if (t?.clearAskWait) t.clearAskWait();
   // isAskUserResponse:true + toolId : route vers le tool call ask_user actif
   // plutôt que de démarrer un nouveau tour de conversation.
+  // toolId null : chat:ask-question n'a pas fourni requestId/id — on envoie
+  // quand même isAskUserResponse:true (ECA route vers le seul pending ask_user).
+  if (!toolId) {
+    console.warn(`[terminal /respond] toolId absent — réponse routée sans toolId (sbId=${sbId})`);
+  }
   const payload = { message: ecaAnswer, answer: ecaAnswer, isAskUserResponse: true,
                     ...(toolId ? { toolId } : {}) };
   try {

@@ -378,6 +378,10 @@ function subscribeEcaEvents(chatId, { onChunk, onAsk, onToolLog, onSubagentToolL
   // connection itself is global, this only widens which chatId values
   // we react to (see Axe 5 doc comment above).
   const watchedChatIds = new Set([chatId]);
+  // Dédup chat:ask-question — prévient l'affichage double si le même event
+  // SSE arrive deux fois (reconnexion réseau ou stream bufferisé).
+  // Clé = requestId si disponible (null → pas de dédup basé sur id).
+  let _lastAskRequestId = null;
 
   const req = https.request(
     {
@@ -456,13 +460,21 @@ function subscribeEcaEvents(chatId, { onChunk, onAsk, onToolLog, onSubagentToolL
           // tool call soit complété (ECA suspendu, attend réponse). Permet
           // d'afficher le widget (countdown, Passer) avant qu'ECA reprenne.
           if (isParentChat && eventType === 'chat:ask-question') {
-            if (onAsk) onAsk({
-              question:               data.question              || '(question ECA)',
-              options:                data.options               || [],
-              toolId:                 data.requestId             || null,
-              isApproval:             false,
-              autoSelectAfterSeconds: data.autoSelectAfterSeconds || null,
-            });
+            // Dédup : ignorer si même requestId déjà traité (SSE duplicate).
+            // data.requestId || data.id couvre les variantes de champ ECA.
+            const reqId = data.requestId || data.id || null;
+            if (reqId && reqId === _lastAskRequestId) {
+              // duplicate — skip silently
+            } else {
+              _lastAskRequestId = reqId;
+              if (onAsk) onAsk({
+                question:               data.question              || '(question ECA)',
+                options:                data.options               || [],
+                toolId:                 reqId,   // null si ECA ne fournit pas l'id
+                isApproval:             false,
+                autoSelectAfterSeconds: data.autoSelectAfterSeconds || null,
+              });
+            }
           }
 
           // Only the PARENT reaching 'idle' ends this subscription — a
