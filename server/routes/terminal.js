@@ -343,6 +343,12 @@ router.post('/sandboxes/:sbId/terminal', (req, res) => {
     // and guard both onDone and the timeout against premature closure.
     let waitingForUserInput = false;
     let pendingTimeoutRestart = null; // stores remaining ms to restart timeout after respond
+    let gracePeriodHandle    = null;  // grace period 3s après réponse utilisateur
+    // Helper : ECA a repris (chunk ou toolLog) → lever le guard immédiatement
+    const clearAskGuard = () => {
+      if (gracePeriodHandle) { clearTimeout(gracePeriodHandle); gracePeriodHandle = null; }
+      waitingForUserInput = false;
+    };
 
     const heartbeat = setInterval(() => {
       if (!finished) sseSend(res, 'ping', { t: Date.now() });
@@ -354,6 +360,7 @@ router.post('/sandboxes/:sbId/terminal', (req, res) => {
       activeTerminals.delete(sessionId);
       clearInterval(heartbeat);
       if (pendingTimeoutRestart) { clearTimeout(pendingTimeoutRestart); pendingTimeoutRestart = null; }
+      if (gracePeriodHandle)    { clearTimeout(gracePeriodHandle);    gracePeriodHandle    = null; }
       if (subReq) { try { subReq.destroy(); } catch {} }
       if (errMsg) sseError(res, errMsg);
       else sseDone(res, {});
@@ -376,7 +383,10 @@ router.post('/sandboxes/:sbId/terminal', (req, res) => {
     );
 
     const { req: sReq, done } = eca.subscribeEcaEvents(chatId, {
-      onChunk:   (text)     => { if (!finished) sseSend(res, 'chunk', { text }); },
+      onChunk:   (text)     => {
+        clearAskGuard(); // ECA a repris — lever le guard immédiatement
+        if (!finished) sseSend(res, 'chunk', { text });
+      },
       onAsk:     (payload)  => {
         if (!finished) {
           waitingForUserInput = true;
@@ -384,6 +394,7 @@ router.post('/sandboxes/:sbId/terminal', (req, res) => {
         }
       },
       onToolLog: (toolInfo) => {
+        clearAskGuard(); // ECA a repris — lever le guard immédiatement
         if (finished) return;
         sseSend(res, 'tool', toolInfo);
         // Bandeau "Skill actif" (Engine/TODO.org [#J] Axe 3) — détecte un
@@ -479,9 +490,17 @@ router.post('/sandboxes/:sbId/terminal', (req, res) => {
       subagents:    {},
       // WEB-025: exposed by /respond to clear the ask_user guard and reset timeout
       clearAskWait: () => {
-        waitingForUserInput = false;
-        // Restart the timeout from zero so the agent has the full configured
-        // duration to complete its work after the user has answered.
+        // Grace period 3s avant de lever le guard waitingForUserInput.
+        // Couvre le bref idle qu'ECA émet entre la réception de la réponse
+        // et la reprise du traitement — sans cette grace, onDone → finish()
+        // fermerait la session prématurément sur cet idle intermédiaire.
+        // onChunk / onToolLog lèvent le guard immédiatement dès qu'ECA reprend.
+        clearTimeout(gracePeriodHandle);
+        gracePeriodHandle = setTimeout(() => {
+          gracePeriodHandle = null;
+          waitingForUserInput = false;
+        }, 3000);
+        // Restart du timeout — ECA a le temps plein pour finir après la réponse.
         clearTimeout(timeoutHandle);
         if (pendingTimeoutRestart) { clearTimeout(pendingTimeoutRestart); pendingTimeoutRestart = null; }
         timeoutHandle = setTimeout(
@@ -545,14 +564,23 @@ router.post('/sandboxes/:sbId/terminal', (req, res) => {
 // ── POST /api/sandboxes/:sbId/terminal/respond ────────────────────────────
 router.post('/sandboxes/:sbId/terminal/respond', async (req, res) => {
   const { sbId } = req.params;
-  const { message, sessionId } = req.body;
-  if (!message)   return res.status(400).json({ ok: false, error: 'message manquant' });
+  const { message, sessionId, toolId } = req.body;
+  // "__passer__" : marqueur envoyé par le bouton ⏭️ Passer (widget Ambiguous tier).
+  // ECA ignore un message vide → on envoie "passer" (non-vide) pour router
+  // correctement la réponse vers le tool call ask_user actif.
+  const isPasser  = message === '__passer__';
+  const ecaAnswer = isPasser ? 'passer' : message;
+  if (!isPasser && !message) return res.status(400).json({ ok: false, error: 'message manquant' });
   if (!sessionId) return res.status(400).json({ ok: false, error: 'sessionId manquant' });
   const chatId = `eca-term-${sbId}-${sessionId}`;
   const t = activeTerminals.get(sessionId);
   if (t?.clearAskWait) t.clearAskWait();
+  // isAskUserResponse:true + toolId : route vers le tool call ask_user actif
+  // plutôt que de démarrer un nouveau tour de conversation.
+  const payload = { message: ecaAnswer, answer: ecaAnswer, isAskUserResponse: true,
+                    ...(toolId ? { toolId } : {}) };
   try {
-    await eca.ecaRequest(`/api/v1/chats/${encodeURIComponent(chatId)}/prompt`, 'POST', { message });
+    await eca.ecaRequest(`/api/v1/chats/${encodeURIComponent(chatId)}/prompt`, 'POST', payload);
     res.json({ ok: true });
   } catch (err) {
     res.status(502).json({ ok: false, error: err.message });

@@ -441,17 +441,28 @@ function subscribeEcaEvents(chatId, { onChunk, onAsk, onToolLog, onSubagentToolL
                   && content.details.subagentChatId) {
                 watchedChatIds.add(content.details.subagentChatId);
               }
-              // Tool call completed (after approval or auto-trust)
+              // Tool call completed (after approval or auto-trust).
+              // ask_user est géré via 'chat:ask-question' AVANT completion
+              // (handler ci-dessous) — skip ici pour éviter un double-fire.
               if (content.type === 'toolCalled') {
-                if (content.name === 'ask_user') {
-                  const question = content.arguments?.question
-                    || content.outputs?.[0]?.text || '(question ECA)';
-                  if (onAsk) onAsk({ question, toolId: content.id, isApproval: false });
-                } else if (onToolLog) {
+                if (content.name !== 'ask_user' && onToolLog) {
                   onToolLog(classifyToolCall(content));
                 }
               }
             }
+          }
+
+          // Chemin primaire ask_user — 'chat:ask-question' fire AVANT que le
+          // tool call soit complété (ECA suspendu, attend réponse). Permet
+          // d'afficher le widget (countdown, Passer) avant qu'ECA reprenne.
+          if (isParentChat && eventType === 'chat:ask-question') {
+            if (onAsk) onAsk({
+              question:               data.question              || '(question ECA)',
+              options:                data.options               || [],
+              toolId:                 data.requestId             || null,
+              isApproval:             false,
+              autoSelectAfterSeconds: data.autoSelectAfterSeconds || null,
+            });
           }
 
           // Only the PARENT reaching 'idle' ends this subscription — a

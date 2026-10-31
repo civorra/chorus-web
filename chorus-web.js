@@ -4942,7 +4942,7 @@ async function levelTerminalExec(cmd) {
           } else if (evt === 'ask') {
             ensureThinkingRemoved();
             replyLine = null; // nouvelle réponse après la question
-            lvlTermAskUser(ctx, data.question || '', data.toolId, data.isApproval, data.options);
+            lvlTermAskUser(ctx, data.question || '', data.toolId, data.isApproval, data.options, data.autoSelectAfterSeconds || null);
 
           } else if (evt === 'refresh') {
             // Live refresh de l'onglet Tests (WEB-021) — déclenché par
@@ -5074,7 +5074,7 @@ function reportCountLabel(reports) {
  * - Updates the terminal title with a "⏸" badge (Fix C).
  * The response is submitted via POST /terminal/respond.
  */
-function lvlTermAskUser(ctx, question, toolId, isApproval = false, options = []) {
+function lvlTermAskUser(ctx, question, toolId, isApproval = false, options = [], autoSelectAfterSeconds = null) {
   const out    = document.getElementById('lvl-term-output');
   const banner = document.getElementById('lvl-term-ask-banner');
   const bannerQ = document.getElementById('lvl-term-ask-question');
@@ -5101,19 +5101,66 @@ function lvlTermAskUser(ctx, question, toolId, isApproval = false, options = [])
   wrap.style.cssText = 'display:flex;flex-direction:column;gap:6px;padding:6px 0';
 
   const optList = Array.isArray(options) ? options : [];
+
+  // ── Auto-résolution avec countdown (Obvious tier) ─────────────────────
+  const autoOpt  = optList.find(o => (o.description || '').toLowerCase().startsWith('[auto]'));
+  const autoSecs = autoSelectAfterSeconds != null ? Number(autoSelectAfterSeconds)
+                 : (autoOpt ? 30 : null);
+  let autoHandle  = null;
+  let autoRemain  = autoSecs;
+  let autoCountEl = null;
+
+  function cancelAuto() {
+    if (autoHandle)  { clearInterval(autoHandle); autoHandle = null; }
+    if (autoCountEl) { autoCountEl.remove(); autoCountEl = null; }
+  }
+
   if (optList.length) {
     const btnRow = document.createElement('div');
     btnRow.style.cssText = 'display:flex;flex-wrap:wrap;gap:6px;padding-left:4px';
     optList.forEach(opt => {
+      const isAutoOpt = opt === autoOpt;
       const btn = document.createElement('button');
       btn.className = 'btn btn-ghost btn-sm';
-      btn.style.cssText = 'font-size:11px;border:1px solid var(--warn,#FEBC2E);color:var(--warn,#FEBC2E)';
-      btn.textContent = opt.label || opt;
-      btn.title = opt.description || '';
-      btn.onclick = () => submitAnswer(opt.label || opt);
+      const borderColor = isAutoOpt ? 'var(--ok,#30D158)' : 'var(--warn,#FEBC2E)';
+      const textColor   = isAutoOpt ? 'var(--ok,#30D158)' : 'var(--warn,#FEBC2E)';
+      btn.style.cssText = `font-size:11px;border:1px solid ${borderColor};color:${textColor}`;
+      btn.textContent   = (opt.label || opt) + (isAutoOpt ? ' ⚡' : '');
+      const desc = (opt.description || '').replace(/^\[auto\]\s*/i, '');
+      btn.title   = desc + (isAutoOpt ? '\n(auto-appliqué si pas de réponse)' : '');
+      btn.onclick = () => { cancelAuto(); submitAnswer(opt.label || opt); };
       btnRow.appendChild(btn);
     });
     wrap.appendChild(btnRow);
+
+    // Countdown bar — uniquement quand auto-résolution active (Obvious tier)
+    if (autoOpt && autoSecs) {
+      autoCountEl = document.createElement('div');
+      autoCountEl.style.cssText =
+        'display:flex;align-items:center;gap:8px;padding-left:4px;margin-top:2px;font-size:10px;' +
+        'color:var(--ok,#30D158);font-family:"JetBrains Mono",monospace;opacity:0.85';
+      autoCountEl.innerHTML =
+        `<span class="auto-count-text">⚡ Auto-résolution évidente — appliquée dans ${autoRemain}s</span>` +
+        `<div style="flex:1;height:2px;background:#1e3a2b;border-radius:1px;overflow:hidden">` +
+        `  <div class="auto-count-bar" style="height:100%;background:var(--ok,#30D158);` +
+        `       width:100%;transition:width 1s linear"></div></div>`;
+      wrap.appendChild(autoCountEl);
+    }
+  }
+
+  // ── Bouton ⏭️ Passer — Ambiguous tier (pas d'option [auto]) ─────────────
+  // Permet de passer sans bloquer : envoie "__passer__" → converti en "passer"
+  // côté serveur → eca__ask_user retourne "passer" → skill applique _a_confirmer.
+  if (!autoOpt && optList.length) {
+    const skipBtn = document.createElement('div');
+    skipBtn.style.cssText = 'padding-left:4px;margin-top:6px;border-top:1px solid rgba(255,255,255,.08);padding-top:6px';
+    skipBtn.innerHTML = `<button style="font-size:11px;padding:3px 10px;background:transparent;
+        border:1px solid rgba(255,255,255,.2);border-radius:4px;color:var(--text-muted);cursor:pointer"
+        title="Laisser en _a_confirmer et continuer — résoudre plus tard">
+      ⏭️ Passer <span style="opacity:.6;font-size:10px">(_a_confirmer — décider plus tard)</span>
+    </button>`;
+    skipBtn.querySelector('button').onclick = () => submitAnswer('__passer__');
+    wrap.appendChild(skipBtn);
   }
 
   // Champ texte libre (toujours présent — fallback ou réponse libre)
@@ -5130,11 +5177,24 @@ function lvlTermAskUser(ctx, question, toolId, isApproval = false, options = [])
   out.appendChild(wrap);
   out.scrollTop = out.scrollHeight;
 
+  // Démarrage countdown APRÈS insertion DOM
+  if (autoOpt && autoSecs && autoCountEl) {
+    const bar  = autoCountEl.querySelector('.auto-count-bar');
+    const text = autoCountEl.querySelector('.auto-count-text');
+    autoHandle = setInterval(() => {
+      autoRemain--;
+      if (text) text.textContent = `⚡ Auto-résolution évidente — appliquée dans ${autoRemain}s`;
+      if (bar)  bar.style.width  = `${Math.max(0, (autoRemain / autoSecs) * 100)}%`;
+      if (autoRemain <= 0) { cancelAuto(); submitAnswer(autoOpt.label || autoOpt); }
+    }, 1000);
+  }
+
   const answerInput = wrap.querySelector('input');
   if (answerInput) answerInput.focus();
 
   async function submitAnswer(answer) {
-    if (!(answer || '').trim()) return;
+    cancelAuto();
+    if (answer !== '__passer__' && !(answer || '').trim()) return;
     wrap.remove();
 
     // Cacher la bannière et restaurer le titre
@@ -5154,7 +5214,7 @@ function lvlTermAskUser(ctx, question, toolId, isApproval = false, options = [])
       await fetch(`${API}/api/sandboxes/${ctx.sbId}/terminal/respond`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: answer, sessionId: _lvlTermSessionId }),
+        body: JSON.stringify({ message: answer, sessionId: _lvlTermSessionId, toolId }),
       });
     } catch (e) {
       lvlTermAppend(`✖ Erreur envoi réponse : ${e.message}`, 'err');
@@ -5163,6 +5223,7 @@ function lvlTermAskUser(ctx, question, toolId, isApproval = false, options = [])
 
   if (answerInput) {
     answerInput.addEventListener('keydown', e => {
+      cancelAuto();
       if (e.key === 'Enter' && !e.shiftKey) {
         e.preventDefault();
         submitAnswer((answerInput.value || '').trim());
