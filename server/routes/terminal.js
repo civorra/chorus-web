@@ -296,12 +296,12 @@ router.post('/sandboxes/:sbId/terminal', (req, res) => {
         '✅ § 0-bis : appeler eca__task(op="plan",...) pour le taskboard au démarrage.',
       ],
       'chorus-import-project': [
-        '✅ _a_confirmer résolution INTERACTIVE (3 tiers) — lire § "_a_confirmer resolution — three tiers" du skill OBLIGATOIREMENT avant toute résolution.',
-        '✅ Obvious tier : appeler eca__ask_user avec option [auto] en description → countdown 30s → auto-appliqué si pas de réponse.',
-        '✅ Ambiguous tier : appeler eca__ask_user SANS [auto] → bloquer jusqu\'à réponse ingénieur.',
-        '✅ Unresolvable tier : gap structurel → jamais auto-résolu.',
-        '⛔ Ne jamais promouvoir un ⚠️ Pending vers ✅ Aliases sans passer par eca__ask_user (sauf si déjà ✅ dans le thésaurus existant).',
-        '⛔ Ne jamais appeler eca__ask_user depuis un sous-agent (AUTONOMOUS_MODE si sub-agent détecté).',
+        '✅ _a_confirmer résolution AUTONOME (3 tiers) — lire § "_a_confirmer resolution — three tiers" du skill OBLIGATOIREMENT avant toute résolution.',
+        '✅ Obvious tier : auto-confirmer silencieusement (appliquer le défaut sans eca__ask_user — pas de terminal interactif sur cette branche).',
+        '✅ Ambiguous tier : NE PAS bloquer — conserver _a_confirmer:1, jamais promouvoir vers ✅ sans décision explicite ingénieur.',
+        '✅ Unresolvable tier : gap structurel → jamais auto-résolu → _a_confirmer:1.',
+        '⛔ Ne jamais appeler eca__ask_user — AUTONOMOUS_MODE actif sur cette branche (pas de WEB-025).',
+        '⛔ Ne jamais promouvoir un ⚠️ Pending vers ✅ Aliases automatiquement (sauf si déjà ✅ dans le thésaurus existant).',
       ],
     };
 
