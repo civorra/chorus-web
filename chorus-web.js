@@ -1392,8 +1392,9 @@ function selectSandbox(id) {
   document.getElementById('sb-detail-name').textContent = currentSandbox.name;
   document.getElementById('sb-detail-desc').textContent = currentSandbox.standard + ' — ' + currentSandbox.desc;
 
-  // Bouton "Confirmer → Feed" : état dynamique selon checkpoint + polling auto
+  // Barre boutons Feed : Pipeline Feed (avant scoping) + Confirmer→Feed (après scoping)
   stopFeedStatusPolling();
+  updatePipelineFeedBtn(currentSandbox.hasScoping);
   updateConfirmFeedBtn(currentSandbox.feedStatus || null, currentSandbox.hasScoping);
   if (currentSandbox.hasScoping && currentSandbox.feedStatus) {
     startFeedStatusPolling(currentSandbox.id, currentSandbox.feedStatus);
@@ -2987,6 +2988,15 @@ function launchConfirmFeed() {
   // Basculer immédiatement le bouton en état "running" sans attendre le polling
   updateConfirmFeedBtn({ status: 'running', passesDone: 0, maxPasses: 0, coveragePct: 0, pendingA: 0, pendingB: 0 }, true);
   startFeedStatusPolling(sbId, { status: 'running' });
+}
+
+// ─── PIPELINE FEED BUTTON ─────────────────────────────────────────────────
+// Visible uniquement AVANT la confirmation de SCOPING.md (étape 1/2).
+// Dès que hasScoping = true, ce bouton disparaît au profit de "Confirmer → Feed".
+function updatePipelineFeedBtn(hasScoping) {
+  const btn = document.getElementById('btn-pipeline-feed');
+  if (!btn) return;
+  btn.hidden = !!hasScoping;
 }
 
 // ─── FEED STATUS POLLING ──────────────────────────────────────────────────
@@ -7186,81 +7196,9 @@ function createSandbox() {
 // Unlike createSandbox() above (still fully client-side/in-memory —
 // out of scope here), entity creation is wired to a real backend route:
 // POST /api/sandboxes/:sbId/entities materialises workspace/<entity>/
-// with its two empty sources/ and reports/ subfolders on disk
-// (server/routes/scan.js). No simulation — the request can fail (name
-// collision, invalid sandbox) and the UI must reflect that.
-function openNewEntityModal() {
-  if (!currentSandbox) return;
-  document.getElementById('newentity-name').value = '';
-  document.getElementById('newentity-path-preview').textContent = '';
-  const hint = document.getElementById('newentity-hint');
-  if (hint) hint.textContent = '';
-  document.getElementById('newentity-modal-overlay').hidden = false;
-  document.getElementById('newentity-name').focus();
-}
-
-function closeNewEntityModal() {
-  document.getElementById('newentity-modal-overlay').hidden = true;
-}
-
-function updateNewEntityPathPreview() {
-  const name = document.getElementById('newentity-name').value;
-  const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
-  document.getElementById('newentity-path-preview').textContent = slug;
-}
-
-async function createEntity() {
-  if (!currentSandbox) return;
-  const sbId = currentSandbox.id;
-  const label = document.getElementById('newentity-name').value.trim();
-  const hint  = document.getElementById('newentity-hint');
-  const btn   = document.getElementById('newentity-create-btn');
-
-  if (!label) {
-    document.getElementById('newentity-name').focus();
-    return;
-  }
-
-  btn.disabled = true;
-  btn.textContent = '⏳ Création…';
-  if (hint) { hint.textContent = ''; hint.style.color = ''; }
-
-  try {
-    const r = await fetch(`${API}/api/sandboxes/${sbId}/entities`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ label }),
-    });
-    const data = await r.json();
-    if (!r.ok || !data.ok) {
-      throw new Error(data.error || `HTTP ${r.status}`);
-    }
-
-    ENTITIES[sbId] = ENTITIES[sbId] || [];
-    ENTITIES[sbId].push(data.entity);
-    PROJECTS[sbId] = PROJECTS[sbId] || [];
-
-    closeNewEntityModal();
-    renderProjectsTab();
-    renderSidebar();
-  } catch (err) {
-    if (hint) {
-      hint.style.color = 'var(--error, #EF4444)';
-      hint.textContent = `✗ ${err.message}`;
-    }
-  } finally {
-    btn.disabled = false;
-    btn.textContent = "Créer l'entity";
-  }
-}
-
 // Close modal on overlay click
 document.getElementById('modal-overlay').addEventListener('click', function(e) {
   if (e.target === this) closeModal();
-});
-
-document.getElementById('newentity-modal-overlay').addEventListener('click', function(e) {
-  if (e.target === this) closeNewEntityModal();
 });
 
 // ─── ECA LOGIN FLOW ──────────────────────────────────────────
