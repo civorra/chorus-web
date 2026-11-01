@@ -85,12 +85,22 @@ function scanSandboxCorpus(sbId) {
   // Helpers locaux pour extraire les tables de index.org
   const { extractOrgTable } = require('./parser');
 
-  const pipelineRows = extractOrgTable(indexContent, /^\*\s+Pipeline global/i);
+  // Accepte deux formats de heading :
+  //   Ancien : "* Pipeline global" — colonnes: pos | module | slug | kb | status
+  //   Nouveau: "* Agents"          — colonnes: #   | Slug   | KB org | Rules | Helpers | Mode A | Deferred-S | Deferred-C
+  const pipelineRows = extractOrgTable(indexContent, /^\*\s+(Pipeline global|Agents)\b/i);
+  const pipelineHeader = pipelineRows[0] || [];
+  // Détection du format par la position de 'Slug' dans l'en-tête
+  const isNewAgentFormat = /slug/i.test(pipelineHeader[1] || '');
   const pipeline = pipelineRows.slice(1)
-    .filter(r => r.length >= 5 && /^\d+$/.test(r[0]))
-    .map(r => ({ pos: r[0], module: r[1], slug: r[2], kb: r[3], status: r[4] }));
+    .filter(r => r.length >= 5 && /^\d+$/.test((r[0] || '').trim()))
+    .map(r => isNewAgentFormat
+      ? { pos: r[0], slug: r[1], module: r[2], kb: r[2], status: r[5] || '', deferred: parseInt(r[6]) || 0 }
+      : { pos: r[0], module: r[1], slug: r[2], kb: r[3], status: r[4], deferred: 0 }
+    );
 
-  const corpusRows = extractOrgTable(indexContent, /^\*\s+Integrated corpus/i);
+  // "* Integrated corpus" (ancien) ou "* Session log" (nouveau) — corpus de référence
+  const corpusRows = extractOrgTable(indexContent, /^\*\s+(Integrated corpus|Session log)\b/i);
   const integratedCorpus = corpusRows.slice(1)
     .filter(r => r.length >= 3)
     .map(r => ({ num: r[0], file: r[1], agents: r[2] }));

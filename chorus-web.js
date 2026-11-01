@@ -6272,6 +6272,39 @@ async function openAgentOrgView(slug) {
 let _sbcCurrentTab = 'corpus';
 let _sbcData = null;
 
+// ── _parseIndexOrgAgents ───────────────────────────────────────────────────
+// Fallback client-side : extrait les agents depuis le contenu brut de index.org
+// quand le scanner serveur retourne pipeline=[] (format "* Agents" non encore
+// reconnu côté serveur). Réplique la logique de scanSandboxCorpus côté serveur.
+function _parseIndexOrgAgents(raw) {
+  if (!raw) return [];
+  const lines = raw.split('\n');
+  // Trouver le heading "* Agents" ou "* Pipeline global"
+  const hi = lines.findIndex(l => /^\*\s+(Agents|Pipeline global)\b/i.test(l.trim()));
+  if (hi === -1) return [];
+  // Extraire les lignes de table (commencent par '|') jusqu'au prochain heading
+  const tableLines = [];
+  for (let i = hi + 1; i < lines.length; i++) {
+    const l = lines[i].trim();
+    if (l.startsWith('*')) break;          // heading suivant → fin de section
+    if (l.startsWith('|') && !l.startsWith('|---')) tableLines.push(l);
+  }
+  if (tableLines.length < 2) return [];    // besoin d'au moins 1 header + 1 data
+  const splitRow = l => l.split('|').slice(1, -1).map(c => c.trim());
+  const header = splitRow(tableLines[0]);
+  // Détecter le format : "* Agents" (nouveau) ou "* Pipeline global" (ancien)
+  const isNewFmt = /slug/i.test(header[1] || '');
+  return tableLines.slice(1)
+    .map(splitRow)
+    .filter(r => r.length >= 5 && /^\d+$/.test(r[0]))
+    .map(r => isNewFmt
+      ? { pos: r[0], slug: r[1], module: r[2], kb: r[2], status: r[5] || '',
+          deferred: parseInt(r[6]) || 0, frames: [], rules: [], ruleFileCount: 0 }
+      : { pos: r[0], module: r[1], slug: r[2], kb: r[3], status: r[4],
+          deferred: 0, frames: [], rules: [], ruleFileCount: 0 }
+    );
+}
+
 async function openSandboxCorpus() {
   if (!currentSandbox) return;
   const sb = currentSandbox;
@@ -6296,13 +6329,27 @@ async function openSandboxCorpus() {
   } catch { /* backend indisponible — géré par les messages vides ci-dessous */ }
   _sbcData = data;
 
-  const pipeline          = data?.pipeline || [];
+  let pipeline          = data?.pipeline || [];
   const integratedCorpus  = data?.integratedCorpus || [];
   const corpusFilesAll    = data?.corpusFiles || [];
   const corpusFiles       = corpusFilesAll.filter(f => !f.isPreSplit);
   const corpusPreSplit    = corpusFilesAll.filter(f => f.isPreSplit);
   const readme            = data?.readme || null;
   const thesaurus         = data?.thesaurus || [];
+
+  // ── Fallback client-side : si pipeline vide mais kbModeled, parser index.org ──
+  // Couvre le format "* Agents" produit par chorus-feed (vs "* Pipeline global"
+  // attendu par le scanner serveur avant correction du scanner.js).
+  if (!pipeline.length && sb.kbModeled) {
+    try {
+      const ri = await fetch(`${API}/api/sandboxes/${sb.id}/agents/index/org`);
+      if (ri.ok) {
+        const raw = await ri.text();
+        pipeline = _parseIndexOrgAgents(raw);
+      }
+    } catch { /* silencieux — on reste avec pipeline = [] */ }
+  }
+
   const totalFrames       = pipeline.reduce((s, a) => s + (a.frames?.length || 0), 0);
   const totalRules        = pipeline.reduce((s, a) => s + (a.ruleFileCount || 0), 0);
 
