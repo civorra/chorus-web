@@ -2294,6 +2294,18 @@ function confirmRunChorusFix(mode) {
   const sb = currentSandbox;
   const report = sb.strengthenReport;
 
+  // Guard — refuse si un chorus-fix est déjà actif sur ce sandbox
+  const alreadyFix = (_activeTerminalsCache || [])
+    .find(t => t.sbId === sb.id && t.kind === 'fix');
+  if (alreadyFix) {
+    alert(
+      `Un chorus-fix est déjà en cours sur « ${sb.id} » ` +
+      `(depuis ${Math.round((alreadyFix.elapsedMs || 0) / 60000)} min).\n\n` +
+      `Attendez la fin avant de relancer.`
+    );
+    return;
+  }
+
   if (!report || report.totalGaps === 0) {
     alert('Aucun gap à corriger. Lancez chorus-strengthen d\'abord.');
     return;
