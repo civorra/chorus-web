@@ -2062,20 +2062,22 @@ function renderStrengthenPanel(report, sbId) {
     ? `<div style="font-size:11px;color:var(--warn);margin-bottom:8px">⚠️ ${blockedCount} patch(es) bloqué(s) par la garde anti-régression — révision manuelle requise.</div>`
     : '';
 
+  const fixRunning = !!(_activeTerminalsCache || [])
+    .find(t => t.sbId === sbId && t.kind === 'fix');
+  const _fixBtn = (mode, label, title) => fixRunning
+    ? `<button class="btn btn-ghost btn-sm" style="font-size:11px;opacity:.45" disabled
+         title="chorus-fix en cours — attendez la fin">⏳ En cours…</button>`
+    : `<button class="btn btn-ghost btn-sm" style="font-size:11px"
+         onclick="confirmRunChorusFix('${mode}')" title="${title}">${label}</button>`;
+
   const fixBtns = (bB + bC > 0) ? `
     <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">
-      <button class="btn btn-ghost btn-sm" style="font-size:11px" onclick="confirmRunChorusFix('dry-run')"
-        title="Prévisualise les patches YAML et les corpus-correctif sans rien écrire">
-        🛠️ Dry-run (prévisualiser)
-      </button>
-      ${bB > 0 ? `<button class="btn btn-ghost btn-sm" style="font-size:11px" onclick="confirmRunChorusFix('bucket-b')"
-        title="Applique les patches YAML Bucket B après confirmation">
-        ⚡ Appliquer Bucket B (${bB} règle(s) YAML)
-      </button>` : ''}
-      ${bC > 0 ? `<button class="btn btn-ghost btn-sm" style="font-size:11px" onclick="confirmRunChorusFix('bucket-c')"
-        title="Génère corpus-correctif.txt et lance chorus-feed --enrich pour les gaps Bucket C">
-        📄 Générer corpus-correctif (${bC} règle(s) manquante(s))
-      </button>` : ''}
+      ${_fixBtn('dry-run', '🛠️ Dry-run (prévisualiser)',
+          'Prévisualise les patches YAML et les corpus-correctif sans rien écrire')}
+      ${bB > 0 ? _fixBtn('bucket-b', `⚡ Appliquer Bucket B (${bB} règle(s) YAML)`,
+          'Applique les patches YAML Bucket B après confirmation') : ''}
+      ${bC > 0 ? _fixBtn('bucket-c', `📄 Générer corpus-correctif (${bC} règle(s) manquante(s))`,
+          'Génère corpus-correctif.txt et lance chorus-feed --enrich pour les gaps Bucket C') : ''}
     </div>` : '';
 
   return `<div class="pv-panel" style="margin-top:18px">
@@ -2459,10 +2461,17 @@ function renderKbConvergenceWorkflow(testing, strengthenReport, sbId, kbModeled)
     const parts = [];
     if (bB) parts.push(`${bB} règle(s) YAML`); if (bC) parts.push(`${bC} enrichissement(s) KB`);
     step3Badge = `<span style="color:var(--info)">${parts.join(' · ') || '—'}</span>`;
+    const fixRunning3 = !!(_activeTerminalsCache || [])
+      .find(t => t.sbId === sbId && t.kind === 'fix');
+    const _fixBtn3 = (mode, label) => fixRunning3
+      ? `<button class="btn btn-ghost btn-sm" style="font-size:11px;opacity:.45" disabled
+           title="chorus-fix en cours — attendez la fin">⏳ En cours…</button>`
+      : `<button class="btn btn-ghost btn-sm" style="font-size:11px"
+           onclick="confirmRunChorusFix('${mode}')">${label}</button>`;
     step3Action = `<span style="display:flex;gap:6px;flex-wrap:wrap">
-      <button class="btn btn-ghost btn-sm" style="font-size:11px" onclick="confirmRunChorusFix('dry-run')" title="Prévisualise sans écrire">🛠️ Dry-run</button>
-      ${bB ? `<button class="btn btn-ghost btn-sm" style="font-size:11px" onclick="confirmRunChorusFix('bucket-b')">⚡ B (${bB})</button>` : ''}
-      ${bC ? `<button class="btn btn-ghost btn-sm" style="font-size:11px" onclick="confirmRunChorusFix('bucket-c')">📄 C (${bC})</button>` : ''}
+      ${_fixBtn3('dry-run', '🛠️ Dry-run')}
+      ${bB ? _fixBtn3('bucket-b', `⚡ B (${bB})`) : ''}
+      ${bC ? _fixBtn3('bucket-c', `📄 C (${bC})`) : ''}
     </span>`;
   }
 
