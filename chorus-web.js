@@ -2269,12 +2269,23 @@ function runStrengthenFull() {
   function runCheckAll() {
     if (!currentSandbox) return;
     const sb = currentSandbox;
+    // Guard — refuse si un chorus-check est déjà actif sur ce sandbox
+    const already = (_activeTerminalsCache || [])
+      .find(t => t.sbId === sb.id && t.kind === 'check-all');
+    if (already) {
+      alert(
+        `Un chorus-check est déjà en cours sur « ${sb.id} » ` +
+        `(depuis ${Math.round((already.elapsedMs || 0) / 60000)} min).\n\n` +
+        `Attendez la fin avant de relancer.`
+      );
+      return;
+    }
     const existingSlugs = Object.keys(TESTING_META).filter(s => (sb.testing || {})[s]);
     if (!existingSlugs.length) return;
     const cmd = existingSlugs.length === 1
       ? `chorus-check ${sb.id} ${TESTING_FILES[existingSlugs[0]]}`
       : `chorus-check ${sb.id} --all`;
-    openLevelTerminal('sandbox', { sbId: sb.id }, cmd);
+    openLevelTerminal('sandbox', { sbId: sb.id, kind: 'check-all' }, cmd);
   }
 
 // ─── CHORUS-FIX LAUNCHER ──────────────────────────────────────────────────
@@ -2351,25 +2362,32 @@ function renderKbConvergenceWorkflow(testing, strengthenReport, sbId, kbModeled)
   const checkTs      = slugs.map(k => testing[k].convergence?.timestamp).filter(Boolean).sort().pop();
   const checkDone    = slugs.some(k => testing[k].convergence);
 
+  // Détection d'un chorus-check actif sur ce sandbox (kind='check-all')
+  const checkRunning = !!(_activeTerminalsCache || [])
+    .find(t => t.sbId === sbId && t.kind === 'check-all');
+  const checkBtn = (label) => checkRunning
+    ? `<button class="btn btn-ghost btn-sm" style="font-size:11px;opacity:.45" disabled title="chorus-check en cours — attendez la fin">⏳ En cours…</button>`
+    : `<button class="btn btn-ghost btn-sm" style="font-size:11px" onclick="runCheckAll()">${label}</button>`;
+
   let step1State, step1Badge, step1Action = '';
   if (!checkDone) {
     step1State = 'pending';
     step1Badge = `<span style="color:var(--text-muted)">○ jamais lancé</span>`;
-    step1Action = `<button class="btn btn-ghost btn-sm" style="font-size:11px" onclick="runCheckAll()">▶ Vérifier</button>`;
+    step1Action = checkBtn('▶ Vérifier');
   } else if (anyStale) {
     step1State = 'stale';
     step1Badge = `<span style="color:var(--warn)">⚠️ périmé — résultats obsolètes</span>`;
-    step1Action = `<button class="btn btn-ghost btn-sm" style="font-size:11px" onclick="runCheckAll()">▶ Re-lancer</button>`;
+    step1Action = checkBtn('▶ Re-lancer');
   } else if (totalDisc === 0 && totalUnproc === 0) {
     step1State = 'ok';
     step1Badge = `<span style="color:var(--success)">✅ ${slugs.length} projet(s) convergés</span>
       <span style="color:var(--text-muted);font-size:10px;margin-left:6px">${(checkTs||'').slice(0,16).replace('T',' ')}</span>`;
-    step1Action = `<button class="btn btn-ghost btn-sm" style="font-size:11px" onclick="runCheckAll()">▶ Re-vérifier</button>`;
+    step1Action = checkBtn('▶ Re-vérifier');
   } else {
     step1State = 'disc';
     step1Badge = `<span style="color:var(--warn)">⚠️ ${totalDisc} discordance(s)</span>
       <span style="color:var(--text-muted);font-size:10px;margin-left:6px">${(checkTs||'').slice(0,16).replace('T',' ')}</span>`;
-    step1Action = `<button class="btn btn-ghost btn-sm" style="font-size:11px" onclick="runCheckAll()">▶ Re-lancer</button>`;
+    step1Action = checkBtn('▶ Re-lancer');
   }
 
   // ── État étape ②  (chorus-strengthen) ───────────────────────────────
@@ -2439,7 +2457,7 @@ function renderKbConvergenceWorkflow(testing, strengthenReport, sbId, kbModeled)
       <span style="min-width:90px">🔄 Re-vérifier</span>
       <code style="font-size:10px;color:var(--text-muted)">chorus-check --all</code>
       <span style="flex:1;color:var(--text-muted)">○ après correction KB</span>
-      <button class="btn btn-ghost btn-sm" style="font-size:11px" onclick="runCheckAll()">▶ Lancer</button>
+      ${checkBtn('▶ Lancer')}
     </div>` : '';
 
   // ── Global : 🏁 Convergé ──────────────────────────────────────────────
