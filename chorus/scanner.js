@@ -539,6 +539,30 @@ function readLastFixHistory(sbPath) {
   };
 }
 
+// ── readFeedStatus ─────────────────────────────────────────────────────────
+//
+// Lit .chorus-unattended-state.json dans le sandbox et retourne un objet
+// normalisé utilisé par le bouton "Confirmer → Feed" pour afficher l'état
+// en temps réel (polling côté client via GET /api/sandboxes/:sbId/feed-status).
+
+function readFeedStatus(sbPath) {
+  const p = path.join(sbPath, '.chorus-unattended-state.json');
+  if (!fileExists(p)) return null;
+  try {
+    const d = JSON.parse(fs.readFileSync(p, 'utf8'));
+    return {
+      status:      d.status                            || 'waiting',
+      converged:   !!d.converged,
+      passesDone:  d.passes_done                       || 0,
+      maxPasses:   d.max_passes                        || 0,
+      coveragePct: d.coverage_pct                      || 0,
+      pendingA:    (d.files_mode_a_pending  || []).length,
+      pendingB:    (d.files_mode_b_pending  || []).length,
+      nextAction:  d.next_action                       || null,
+    };
+  } catch { return null; }
+}
+
 // ── scanSandbox ────────────────────────────────────────────────────────────
 
 function scanSandbox(sbId) {
@@ -674,12 +698,15 @@ function scanSandbox(sbId) {
     };
   }
 
-  const kbModeled = fileExists(path.join(sbPath, 'agent', 'chorus', 'index.org'));
+  const kbModeled   = fileExists(path.join(sbPath, 'agent', 'chorus', 'index.org'));
+  const hasScoping  = fileExists(path.join(sbPath, 'SCOPING.md'));
+  const hasCorpusDirectives = fileExists(path.join(sbPath, 'CORPUS-DIRECTIVES.md'));
 
   const strengthenReport = readLastStrengthenReport(sbPath);
   const fixHistory       = readLastFixHistory(sbPath);
+  const feedStatus       = readFeedStatus(sbPath);
 
-  return { id: sbId, name, norm, standard, desc, path: sbPath, entities, testing, kbModeled, strengthenReport, fixHistory };
+  return { id: sbId, name, norm, standard, desc, path: sbPath, entities, testing, kbModeled, hasScoping, hasCorpusDirectives, strengthenReport, fixHistory, feedStatus };
 }
 
 // ── scanAll ───────────────────────────────────────────────────────────────

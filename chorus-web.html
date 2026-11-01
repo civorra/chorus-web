@@ -95,6 +95,8 @@
             <button class="btn btn-ghost btn-sm" style="white-space:nowrap" onclick="openNewEntityModal()">➕ Entity</button>
             <button class="btn btn-ghost btn-sm" style="white-space:nowrap" onclick="openSandboxCorpus()">📚 Corpus</button>
             <button class="btn btn-ghost btn-sm" style="white-space:nowrap" onclick="openLevelTerminal('sandbox', {sbId: currentSandbox.id})">🖥️ Terminal ECA</button>
+            <button class="btn btn-ghost btn-sm" style="white-space:nowrap;color:var(--accent)" onclick="launchPipelineFeed()" title="Étape 1/2 : corpus-directives + corpus-scoping (arrêt avant feed)">🚀 Pipeline Feed</button>
+            <button class="btn btn-ghost btn-sm" id="btn-confirm-feed" hidden style="white-space:nowrap" onclick="launchConfirmFeed()">✅ Confirmer → Feed</button>
           </div>
         </div>
         <!-- Tabs -->
@@ -212,6 +214,36 @@
 <div id="corpus-thesaurus-wrap" hidden></div>
 
 <!-- Sandbox Corpus modal -->
+<!-- ── Pipeline Feed — pré-vol sélection corpus ──────────────────────── -->
+<div id="pipeline-feed-preflight" hidden onclick="if(event.target===this)closePipelineFeedPreflight()">
+  <div style="background:var(--bg-surface);border:1px solid var(--border);border-radius:12px;
+              width:min(520px,94vw);max-height:80vh;display:flex;flex-direction:column;
+              box-shadow:0 24px 64px rgba(0,0,0,.55)">
+    <div class="cm-header">
+      <div style="flex:1">
+        <div class="cm-title">🚀 Pipeline Feed — Sélection du corpus</div>
+        <div class="cm-sub" id="pf-preflight-sandbox"></div>
+      </div>
+      <button class="btn btn-ghost btn-sm" onclick="closePipelineFeedPreflight()">✕</button>
+    </div>
+    <div style="padding:8px 20px 4px;font-size:11px;color:var(--text-muted)">
+      Cochez les fichiers à inclure dans le pipeline <code>chorus-corpus-directives → corpus-scoping → feed --unattended</code>.
+    </div>
+    <div id="pf-preflight-list" style="flex:1;overflow-y:auto;padding:8px 20px 12px;
+         display:flex;flex-direction:column;gap:4px;min-height:60px"></div>
+    <div style="padding:12px 20px;border-top:1px solid var(--border);display:flex;
+                align-items:center;justify-content:space-between;gap:8px">
+      <span id="pf-preflight-count" style="font-size:11px;color:var(--text-muted)"></span>
+      <div style="display:flex;gap:8px">
+        <button class="btn btn-ghost btn-sm" onclick="closePipelineFeedPreflight()">Annuler</button>
+        <button class="btn btn-sm" id="pf-preflight-launch"
+                style="background:var(--accent);color:#fff;font-weight:600"
+                onclick="confirmPipelineFeedPreflight()">🚀 Lancer le pipeline</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <div id="sb-corpus-overlay" hidden onclick="if(event.target===this)closeSandboxCorpus()">
   <div class="corpus-modal" style="max-width:min(1180px,94vw);width:94vw;max-height:88vh">
     <div class="cm-header">

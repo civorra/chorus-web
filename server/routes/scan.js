@@ -44,6 +44,64 @@ router.get('/sandboxes/:sbId/corpus', (req, res) => {
   }
 });
 
+// ── GET /sandboxes/:sbId/corpus-files ────────────────────────────────────
+// Liste récursive de tous les fichiers non-cachés dans corpus/ et ses
+// sous-dossiers. Utilisé par le pré-vol Pipeline Feed pour présenter la
+// liste à l'utilisateur avant d'ouvrir le terminal ECA.
+router.get('/sandboxes/:sbId/corpus-files', (req, res) => {
+  const { SANDBOXES_DIR } = require('../../chorus/fs');
+  try {
+    const corpusRoot = path.join(SANDBOXES_DIR(), req.params.sbId, 'corpus');
+    const NON_DOC = /\.(log|pyc|pyo|tmp|bak|swp)$/i;
+    const files = [];
+    function scan(dir, relBase) {
+      let entries;
+      try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+      for (const e of entries) {
+        if (e.name.startsWith('.')) continue;
+        const relPath = relBase ? `${relBase}/${e.name}` : e.name;
+        const full    = path.join(dir, e.name);
+        if (e.isDirectory()) { scan(full, relPath); }
+        else if (!NON_DOC.test(e.name)) {
+          let size = null;
+          try { size = fs.statSync(full).size; } catch {}
+          files.push({ name: e.name, relPath, size });
+        }
+      }
+    }
+    scan(corpusRoot, '');
+    res.json({ ok: true, files });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+// ── GET /sandboxes/:sbId/feed-status ─────────────────────────────────────
+// Lit .chorus-unattended-state.json du sandbox et retourne l'état normalisé.
+// Appelé par le polling client toutes les N secondes pour mettre à jour le
+// bouton "Confirmer → Feed" sans rechargement de page.
+router.get('/sandboxes/:sbId/feed-status', (req, res) => {
+  try {
+    const { SANDBOXES_DIR } = require('../../chorus/fs');
+    const sbPath = path.join(SANDBOXES_DIR(), req.params.sbId);
+    const p = path.join(sbPath, '.chorus-unattended-state.json');
+    if (!fs.existsSync(p)) return res.json({ ok: true, feedStatus: null });
+    const d = JSON.parse(fs.readFileSync(p, 'utf8'));
+    res.json({ ok: true, feedStatus: {
+      status:      d.status                           || 'waiting',
+      converged:   !!d.converged,
+      passesDone:  d.passes_done                      || 0,
+      maxPasses:   d.max_passes                       || 0,
+      coveragePct: d.coverage_pct                     || 0,
+      pendingA:    (d.files_mode_a_pending || []).length,
+      pendingB:    (d.files_mode_b_pending || []).length,
+      nextAction:  d.next_action                      || null,
+    }});
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
 router.get('/sandboxes/:sbId/agents/:slug/org', (req, res) => {
   try {
     const content = chorus.readAgentOrgFile(req.params.sbId, req.params.slug);

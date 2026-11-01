@@ -157,7 +157,9 @@ function buildSandboxEntry(sb, iconIndex) {
     last_run_entity:  lastRunEntity,
     last_run_project: lastRunProject,
     testing:         sb.testing         || { iso: null, edges: null, cross: null, scale: null },
-    kbModeled:       !!sb.kbModeled,
+    kbModeled:            !!sb.kbModeled,
+    hasScoping:           !!sb.hasScoping,
+    hasCorpusDirectives:  !!sb.hasCorpusDirectives,
     // strengthenReport — rapport chorus-strengthen (.last-strengthen-report.json)
     // lu par scanner.js § readLastStrengthenReport. Absent du rebuild initial →
     // renderKbConvergenceWorkflow affichait "Jamais analysé" après refreshSandboxReports.
@@ -1389,6 +1391,13 @@ function selectSandbox(id) {
   // Fill detail
   document.getElementById('sb-detail-name').textContent = currentSandbox.name;
   document.getElementById('sb-detail-desc').textContent = currentSandbox.standard + ' — ' + currentSandbox.desc;
+
+  // Bouton "Confirmer → Feed" : état dynamique selon checkpoint + polling auto
+  stopFeedStatusPolling();
+  updateConfirmFeedBtn(currentSandbox.feedStatus || null, currentSandbox.hasScoping);
+  if (currentSandbox.hasScoping && currentSandbox.feedStatus) {
+    startFeedStatusPolling(currentSandbox.id, currentSandbox.feedStatus);
+  }
 
   // Reset to projects tab
   switchTab('projects');
@@ -2860,6 +2869,245 @@ function confirmRunStrengthen(slug) {
 
   openLevelTerminal('sandbox', { sbId: sb.id, kind: 'strengthen' },
     `chorus-strengthen ${sb.id}` + scopeNote);
+}
+
+// ─── PIPELINE FEED ──────────────────────────────────────────────────────────
+// Lance le pipeline complet de préparation + alimentation d'un sandbox.
+// Flux :
+//   1. Pré-vol client-side : fetch /corpus-files → overlay checkboxes → confirm
+//   2. Terminal ECA avec liste déjà confirmée dans le prompt (pas d'eca__ask_user
+//      en étape 0 — évite le bug DONE_INSTRUCTION qui fermait la session après
+//      la réponse eca__ask_user et empêchait les étapes 1-4 de démarrer).
+
+async function launchPipelineFeed() {
+  if (!currentSandbox) return;
+  const sb = currentSandbox;
+
+  // Charger la liste des fichiers corpus avant d'ouvrir le terminal
+  let files = [];
+  try {
+    const r = await fetch(`${API}/api/sandboxes/${sb.id}/corpus-files`);
+    const d = await r.json();
+    if (d.ok) files = d.files || [];
+  } catch {}
+
+  showPipelineFeedPreflight(sb, files);
+}
+
+/** Affiche l'overlay pré-vol avec la liste des fichiers corpus. */
+function showPipelineFeedPreflight(sb, files) {
+  const overlay = document.getElementById('pipeline-feed-preflight');
+  if (!overlay) return;
+
+  document.getElementById('pf-preflight-sandbox').textContent = `sandbox : ${sb.id}`;
+
+  const list = document.getElementById('pf-preflight-list');
+  list.innerHTML = '';
+
+  if (!files.length) {
+    list.innerHTML = '<div style="color:var(--text-muted);font-size:12px;padding:8px 0">Aucun fichier trouvé dans corpus/</div>';
+  } else {
+    files.forEach((f, i) => {
+      const row = document.createElement('label');
+      row.className = 'pf-file-row';
+      const sizeStr = f.size != null
+        ? f.size > 1024 ? `${(f.size / 1024).toFixed(1)} ko` : `${f.size} o`
+        : '';
+      row.innerHTML =
+        `<input type="checkbox" name="pf-file" value="${escapeHtml(f.relPath)}" checked>` +
+        `<span class="pf-file-name">${escapeHtml(f.relPath)}</span>` +
+        `<span class="pf-file-size">${sizeStr}</span>`;
+      list.appendChild(row);
+    });
+  }
+
+  // Stocker le contexte sandbox pour confirmPipelineFeedPreflight
+  overlay.dataset.sbId = sb.id;
+  updatePipelineFeedCount();
+  overlay.hidden = false;
+
+  // Mettre à jour le compteur quand on coche/décoche
+  list.addEventListener('change', updatePipelineFeedCount);
+}
+
+function updatePipelineFeedCount() {
+  const checked = document.querySelectorAll('#pf-preflight-list input[name=pf-file]:checked');
+  const total   = document.querySelectorAll('#pf-preflight-list input[name=pf-file]');
+  const el = document.getElementById('pf-preflight-count');
+  if (el) el.textContent = `${checked.length} / ${total.length} fichier${total.length > 1 ? 's' : ''} sélectionné${checked.length > 1 ? 's' : ''}`;
+  const btn = document.getElementById('pf-preflight-launch');
+  if (btn) btn.disabled = checked.length === 0;
+}
+
+function closePipelineFeedPreflight() {
+  const overlay = document.getElementById('pipeline-feed-preflight');
+  if (overlay) overlay.hidden = true;
+}
+
+function confirmPipelineFeedPreflight() {
+  const overlay = document.getElementById('pipeline-feed-preflight');
+  if (!overlay) return;
+  const sbId = overlay.dataset.sbId;
+  if (!sbId) return;
+
+  const selected = [...document.querySelectorAll('#pf-preflight-list input[name=pf-file]:checked')]
+    .map(cb => cb.value);
+  if (!selected.length) return;
+  closePipelineFeedPreflight();
+
+  const fileList = selected.map(f => `  • ${f}`).join('\n');
+  // Session 1 : directives + scoping seulement.
+  // Pas d'eca__ask_user — ECA écrit DONE naturellement après chorus-corpus-scoping.
+  // La confirmation SCOPING et le lancement du feed sont gérés côté client
+  // (bouton "✅ Confirmer → Feed") pour éviter les bugs eca__ask_user mid-session
+  // (perte de contexte du sbId, DONE_INSTRUCTION prématurée).
+  const cmd =
+    `Prépare le sandbox "${sbId}" pour le pipeline Feed.\n\n` +
+    `Fichiers corpus à utiliser (sélection confirmée par l'utilisateur) :\n` +
+    `${fileList}\n\n` +
+    `ÉTAPE 1 — Lance : chorus-corpus-directives ${sbId} --init\n` +
+    `ÉTAPE 2 — Une fois les directives générées, lance : chorus-corpus-scoping ${sbId}\n\n` +
+    `⛔ Ne lance PAS chorus-feed. Arrête-toi après chorus-corpus-scoping.\n` +
+    `L'utilisateur reviewera SCOPING.md et confirmera manuellement avant le feed.`;
+
+  openLevelTerminal('sandbox', { sbId, kind: 'pipeline-feed' }, cmd);
+}
+
+// ─── CONFIRM → FEED ───────────────────────────────────────────────────────
+// Session N du pipeline : l'utilisateur clique "Confirmer → Feed".
+// Lance chorus-feed --unattended dans une session dédiée.
+function launchConfirmFeed() {
+  if (!currentSandbox) return;
+  const sbId = currentSandbox.id;
+  const cmd =
+    `Lance : chorus-feed ${sbId} --unattended\n\n` +
+    `SCOPING.md a été confirmé par l'utilisateur avant cette session. ` +
+    `Utilise-le tel quel sans redemander de validation.`;
+  openLevelTerminal('sandbox', { sbId, kind: 'pipeline-feed' }, cmd);
+  // Basculer immédiatement le bouton en état "running" sans attendre le polling
+  updateConfirmFeedBtn({ status: 'running', passesDone: 0, maxPasses: 0, coveragePct: 0, pendingA: 0, pendingB: 0 }, true);
+  startFeedStatusPolling(sbId, { status: 'running' });
+}
+
+// ─── FEED STATUS POLLING ──────────────────────────────────────────────────
+// Met à jour le bouton "Confirmer → Feed" en temps réel sans rechargement
+// de page via polling sur GET /api/sandboxes/:sbId/feed-status.
+
+let _feedStatusPoller = null;
+
+function stopFeedStatusPolling() {
+  if (_feedStatusPoller) { clearInterval(_feedStatusPoller); _feedStatusPoller = null; }
+}
+
+async function fetchFeedStatus(sbId) {
+  try {
+    const r = await fetch(`${API}/api/sandboxes/${sbId}/feed-status`);
+    if (!r.ok) return null;
+    const d = await r.json();
+    return d.ok ? d.feedStatus : null;
+  } catch { return null; }
+}
+
+// Adapte l'apparence du bouton selon l'état du checkpoint.
+// feedStatus = null  → pas encore de checkpoint (première session)
+// feedStatus.status  → 'running' | 'waiting' | 'converged' | 'stopped_max_passes'
+function updateConfirmFeedBtn(feedStatus, hasScoping) {
+  const btn = document.getElementById('btn-confirm-feed');
+  if (!btn) return;
+
+  if (!hasScoping) { btn.hidden = true; stopFeedStatusPolling(); return; }
+
+  btn.hidden = false;
+
+  if (!feedStatus) {
+    // Première session — pas encore de checkpoint
+    btn.disabled    = false;
+    btn.textContent = '✅ Confirmer → Feed';
+    btn.style.color       = 'var(--ok,#30D158)';
+    btn.style.borderColor = 'var(--ok,#30D158)';
+    btn.style.opacity     = '1';
+    btn.title   = 'SCOPING.md confirmé — lance chorus-feed --unattended';
+    btn.onclick = launchConfirmFeed;
+    return;
+  }
+
+  switch (feedStatus.status) {
+    case 'running':
+      btn.disabled    = true;
+      btn.textContent = '⏳ Feed en cours…';
+      btn.style.color       = 'var(--accent,#0A84FF)';
+      btn.style.borderColor = 'var(--accent,#0A84FF)';
+      btn.style.opacity     = '0.75';
+      btn.title   = feedStatus.passesDone
+        ? `Passe ${feedStatus.passesDone}/${feedStatus.maxPasses} en cours — couverture ${feedStatus.coveragePct}%`
+        : 'Session en cours…';
+      btn.onclick = null;
+      break;
+
+    case 'waiting': {
+      const pending = (feedStatus.pendingA || 0) + (feedStatus.pendingB || 0);
+      btn.disabled    = false;
+      btn.textContent = `▶ Feed (${feedStatus.passesDone}/${feedStatus.maxPasses})`;
+      btn.style.color       = 'var(--ok,#30D158)';
+      btn.style.borderColor = 'var(--ok,#30D158)';
+      btn.style.opacity     = '1';
+      btn.title   = `${pending} fichier(s) en attente · couverture ${feedStatus.coveragePct}% · cliquer pour continuer`;
+      btn.onclick = launchConfirmFeed;
+      break;
+    }
+
+    case 'converged':
+      btn.disabled    = true;
+      btn.textContent = `✅ Complet (${feedStatus.coveragePct}%)`;
+      btn.style.color       = 'var(--ok,#30D158)';
+      btn.style.borderColor = 'transparent';
+      btn.style.opacity     = '0.6';
+      btn.title   = `Convergence atteinte en ${feedStatus.passesDone} passes`;
+      btn.onclick = null;
+      stopFeedStatusPolling();
+      break;
+
+    case 'stopped_max_passes':
+      btn.disabled    = false;
+      btn.textContent = '⚠️ Max passes';
+      btn.style.color       = 'var(--warn,#FF9F0A)';
+      btn.style.borderColor = 'var(--warn,#FF9F0A)';
+      btn.style.opacity     = '1';
+      btn.title   = `${feedStatus.passesDone}/${feedStatus.maxPasses} passes — Deferred restants non résolus`;
+      btn.onclick = launchConfirmFeed;
+      break;
+
+    default:
+      btn.disabled    = false;
+      btn.textContent = '✅ Confirmer → Feed';
+      btn.style.color       = 'var(--ok,#30D158)';
+      btn.style.borderColor = 'var(--ok,#30D158)';
+      btn.style.opacity     = '1';
+      btn.onclick = launchConfirmFeed;
+  }
+}
+
+function startFeedStatusPolling(sbId, initialStatus) {
+  stopFeedStatusPolling();
+  // Pas de polling si déjà convergé
+  if (initialStatus && (initialStatus.status === 'converged' || initialStatus.status === 'stopped_max_passes')) return;
+  // Fréquence : rapide si session en cours, lente si en attente
+  const interval = (initialStatus && initialStatus.status === 'running') ? 5000 : 15000;
+  _feedStatusPoller = setInterval(async () => {
+    if (!currentSandbox || currentSandbox.id !== sbId) { stopFeedStatusPolling(); return; }
+    const fs = await fetchFeedStatus(sbId);
+    updateConfirmFeedBtn(fs, currentSandbox.hasScoping);
+    if (!fs) return;
+    if (fs.status === 'converged' || fs.status === 'stopped_max_passes') {
+      stopFeedStatusPolling();
+    } else if (fs.status === 'running' && interval > 5000) {
+      // Était en polling lent, passer en rapide
+      startFeedStatusPolling(sbId, fs);
+    } else if (fs.status === 'waiting' && interval < 15000) {
+      // Session terminée, repasser en polling lent
+      startFeedStatusPolling(sbId, fs);
+    }
+  }, interval);
 }
 
 // Runs the current selection. If all present tests are selected
