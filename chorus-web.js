@@ -6272,6 +6272,119 @@ async function openAgentOrgView(slug) {
 let _sbcCurrentTab = 'corpus';
 let _sbcData = null;
 
+// ── _parseOrgTable ────────────────────────────────────────────────────────
+// Extrait une table org-mode depuis raw sous un heading matchant headingRegex.
+// Retourne { headers: string[], rows: string[][] } ou null si absent.
+function _parseOrgTable(raw, headingRegex) {
+  const lines = raw.split('\n');
+  const hi = lines.findIndex(l => headingRegex.test(l.trim()));
+  if (hi === -1) return null;
+  const tableLines = [];
+  for (let i = hi + 1; i < lines.length; i++) {
+    const l = lines[i].trim();
+    if (l.startsWith('*')) break;
+    if (l.startsWith('|') && !l.startsWith('|---') && !l.startsWith('|--+')) tableLines.push(l);
+  }
+  if (tableLines.length < 2) return null;
+  const split = l => l.split('|').slice(1, -1).map(c => c.trim());
+  return { headers: split(tableLines[0]), rows: tableLines.slice(1).map(split) };
+}
+
+// ── _renderPipelineFromIndexOrg ───────────────────────────────────────────
+// Rend la vue Pipeline cross-agents à partir du contenu brut de index.org.
+// Sections utilisées : * Agents, * Thresholds cross-reference,
+//                      * Control slots, * Frames
+function _renderPipelineFromIndexOrg(raw, pipeline) {
+  const esc = s => String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+
+  // ── Section helpers ─────────────────────────────────────────────────────
+  function section(title, body) {
+    return `
+      <div style="margin-bottom:20px">
+        <div style="font-size:10px;font-weight:700;color:var(--text-muted);text-transform:uppercase;
+                    letter-spacing:.1em;margin-bottom:10px;padding-bottom:4px;
+                    border-bottom:1px solid var(--border)">${esc(title)}</div>
+        ${body}
+      </div>`;
+  }
+
+  function orgTable(t, colStyles) {
+    if (!t || !t.rows.length) return '<div style="color:var(--text-muted);font-size:12px">—</div>';
+    const thStyle = 'padding:4px 10px;font-size:10px;font-weight:600;color:var(--text-muted);' +
+                    'text-align:left;border-bottom:1px solid var(--border);white-space:nowrap';
+    const tdStyle = (i) => `padding:4px 10px;font-size:11px;color:var(--text-secondary);` +
+                            `vertical-align:top;border-bottom:1px solid var(--border-light);` +
+                            (colStyles && colStyles[i] ? colStyles[i] : '');
+    return `<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse">
+      <thead><tr>${t.headers.map(h => `<th style="${thStyle}">${esc(h)}</th>`).join('')}</tr></thead>
+      <tbody>${t.rows.map(r =>
+        `<tr>${r.map((c, i) => `<td style="${tdStyle(i)}">${esc(c)}</td>`).join('')}</tr>`
+      ).join('')}</tbody>
+    </table></div>`;
+  }
+
+  const parts = [];
+
+  // ── 1. Flux pipeline ───────────────────────────────────────────────────
+  if (pipeline.length) {
+    const flow = pipeline.map((ag, i) => {
+      const deferred = ag.deferred > 0
+        ? `<span style="font-size:10px;color:var(--warn,#FF9F0A);margin-left:6px">⏭ ${ag.deferred}</span>` : '';
+      const status = ag.status === '✅' || ag.status === 'true'
+        ? `<span style="font-size:11px;color:var(--ok,#30D158)">✅</span>` : '';
+      const arrow = i < pipeline.length - 1
+        ? `<span style="color:var(--text-muted);margin:0 8px;align-self:center">→</span>` : '';
+      return `
+        <div style="display:flex;align-items:center">
+          <div style="background:var(--bg-elevated);border:1px solid var(--border);border-radius:6px;
+                      padding:6px 12px;display:flex;align-items:center;gap:6px">
+            <span style="font-size:10px;color:var(--accent);font-weight:700">#${esc(ag.pos)}</span>
+            <span class="mono" style="font-size:12px;font-weight:600;color:var(--text-primary)">${esc(ag.slug)}</span>
+            ${status}${deferred}
+          </div>
+          ${arrow}
+        </div>`;
+    }).join('');
+    parts.push(section('Flux pipeline', `<div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center">${flow}</div>`));
+  }
+
+  // ── 2. Seuils comparatifs ──────────────────────────────────────────────
+  const thresholds = _parseOrgTable(raw, /^\*\s+Thresholds?\s+cross.reference/i);
+  if (thresholds) {
+    // Colorier les cellules ⏭ en warning, — en muted
+    const colStyleFn = (i) => i === 0
+      ? 'font-weight:500;color:var(--text-primary);white-space:nowrap'
+      : '';
+    const table = orgTable(thresholds, null);
+    // Post-process cell coloring for ⏭ and —
+    const colorized = table
+      .replace(/>⏭([^<]*)</g, `><span style="color:var(--warn,#FF9F0A)">⏭$1</span><`)
+      .replace(/>—</g, `><span style="color:var(--text-muted)">—</span><`);
+    parts.push(section('Seuils comparatifs (cross-référence)', colorized));
+  }
+
+  // ── 3. Control slots ───────────────────────────────────────────────────
+  const ctrlSlots = _parseOrgTable(raw, /^\*\s+Control slots/i);
+  if (ctrlSlots) {
+    const colorized = orgTable(ctrlSlots, null)
+      .replace(/>_NEEDED</g, `><span style="color:var(--accent);font-weight:600">_NEEDED</span><`)
+      .replace(/>_DEFAULT</g, `><span style="color:var(--text-secondary);font-weight:600">_DEFAULT</span><`);
+    parts.push(section('Control slots (_NEEDED / _DEFAULT)', colorized));
+  }
+
+  // ── 4. Frames ─────────────────────────────────────────────────────────
+  const frames = _parseOrgTable(raw, /^\*\s+Frames\b/i);
+  if (frames) parts.push(section('Frames (inter-Frame relationships)', orgTable(frames, null)));
+
+  // ── 5. BOARD slots (optionnel) ─────────────────────────────────────────
+  const board = _parseOrgTable(raw, /^\*\s+BOARD/i);
+  if (board) parts.push(section('BOARD slots (inter-agents)', orgTable(board, null)));
+
+  return parts.length
+    ? parts.join('')
+    : '<div style="color:var(--text-muted);font-size:13px;padding:20px 0">Aucune section pipeline trouvée dans index.org.</div>';
+}
+
 // ── _parseIndexOrgAgents ───────────────────────────────────────────────────
 // Fallback client-side : extrait les agents depuis le contenu brut de index.org
 // quand le scanner serveur retourne pipeline=[] (format "* Agents" non encore
@@ -6638,42 +6751,22 @@ async function openSandboxCorpus() {
     `).join('');
   }
 
-  // ── Panel Pipeline & KB : par agent — domaine, Frame catalogue, règles ──
-  if (!data || !pipeline.length) {
+  // ── Panel Pipeline : vue cross-agents depuis index.org ─────────────────
+  // Charge index.org via l'endpoint existant et en extrait les sections
+  // cross-agents (flux pipeline, seuils comparatifs, control slots, frames).
+  // Fonctionne sans restart serveur — fallback sur message si index absent.
+  document.getElementById('sbc-frames-list').innerHTML =
+    '<div style="color:var(--text-muted);font-size:12px;padding:16px 0">Chargement pipeline…</div>';
+  (async () => {
+    let indexRaw = null;
+    try {
+      const ri = await fetch(`${API}/api/sandboxes/${sb.id}/agents/index/org`);
+      if (ri.ok) indexRaw = await ri.text();
+    } catch {}
     document.getElementById('sbc-frames-list').innerHTML =
-      '<div style="color:var(--text-muted);font-size:13px;padding:20px 0">Aucun agent/pipeline trouvé pour ce sandbox (agent/chorus/index.org absent ou vide).</div>';
-  } else {
-    document.getElementById('sbc-frames-list').innerHTML = pipeline.map(ag => `
-      <div style="border:1px solid var(--border);border-radius:8px;margin-bottom:14px;overflow:hidden">
-        <div style="background:var(--bg-elevated);padding:10px 14px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-          <span class="mono" style="font-size:11px;color:var(--accent);font-weight:700">#${ag.pos}</span>
-          <span style="font-size:13px;font-weight:600;color:var(--text-primary)">${ag.slug}</span>
-          <span class="mono" style="font-size:10px;color:var(--text-muted)">${ag.module}</span>
-          <span style="flex:1"></span>
-          <span style="font-size:10px;color:var(--text-muted)">${ag.status || ''}</span>
-        </div>
-        <div style="padding:12px 14px">
-          ${ag.corpusFile ? `<div style="font-size:11px;color:var(--text-muted);font-family:'JetBrains Mono',monospace;margin-bottom:8px">📄 ${ag.corpusFile}</div>` : ''}
-          ${ag.domain ? `<div style="font-size:12px;color:var(--text-secondary);line-height:1.6;margin-bottom:12px;white-space:pre-line">${ag.domain}</div>` : ''}
-          ${(ag.frames || []).map(f => `
-            <div style="background:var(--bg-surface);border:1px solid var(--border-light);border-radius:6px;padding:8px 12px;margin-bottom:8px">
-              <div class="mono" style="font-size:12px;color:var(--accent);font-weight:600;margin-bottom:4px">Frame: ${f.name}</div>
-              ${f.inputs.length ? `<div style="font-size:11px;color:var(--text-secondary);margin-bottom:2px"><strong>Slots d'entrée :</strong> ${f.inputs.join(', ')}</div>` : ''}
-              ${f.computed.length ? `<div style="font-size:11px;color:var(--text-secondary);margin-bottom:2px"><strong>Slots calculés :</strong> ${f.computed.join(', ')}</div>` : ''}
-              ${f.optional.length ? `<div style="font-size:11px;color:var(--text-muted)"><strong>Optionnels :</strong> ${f.optional.join(', ')}</div>` : ''}
-            </div>
-          `).join('')}
-          <div style="font-size:11px;color:var(--text-muted);margin:10px 0 6px">📜 ${ag.ruleFileCount} règle(s) YAML — rules/${ag.slug}/</div>
-          ${(ag.rules || []).map(r => `
-            <div style="padding:6px 0;border-top:1px solid var(--border-light)">
-              <span class="mono" style="font-size:11px;color:var(--accent)">${r.id}</span>
-              <div style="font-size:11px;color:var(--text-secondary);margin-top:2px">${r.intent || ''}</div>
-            </div>
-          `).join('')}
-        </div>
-      </div>
-    `).join('');
-  }
+      indexRaw ? _renderPipelineFromIndexOrg(indexRaw, pipeline)
+               : '<div style="color:var(--text-muted);font-size:13px;padding:20px 0">index.org introuvable — KB non encore générée.</div>';
+  })();
 
   // ── Thesaurus panel — removed from the sandbox-level Corpus modal (the
   // info is now available, filtered by project, in the "Thesaurus" tab of
