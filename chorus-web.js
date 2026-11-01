@@ -2391,6 +2391,12 @@ function renderKbConvergenceWorkflow(testing, strengthenReport, sbId, kbModeled)
   }
 
   // ── État étape ②  (chorus-strengthen) ───────────────────────────────
+  const strengthenRunning = !!(_activeTerminalsCache || [])
+    .find(t => t.sbId === sbId && t.kind === 'strengthen');
+  const strengthenBtn = (label) => strengthenRunning
+    ? `<button class="btn btn-ghost btn-sm" style="font-size:11px;opacity:.45" disabled title="chorus-strengthen en cours — attendez la fin">⏳ En cours…</button>`
+    : `<button class="btn btn-ghost btn-sm" style="font-size:11px" onclick="runStrengthenFull()">${label}</button>`;
+
   const sr = strengthenReport;
   const step2Enabled = (step1State === 'disc' || step1State === 'ok');
   let step2State, step2Badge, step2Action = '', step2Detail = '';
@@ -2400,11 +2406,11 @@ function renderKbConvergenceWorkflow(testing, strengthenReport, sbId, kbModeled)
   } else if (!sr) {
     step2State = 'pending';
     step2Badge = `<span style="color:var(--text-muted)">○ jamais analysé</span>`;
-    step2Action = `<button class="btn btn-ghost btn-sm" style="font-size:11px" onclick="runStrengthenFull()">🔍 Diagnostiquer</button>`;
+    step2Action = strengthenBtn('🔍 Diagnostiquer');
   } else if (sr.stale) {
     step2State = 'stale';
     step2Badge = `<span style="color:var(--warn)">⚠️ périmé — KB modifiée depuis</span>`;
-    step2Action = `<button class="btn btn-ghost btn-sm" style="font-size:11px" onclick="runStrengthenFull()">🔍 Re-analyser</button>`;
+    step2Action = strengthenBtn('🔍 Re-analyser');
   } else {
     const bB = sr.summary?.bucket_b || 0, bC = sr.summary?.bucket_c || 0, bA = sr.summary?.bucket_a || 0;
     const nBugs = (sr.projectBugs || []).length;
@@ -2419,7 +2425,6 @@ function renderKbConvergenceWorkflow(testing, strengthenReport, sbId, kbModeled)
       if (nBugs) parts.push(`🔧 ${nBugs} bug(s) fichier`);
       step2Badge = `<span style="color:var(--warn)">⚠️ ${sr.totalGaps} gap(s) KB${nBugs ? ` · ${nBugs} bug(s) fichier` : ''}</span>
         <span style="color:var(--text-muted);font-size:10px;margin-left:6px">${parts.join(' ')} · ${(sr.timestamp||'').slice(0,16).replace('T',' ')}</span>`;
-      // Bugs fichier → suggestion ⟲ par stratégie
       if (nBugs) {
         const bugSlugs = [...new Set((sr.projectBugs||[]).map(b => (b.project_file||'').replace('project-','').replace('.json','')))];
         step2Detail += `<div style="font-size:11px;color:var(--warn);margin-top:4px;padding:4px 8px;background:rgba(251,146,60,.08);border-radius:4px">
@@ -2427,7 +2432,7 @@ function renderKbConvergenceWorkflow(testing, strengthenReport, sbId, kbModeled)
         </div>`;
       }
     }
-    step2Action = `<button class="btn btn-ghost btn-sm" style="font-size:11px" onclick="runStrengthenFull()">🔍 Re-analyser</button>`;
+    step2Action = strengthenBtn('🔍 Re-analyser');
   }
 
   // ── État étape ③  (chorus-fix) ───────────────────────────────────────
