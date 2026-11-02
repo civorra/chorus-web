@@ -128,7 +128,12 @@ router.post('/sandboxes/:sbId/terminal', (req, res) => {
   // frontend via timeoutMinutes, jamais silencieusement étendu au-delà.
   // chorus-fix (bucket-b seul) est rapide ; --bucket-c peut déclencher
   // chorus-feed --enrich qui est long → timeout intermédiaire 30 min.
-  const DEFAULT_TIMEOUT_MINUTES = kind === 'strengthen' ? 45 : kind === 'fix' ? 30 : 60;
+  // pipeline-feed : enchaîne corpus-directives → corpus-scoping → feed
+  // --unattended — peut être très long sur un grand corpus multi-sources.
+  const DEFAULT_TIMEOUT_MINUTES = kind === 'strengthen' ? 45
+    : kind === 'fix'           ? 30
+    : kind === 'pipeline-feed' ? 120
+    : 60;
   let timeoutMs = Number(timeoutMinutes);
   if (!Number.isFinite(timeoutMs) || timeoutMs < 1) timeoutMs = DEFAULT_TIMEOUT_MINUTES;
   if (timeoutMs > 240) timeoutMs = 240;

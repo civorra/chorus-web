@@ -475,6 +475,19 @@ input, select, textarea { font-family: inherit; }
    ⚠️ Before this fix, #sb-corpus-overlay had NO positioning rule —
    the panel was rendered out of flow, off-centre, and without
    using the available space. */
+#pipeline-feed-preflight {
+  position: fixed; inset: 0; z-index: 116;
+  background: rgba(5,10,20,.82);
+  display: flex; align-items: center; justify-content: center;
+  padding: 16px; backdrop-filter: blur(4px);
+}
+#pipeline-feed-preflight[hidden] { display: none !important; }
+.pf-file-row { display: flex; align-items: center; gap: 8px; padding: 5px 8px;
+  border-radius: 6px; font-size: 12px; cursor: pointer; }
+.pf-file-row:hover { background: var(--bg-elevated); }
+.pf-file-row input[type=checkbox] { accent-color: var(--accent); cursor: pointer; flex-shrink: 0; }
+.pf-file-name { font-family: 'JetBrains Mono', monospace; flex: 1; word-break: break-all; }
+.pf-file-size { font-size: 10px; color: var(--text-muted); white-space: nowrap; flex-shrink: 0; }
 #sb-corpus-overlay {
   position: fixed; inset: 0; z-index: 115;
   background: rgba(5,10,20,.8);
@@ -1181,6 +1194,10 @@ input, select, textarea { font-family: inherit; }
   flex-direction: column;
 }
 /* Cancel the default max-height cap so the output fills the panel height. */
+.lvl-term-panel .eca-session-output {
+  max-height: none;
+  min-height: 0;
+}
 /* ── Resizers Taskboard↔Log et Log↔Réponse ECA ────────────────────── */
 .lvl-term-resizer {
   height: 5px;
@@ -1213,9 +1230,6 @@ input, select, textarea { font-family: inherit; }
   background: rgba(255,255,255,.5);
 }
 
-.lvl-term-panel .eca-session-output {
-  max-height: none;
-}
 .lvl-term-badge {
   align-self: flex-start;
   font-family: 'JetBrains Mono', monospace;

@@ -126,7 +126,8 @@ function buildSandboxEntry(sb, iconIndex) {
 
   // Conformité moyenne — moyenne des % de conformité sur tous les projets
   // ayant un rapport (évite de diluer avec les projets non encore exécutés).
-  const runProjects = allProjects.filter(p => p.reportData && p.compliance != null);
+  // Exclure les projets FAILED : leur score est non fiable (pipeline non terminé normalement).
+  const runProjects = allProjects.filter(p => p.reportData && p.compliance != null && p.verdict !== 'FAILED');
   const complianceAvg = runProjects.length > 0
     ? Math.round(runProjects.reduce((s, p) => s + p.compliance, 0) / runProjects.length)
     : null;
@@ -479,7 +480,8 @@ function pvReportRow(r, proj, sbId) {
 function renderProjectPage(proj, entLabel) {
   const sb = currentSandbox;
   const imports = proj.imports || [];
-  const compColor = proj.compliance >= 80 ? 'var(--success)' : proj.compliance >= 50 ? 'var(--warn)' : 'var(--error)';
+  const compColor = (proj.verdict === 'FAILED') ? 'var(--error)'
+    : proj.compliance >= 80 ? 'var(--success)' : proj.compliance >= 50 ? 'var(--warn)' : 'var(--error)';
 
   // ── Header ───────────────────────────────────────────────────
   document.getElementById('pv-type-icon').textContent  = TYPE_ICONS[proj.type] || '📁';
@@ -561,13 +563,18 @@ function renderProjectPage(proj, entLabel) {
   // Compliance bar
   if (proj.compliance != null) {
     const conform = Math.round(proj.compliance / 100 * (proj.frames || 0));
+    const _compFailed = proj.verdict === 'FAILED';
+    const _failedBadge = _compFailed
+      ? `<span style="font-size:10px;background:var(--error,#EF4444);color:#fff;border-radius:3px;padding:1px 6px;margin-left:6px;vertical-align:middle;font-family:'JetBrains Mono',monospace">⚠ run FAILED</span>`
+      : '';
     apercuHtml += `
       <div class="pv-comp-bar-wrap">
         <div class="pv-comp-bar-label">
           <span class="pv-comp-pct" style="color:${compColor}">${proj.compliance}%</span>
+          ${_failedBadge}
           <span class="pv-comp-detail">${conform} / ${proj.frames || '?'} frames conformes · last run ${proj.lastRun || '—'}</span>
         </div>
-        <div class="pv-comp-bar">
+        <div class="pv-comp-bar"${_compFailed ? ' style="opacity:0.45"' : ''}>
           <div class="bar" style="width:${proj.compliance}%;background:${compColor}"></div>
         </div>
       </div>`;
@@ -1208,8 +1215,9 @@ function renderRecentProjects(maxItems = 6) {
     if (p.state === 'importing') {
       compBadge = `<span class="recent-comp-badge none">⏳ ${p.progress || 0}%</span>`;
     } else if (p.compliance != null) {
-      const cls = p.compliance >= 80 ? 'high' : p.compliance >= 50 ? 'mid' : 'low';
-      compBadge = `<span class="recent-comp-badge ${cls}">${p.compliance}%</span>`;
+      const cls = (p.verdict === 'FAILED') ? 'low' : p.compliance >= 80 ? 'high' : p.compliance >= 50 ? 'mid' : 'low';
+      const _failMark = p.verdict === 'FAILED' ? ' ⚠' : '';
+      compBadge = `<span class="recent-comp-badge ${cls}">${p.compliance}%${_failMark}</span>`;
     } else {
       compBadge = `<span class="recent-comp-badge none">—</span>`;
     }
@@ -1741,7 +1749,8 @@ function projCard(p) {
   }
   // imported
   const comp = p.compliance;
-  const compColor = comp >= 90 ? 'var(--success)' : comp >= 75 ? 'var(--warn)' : 'var(--error)';
+  const compColor = (p.verdict === 'FAILED') ? 'var(--error)'
+    : comp >= 90 ? 'var(--success)' : comp >= 75 ? 'var(--warn)' : 'var(--error)';
   const auditBadge = renderAuditBadge(p.audit || null);
   const auditBtn = auditNextAction(p.audit || null, p.id, true, sp, p.entity || '');
   return `
@@ -1759,7 +1768,7 @@ function projCard(p) {
       <div class="pc-meta" style="display:flex;gap:12px">
         <span><span style="color:var(--accent)" class="mono">${p.frames}</span> frames</span>
         <span><span style="color:var(--info)" class="mono">${p.evidence}</span> evidence</span>
-        <span style="color:${compColor};font-weight:600" class="mono">${comp}%</span>
+        <span style="color:${compColor};font-weight:600" class="mono">${comp}%${p.verdict === 'FAILED' ? ' ⚠' : ''}</span>
       </div>
       <div class="pc-meta" style="margin-top:4px">Last run: ${p.lastRun}</div>
       <div class="pc-actions">
@@ -1807,7 +1816,8 @@ function projRow(p) {
   }
   // imported
   const comp = p.compliance;
-  const compColor = comp >= 90 ? 'var(--success)' : comp >= 75 ? 'var(--warn)' : 'var(--error)';
+  const compColor = (p.verdict === 'FAILED') ? 'var(--error)'
+    : comp >= 90 ? 'var(--success)' : comp >= 75 ? 'var(--warn)' : 'var(--error)';
   const auditBadgeRow = renderAuditBadge(p.audit || null);
   const auditBtnRow = auditNextAction(p.audit || null, p.id, true, sp, p.entity || '');
   return `
@@ -1817,7 +1827,7 @@ function projRow(p) {
       <span class="pr-meta">
         <span><span style="color:var(--accent)" class="mono">${p.frames}</span> frames</span>
         <span><span style="color:var(--info)" class="mono">${p.evidence}</span> evidence</span>
-        <span style="color:${compColor};font-weight:600" class="mono">${comp}%</span>
+        <span style="color:${compColor};font-weight:600" class="mono">${comp}%${p.verdict === 'FAILED' ? ' ⚠' : ''}</span>
         <span>Last run: ${p.lastRun}</span>
       </span>
       <span class="pr-actions">

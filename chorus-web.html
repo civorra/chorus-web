@@ -655,7 +655,7 @@
         <span id="lvl-term-skill-history" style="margin-left:auto;color:var(--text-muted);font-size:10px"></span>
       </div>
       <div id="lvl-term-taskboard" hidden
-           style="border-bottom:1px solid var(--border);background:var(--surface-2,#1a2332);font-size:11px;font-family:'JetBrains Mono',monospace">
+           style="border-bottom:1px solid var(--border);background:var(--surface-2,#1a2332);font-size:11px;font-family:'JetBrains Mono',monospace;overflow-y:auto;max-height:200px;flex-shrink:0">
         <div style="display:flex;align-items:center;gap:6px;padding:4px 12px">
           <span>🗂️</span>
           <span>Tâches :</span>
@@ -677,7 +677,7 @@
       <!-- Resizer Taskboard ↔ Log (affiché seulement quand taskboard visible) -->
       <div id="lvl-term-resizer-task" hidden
            class="lvl-term-resizer" title="Redimensionner Tâches / Log"></div>
-      <div class="eca-session-output" id="lvl-term-output" style="flex:1;min-height:60px;overflow-y:auto"></div>
+      <div class="eca-session-output" id="lvl-term-output" style="flex:1;min-height:0;overflow-y:auto"></div>
       <!-- Resizer Log ↔ Réponse (affiché seulement quand zone 3 visible) -->
       <div id="lvl-term-resizer-reply" hidden
            class="lvl-term-resizer" title="Redimensionner Log / Réponse ECA"></div>
