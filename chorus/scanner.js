@@ -342,7 +342,7 @@ function scanNestedProject(entityPath, projId) {
 
   const checkReports = fs.existsSync(repDir)
     ? fs.readdirSync(repDir).filter(f =>
-        (f.startsWith('summary-') || f.startsWith('explain-')) && f.endsWith('.md')
+        (f.startsWith('synthese-') || f.startsWith('explain-')) && f.endsWith('.md')
       )
     : [];
 

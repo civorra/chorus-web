@@ -436,27 +436,39 @@ function pvReportButtons(r, proj, sbId) {
     title="Terminal ECA — ${r.label}"
     onclick="openLevelTerminal('report',{sbId:'${sbId}',entityId:'${proj.entity}',projId:'${proj.id}',projName:'${safeProj}',reportFile:'${r.label}',explainFile:${r.explain_file ? `'${r.explain_file}'` : 'null'},syntheseFile:${r.synthese_file ? `'${r.synthese_file}'` : 'null'}})">🖥️</button>`;
 
-  // 📋 + 💡 si les deux rapports existent — sinon 🔍 Analyse pour les générer.
+  // 📋 (synthese) et/ou 💡 (explain) si les rapports existent — 🔍 Analyse uniquement
+  // si AUCUN des deux n'existe. Correction du bug ET-strict : hasSyn && hasExp affichait
+  // "Analyse" même quand synthese-*.md existait seul (pas d'explain dans certains cas).
   let miniIcons = '';
   if (isJson) {
     const hasSyn = !!r.synthese_file;
     const hasExp = !!r.explain_file;
-    if (hasSyn && hasExp) {
-      // Les deux existent → boutons de visualisation directs
-      miniIcons =
-        `<button class="btn btn-ghost btn-sm" title="${r.synthese_file}"
-           onclick="openMdView('${sbId}','${proj.entity}','${proj.id}','${r.synthese_file}')"
-           style="font-size:13px;padding:2px 6px">📋</button>` +
-        `<button class="btn btn-ghost btn-sm" title="${r.explain_file}"
-           onclick="openMdView('${sbId}','${proj.entity}','${proj.id}','${r.explain_file}')"
-           style="font-size:13px;padding:2px 6px">💡</button>`;
-    } else {
-      // Au moins un manque → 🔍 Analyse pour générer les deux
+    if (!hasSyn && !hasExp) {
+      // Aucun des deux → 🔍 Analyse pour les générer
       miniIcons =
         `<button class="btn btn-ghost btn-sm"
            style="padding:2px 8px;font-size:10px;flex-shrink:0;border:1px solid var(--text-muted);opacity:.8"
            title="chorus-check --summary --explain --from-report (sans pipeline)"
-           onclick="lvlTermAnalyseRun('${sbId}','${proj.entity}','${proj.id}','${safeProj}','${r.label}',${r.explain_file ? `'${r.explain_file}'` : 'null'},${r.synthese_file ? `'${r.synthese_file}'` : 'null'})">🔍 Analyse</button>`;
+           onclick="lvlTermAnalyseRun('${sbId}','${proj.entity}','${proj.id}','${safeProj}','${r.label}',null,null)">🔍 Analyse</button>`;
+    } else {
+      // Au moins un existe → bouton(s) de visualisation individuel(s)
+      if (hasSyn)
+        miniIcons +=
+          `<button class="btn btn-ghost btn-sm" title="${r.synthese_file}"
+             onclick="openMdView('${sbId}','${proj.entity}','${proj.id}','${r.synthese_file}')"
+             style="font-size:13px;padding:2px 6px">📋</button>`;
+      if (hasExp)
+        miniIcons +=
+          `<button class="btn btn-ghost btn-sm" title="${r.explain_file}"
+             onclick="openMdView('${sbId}','${proj.entity}','${proj.id}','${r.explain_file}')"
+             style="font-size:13px;padding:2px 6px">💡</button>`;
+      // Si l'un des deux manque encore, proposer un bouton "Compléter" discret
+      if (!hasSyn || !hasExp)
+        miniIcons +=
+          `<button class="btn btn-ghost btn-sm"
+             style="padding:2px 6px;font-size:10px;flex-shrink:0;opacity:.6"
+             title="Générer ${!hasSyn ? 'synthese (📋)' : 'explain (💡)'} manquant"
+             onclick="lvlTermAnalyseRun('${sbId}','${proj.entity}','${proj.id}','${safeProj}','${r.label}',${r.explain_file ? `'${r.explain_file}'` : 'null'},${r.synthese_file ? `'${r.synthese_file}'` : 'null'})">+</button>`;
     }
   }
 
