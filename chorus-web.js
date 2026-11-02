@@ -3870,7 +3870,9 @@ function rowsFromRunReport(data) {
         ? 'CONFORME'
         : NON_CONFORME_VALUES.includes(e.verdict)
           ? 'NON_CONFORME'
-          : 'A_CONFIRMER'; // unprocessed / unknown type / UNKNOWN — grouped with "to confirm"
+          : e.verdict === '(unprocessed)' ? 'UNPROCESSED' : 'A_CONFIRMER';
+          // UNPROCESSED = frame contextuel (ex: type erp, ouvrage) — non évalué structurellement
+          // A_CONFIRMER = _a_confirmer:true ou verdict inconnu — incertitude métier réelle
     const chain = Array.isArray(e._rule_trace) && e._rule_trace.length
       ? e._rule_trace.map(t => t.rule_id).join(' → ')
       : '—';
@@ -3955,8 +3957,8 @@ async function openReportView(reportInfo, ctx, initialFilter = 'ALL') {
   tbody.innerHTML = rows.map(r => `
     <tr data-status="${r.status}">
       <td><code class="mono" style="font-size:11px;color:var(--accent)">${r.ref}</code></td>
-      <td style="color:var(--text-primary)">${r.label}${r.status==='A_CONFIRMER' && r.rawVerdict && r.rawVerdict!=='CONFORME' && r.rawVerdict!=='NON_CONFORME' ? ` <span style="color:var(--text-muted);font-size:10px">(${r.rawVerdict})</span>` : ''}</td>
-      <td><span class="rv-badge ${r.status}">${r.status.replace('_',' ')}</span></td>
+      <td style="color:var(--text-primary)">${r.label}${(r.status==='A_CONFIRMER'||r.status==='UNPROCESSED') && r.rawVerdict && r.rawVerdict!=='CONFORME' && r.rawVerdict!=='NON_CONFORME' ? ` <span style="color:var(--text-muted);font-size:10px">(${r.rawVerdict})</span>` : ''}</td>
+      <td><span class="rv-badge ${r.status}">${{CONFORME:'CONFORME',NON_CONFORME:'NON CONFORME',A_CONFIRMER:'À confirmer',UNPROCESSED:'Non évalué'}[r.status]||r.status}</span></td>
       <td style="font-size:11px;color:var(--text-secondary);max-width:280px">${r.motif}</td>
       <td><span style="font-size:10px;color:var(--text-muted);font-family:'JetBrains Mono',monospace">${r.source}</span></td>
     </tr>`
@@ -4204,7 +4206,12 @@ function filterReport(status) {
   let visible = 0;
   rows.forEach(tr => {
     const rowStatus = tr.getAttribute('data-status');
-    const show = status === 'ALL' || rowStatus === status;
+    // UNPROCESSED (frame contextuel) est inclus dans le filtre A_CONFIRMER
+    // pour rester visible quand l'utilisateur clique "À confirmer",
+    // mais affiché avec un badge "Non évalué" distinct.
+    const show = status === 'ALL'
+      || rowStatus === status
+      || (status === 'A_CONFIRMER' && rowStatus === 'UNPROCESSED');
     tr.style.display = show ? '' : 'none';
     if (show) visible++;
   });
@@ -4215,8 +4222,11 @@ function updateRvFooter(rows) {
   const conf   = rows.filter(r => r.status === 'CONFORME').length;
   const nonc   = rows.filter(r => r.status === 'NON_CONFORME').length;
   const pend   = rows.filter(r => r.status === 'A_CONFIRMER').length;
+  const unproc = rows.filter(r => r.status === 'UNPROCESSED').length;
   document.getElementById('rv-footer-stats').textContent =
-    `${conf} CONFORME · ${nonc} NON_CONFORME · ${pend} À confirmer · ${rows.length} total`;
+    `${conf} CONFORME · ${nonc} NON_CONFORME · ${pend} À confirmer`
+    + (unproc ? ` · ${unproc} non évalué${unproc > 1 ? 's' : ''} (frame contextuel)` : '')
+    + ` · ${rows.length} total`;
 }
 
 async function runChorusCheckAction(action) {

@@ -1919,6 +1919,7 @@ input, select, textarea { font-family: inherit; }
 .rv-badge.CONFORME { background: var(--success-dim); color: var(--success); }
 .rv-badge.NON_CONFORME { background: var(--error-dim); color: var(--error); }
 .rv-badge.A_CONFIRMER { background: var(--warn-dim); color: var(--warn); }
+.rv-badge.UNPROCESSED { background: var(--border); color: var(--text-muted); }
 .rv-conf-bar {
   width: 60px; height: 5px; background: var(--border);
   border-radius: 3px; overflow: hidden; display: inline-block; vertical-align: middle;
