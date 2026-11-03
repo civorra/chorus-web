@@ -977,6 +977,7 @@ async function renderPvThesaurusTab() {
           <td style="padding:4px 8px;white-space:nowrap">
             <button class="btn btn-ghost" style="font-size:11px;padding:2px 8px;color:var(--success)" onclick="pvThesToggleConfirm(${i})" id="pv-thes-confirm-btn-${i}">✅ Confirmer</button>
             <button class="btn btn-ghost" style="font-size:11px;padding:2px 8px;color:var(--error)" onclick="pvThesReject(${i})">❌ Rejeter</button>
+            ${p.sourceImport ? `<button class="btn btn-ghost" style="font-size:11px;padding:2px 8px;color:var(--text-muted)" onclick="pvThesOpenImportReport('${p.sourceImport}','${escapeHtml(p.shard||'')}','${escapeHtml(p.term)}')" title="Voir la section _a_confirmer dans ${p.sourceImport}.org">📄 voir détail</button>` : ''}
           </td>
         </tr>
         <tr id="pv-thes-confirm-row-${i}" hidden style="border-bottom:1px solid var(--border-light)">
@@ -1109,6 +1110,56 @@ async function _pvThesSubmitResolve(body) {
     renderPvThesaurusTab();
   } catch (err) {
     alert(`Erreur : ${err.message}`);
+  }
+}
+
+// ── Opens the import report linked to a Pending row ("📄 voir détail") ──
+//
+// Calls openMdView() on the source import report (.org), then — once loaded —
+// scrolls to the "Éléments avec _a_confirmer" section and highlights the
+// specific term row inside the table, so the engineer lands directly on the
+// relevant explanation without having to read the entire report.
+//
+// sourceImport : "import-report-<NNN>" (as stored in the * Pending table column)
+// shard        : entity name (e.g. "eviden") — used as entityId for readReport
+// term         : CBOM/project term to highlight (e.g. "CKM_RSA_AES_KEY_WRAP")
+async function pvThesOpenImportReport(sourceImport, shard, term) {
+  const proj = currentProject, sb = currentSandbox;
+  if (!proj || !sb || !sourceImport) return;
+  const entityId = shard || proj.entity;
+  const filename = sourceImport.trim().replace(/\.org$/, '') + '.org';
+
+  await openMdView(sb.id, entityId, proj.id, filename);
+
+  // Content is now rendered — scroll to the _a_confirmer section, then to
+  // the specific term row if present.
+  const content = document.getElementById('mdv-content');
+  if (!content) return;
+
+  // 1. Find the heading whose id contains "_a_confirmer" or "confirmer"
+  let sectionEl = null;
+  for (const h of content.querySelectorAll('h2,h3,h4,h5')) {
+    if (/_a_confirmer|l-ments-avec/i.test(h.id || '') || /_a_confirmer|confirmer/i.test(h.textContent)) {
+      sectionEl = h;
+      break;
+    }
+  }
+  if (sectionEl) sectionEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
+
+  // 2. Find the exact term row within any table under that section
+  if (term) {
+    for (const td of content.querySelectorAll('td')) {
+      if (td.textContent.trim() === term) {
+        const row = td.closest('tr');
+        if (row) {
+          row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          row.style.transition = 'background 0.4s';
+          row.style.background = 'var(--warn-bg, rgba(254,188,46,0.18))';
+          setTimeout(() => { row.style.background = ''; }, 2800);
+        }
+        break;
+      }
+    }
   }
 }
 
@@ -4550,7 +4601,16 @@ function openLevelTerminal(level, ctx, autoCmd = null) {
   // Réinitialiser zone 3 + resizers à chaque nouvelle session
   const replyZone = document.getElementById('lvl-term-reply-zone');
   const replyContent = document.getElementById('lvl-term-reply');
-  if (replyZone)    { replyZone.hidden = true; replyZone.style.cssText = ''; }
+  if (replyZone)    {
+    replyZone.hidden = true;
+    // Réinitialiser uniquement les propriétés que le resizer peut avoir modifiées.
+    // NE PAS faire style.cssText='' : cela effacerait display:flex/flex-direction/etc.
+    // qui sont désormais dans la CSS class #lvl-term-reply-zone (scrollabilité).
+    replyZone.style.height    = '200px';
+    replyZone.style.minHeight = '';
+    replyZone.style.maxHeight = '';
+    replyZone.style.flex      = '';
+  }
   if (replyContent) { replyContent.innerHTML = ''; }
   const rr = document.getElementById('lvl-term-resizer-reply');
   const rt = document.getElementById('lvl-term-resizer-task');
@@ -6029,7 +6089,8 @@ function renderOrgMode(src) {
     if (hm) {
       flushPara();
       const lvl = Math.min(hm[1].length + 1, 5); // * → h2, ** → h3, *** → h4, **** → h5
-      out.push(`<h${lvl}>${_orgInline(hm[2])}</h${lvl}>`);
+      const _headId = hm[2].toLowerCase().replace(/[^a-z0-9_\u00C0-\u024F]+/g, '-').replace(/^-|-$/g, '');
+      out.push(`<h${lvl} id="${_headId}">${_orgInline(hm[2])}</h${lvl}>`);
       i++; continue;
     }
 
@@ -7156,16 +7217,25 @@ function updateImportFileHint() {
   const hint  = document.getElementById('import-file-hint');
   const sourceSel = document.getElementById('import-source');
   if (!input || !hint) return;
-  const file = input.files && input.files[0];
-  if (!file) {
-    hint.textContent = 'Aucun fichier sélectionné';
+  const files = input.files ? Array.from(input.files) : [];
+  if (!files.length) {
+    hint.textContent = 'Aucun fichier — ou plusieurs (Ctrl/⌘+clic) pour Mode Fusion';
     hint.style.color = 'var(--text-muted)';
     return;
   }
-  const sizeKb = Math.round(file.size / 1024);
-  hint.textContent = `✓ ${file.name} (${sizeKb} Ko)`;
-  hint.style.color = 'var(--success, #10B981)';
-  if (sourceSel) sourceSel.value = inferImportSourceFromFilename(file.name);
+  if (files.length === 1) {
+    const sizeKb = Math.round(files[0].size / 1024);
+    hint.textContent = `✓ ${files[0].name} (${sizeKb} Ko)`;
+    hint.style.color = 'var(--success, #10B981)';
+    if (sourceSel) sourceSel.value = inferImportSourceFromFilename(files[0].name);
+  } else {
+    const totalKb = Math.round(files.reduce((s, f) => s + f.size, 0) / 1024);
+    const names = files.map(f => f.name).join(', ');
+    hint.textContent = `✓ Mode Fusion — ${files.length} fichiers (${totalKb} Ko) : ${names}`;
+    hint.style.color = 'var(--success, #10B981)';
+    // Type informationnel uniquement en mode Fusion — dérivé du premier fichier
+    if (sourceSel) sourceSel.value = inferImportSourceFromFilename(files[0].name);
+  }
 }
 
 // Live validation (called on every keystroke + at modal open in re-import
@@ -7250,16 +7320,16 @@ function startImport() {
 
   const name = document.getElementById('import-name').value.trim();
   const fileInput = document.getElementById('import-file');
-  const file = fileInput && fileInput.files && fileInput.files[0];
+  const files = fileInput && fileInput.files ? Array.from(fileInput.files) : [];
   const source = document.getElementById('import-source').value;
   const context = document.getElementById('import-context').value;
   if (!name) {
     document.getElementById('import-name').focus();
     return;
   }
-  if (!file) {
+  if (!files.length) {
     fileInput.focus();
-    alert('Sélectionnez un fichier à importer.');
+    alert('Sélectionnez un ou plusieurs fichiers à importer.');
     return;
   }
   if (!context) {
@@ -7294,25 +7364,34 @@ function startImport() {
   // / #import-session-overlay), which ran a real headless session behind
   // the scenes but was mislabelled "APERÇU SIMULÉ" in its own UI and gave
   // no genuine interactive terminal access, unlike re-import.
-  const form = new FormData();
-  form.append('file', file);
-  form.append('projId', id);
-  if (name) form.append('name', name);   // WEB-026 — nom saisi dans le formulaire
-
-  fetch(`${API}/api/sandboxes/${sbId}/entities/${context}/projects/upload`, {
-    method: 'POST', body: form,
-  })
-    .then(async (r) => {
+  // Upload each file individually to sources/<projId>/ (server /upload
+  // accepts single files — projId groups them in the same directory).
+  // 1 fichier → import standard ; N fichiers → Merge mode
+  // (chorus-import-project auto-détecte : N > 1 sources → fusion).
+  const uploadOne = (f) => {
+    const form = new FormData();
+    form.append('file', f);
+    form.append('projId', id);
+    if (name) form.append('name', name);   // WEB-026 — nom saisi dans le formulaire
+    return fetch(`${API}/api/sandboxes/${sbId}/entities/${context}/projects/upload`, {
+      method: 'POST', body: form,
+    }).then(async (r) => {
       if (!r.ok) {
         const d = await r.json().catch(() => ({}));
         throw new Error(d.error || `HTTP ${r.status}`);
       }
       return r.json();
-    })
-    .then(({ path: destFile, outFile }) => {
-      newProj.sourceFile = destFile;
+    });
+  };
 
-      const cmd = `chorus-import-project ${sbId} ${destFile} --context ${context} --out ${outFile}`;
+  Promise.all(files.map(uploadOne))
+    .then((results) => {
+      const destFiles = results.map(r => r.path);
+      const { outFile } = results[0];
+      newProj.sourceFile = destFiles[0];
+
+      // Single file → standard import ; multiple files → Merge mode
+      const cmd = `chorus-import-project ${sbId} ${destFiles.join(' ')} --context ${context} --out ${outFile}`;
 
       openLevelTerminal('project', {
         sbId,
