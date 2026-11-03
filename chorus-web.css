@@ -1230,6 +1230,17 @@ input, select, textarea { font-family: inherit; }
   background: rgba(255,255,255,.5);
 }
 
+/* Zone Réponse ECA — styles permanents gérés ici (le height seul reste inline
+   pour que le resizer puisse le modifier sans écraser le layout) */
+#lvl-term-reply-zone {
+  display: flex;
+  flex-direction: column;
+  min-height: 60px;
+  border-top: none;
+  background: var(--surface2, #1a2332);
+  flex-shrink: 0;
+}
+
 .lvl-term-badge {
   align-self: flex-start;
   font-family: 'JetBrains Mono', monospace;

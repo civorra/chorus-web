@@ -215,9 +215,10 @@ function scanFlatProject(entityPath, slug, jsonFile, runReportIndex) {
   } catch { name = null; }
   if (!name) name = slug.replace(/[-_]/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
 
-  let sourceFile = null;
-  let auditData  = null;
-  let imports    = collectImportHistory(reportsDir, slug);
+  let sourceFile          = null;
+  let auditData           = null;
+  let importedElementsCount = 0;   // elements[] du JSON importé (avant chorus-check)
+  let imports             = collectImportHistory(reportsDir, slug);
   try {
     const projJson = JSON.parse(readFileSafe(jsonFile) || '{}');
     const imp = projJson._import || {};
@@ -281,6 +282,8 @@ function scanFlatProject(entityPath, slug, jsonFile, runReportIndex) {
         patchesApplied,
       };
     }
+    // Nombre d'éléments importés — fallback pour frames avant chorus-check.
+    importedElementsCount = (projJson.elements || []).length;
   } catch { /* JSON invalide ou _import absent */ }
 
   const sourceBasename = sourceFile
@@ -295,7 +298,10 @@ function scanFlatProject(entityPath, slug, jsonFile, runReportIndex) {
     sourceBasename,
     reportPath:  reportsDir,
     state:       'imported',
-    frames:      reportData?.totalFrames || 0,
+    // Avant chorus-check : reportData est null → fallback sur elements[].length
+    // (éléments extraits à l'import). Après chorus-check : totalFrames prend
+    // le dessus (frames passées par le pipeline de conformité).
+    frames:      reportData?.totalFrames || importedElementsCount || 0,
     compliance:  reportData ? Math.round(
       ((reportData.conformes || 0) / Math.max(reportData.totalFrames || 1, 1)) * 100
     ) : null,
