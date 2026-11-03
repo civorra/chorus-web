@@ -3788,8 +3788,12 @@ function renderReportsList(reports) {
     // Index dans le tableau complet (pour openReportView)
     const fullIdx = reports.indexOf(r);
 
-    // 📋 summary / 💡 explain icons — clickable if file present, greyed out otherwise
-    const miniIcons = reportMiniIcons(r, sbId, entityId, projId);
+    // 🔍 Analyse — chorus-check --summary --explain --from-report (sans pipeline)
+    const safeProjName = (currentProject?.name || projId || '').replace(/'/g, "\\'");
+    const miniIcons = `<button class="btn btn-ghost btn-sm"
+         style="padding:2px 8px;font-size:10px;flex-shrink:0;border:1px solid var(--text-muted);opacity:.8"
+         title="chorus-check --summary --explain --from-report (sans pipeline)"
+         onclick="lvlTermAnalyseRun('${sbId}','${entityId}','${projId}','${safeProjName}','${r.label}',${r.explain_file ? `'${r.explain_file}'` : 'null'},${r.synthese_file ? `'${r.synthese_file}'` : 'null'})">🔍 Analyse</button>`;
 
     return `
     <div style="display:flex;align-items:center;gap:8px;padding:8px 12px;background:var(--bg-surface);border:1px solid var(--border);border-radius:6px">
@@ -4443,6 +4447,12 @@ let _lvlTermMinimized = false; // true si le terminal est réduit (overlay masqu
 // section (plutôt que de les mélanger dans le flux linéaire principal).
 // Réinitialisé à chaque ouverture de terminal (openLevelTerminal).
 let _lvlTermSubagentSections = new Map();
+// ── Compteur d'activité de session (démonstration des capacités ECA) ─────
+// Cumule les appels d'outils par famille + le nombre de sous-agents
+// spawnés, affiché en titlebar (#lvl-term-activity-badge). Réinitialisé à
+// chaque ouverture de terminal (openLevelTerminal).
+let _lvlTermActivityCounts = { read: 0, edit: 0, shell: 0, git: 0, agent: 0, task: 0, skill: 0, other: 0 };
+let _lvlTermSubagentCount = 0;
 
 function levelPromptLabel(ctx) {
   const { level, sbId, entityId, projId, reportFile } = ctx;
@@ -4542,6 +4552,234 @@ function lvlTermSameCtx(a, b) {
     && (a.projId||null) === (b.projId||null) && (a.reportFile||null) === (b.reportFile||null);
 }
 
+// ── Taille de police du terminal ECA (réglable à chaud, persistée) ───────
+// Scope strict : uniquement .lvl-term-panel (cf. CSS data-fontsize), aucun
+// impact sur le reste de la webapp. Persisté dans localStorage pour que la
+// préférence survive aux réouvertures/rechargements.
+const LVL_TERM_FONTSIZES = ['xxs3', 'xxs2', 'xxs', 'xs', 'sm', 'md', 'lg', 'xl', 'xxl'];
+const LVL_TERM_FONTSIZE_PCT = { xxs3: 50, xxs2: 60, xxs: 70, xs: 85, sm: 92, md: 100, lg: 115, xl: 130, xxl: 145 };
+const LVL_TERM_FONTSIZE_KEY = 'eca-lvlterm-fontsize';
+const LVL_TERM_FONTSIZE_DEFAULT_IDX = LVL_TERM_FONTSIZES.indexOf('md');
+
+function lvlTermApplyFontSize(size) {
+  const panel = document.querySelector('.lvl-term-panel');
+  if (panel) panel.dataset.fontsize = size;
+  const pct = document.getElementById('lvl-term-fontsize-pct');
+  if (pct) pct.textContent = `${LVL_TERM_FONTSIZE_PCT[size] ?? 100}%`;
+}
+
+function lvlTermAdjustFontSize(delta) {
+  const current = localStorage.getItem(LVL_TERM_FONTSIZE_KEY) || 'md';
+  let idx = LVL_TERM_FONTSIZES.indexOf(current);
+  if (idx < 0) idx = LVL_TERM_FONTSIZE_DEFAULT_IDX;
+  if (delta === 0) {
+    idx = LVL_TERM_FONTSIZE_DEFAULT_IDX; // Ctrl+0 → reset
+  } else {
+    idx = Math.max(0, Math.min(LVL_TERM_FONTSIZES.length - 1, idx + delta));
+  }
+  const next = LVL_TERM_FONTSIZES[idx];
+  localStorage.setItem(LVL_TERM_FONTSIZE_KEY, next);
+  lvlTermApplyFontSize(next);
+  // Conserver le scroll en bas si on était déjà en bas (évite un "saut" de
+  // lecture quand le zoom change la hauteur du contenu).
+  const out = document.getElementById('lvl-term-output');
+  if (out) out.scrollTop = out.scrollHeight;
+}
+
+/** Copie l'intégralité du log de la session (zone de sortie + réponse ECA
+ * si visible) au format texte brut, pour partage externe (ticket, MR, etc.). */
+function lvlTermCopyFullLog() {
+  const out = document.getElementById('lvl-term-output');
+  const replyZone = document.getElementById('lvl-term-reply-zone');
+  const reply = document.getElementById('lvl-term-reply');
+  if (!out) return;
+  let text = (out.innerText || out.textContent || '').trim();
+  if (replyZone && !replyZone.hidden && reply) {
+    const replyText = (reply.innerText || reply.textContent || '').trim();
+    if (replyText) text += '\n\n--- Réponse ECA ---\n\n' + replyText;
+  }
+  navigator.clipboard.writeText(text).then(() => {
+    const btn = document.querySelector('.eca-session-titlebar button[onclick="lvlTermCopyFullLog()"]');
+    if (btn) { const orig = btn.textContent; btn.textContent = '✅'; setTimeout(() => { btn.textContent = orig; }, 1200); }
+  }).catch(() => {});
+}
+
+/** Exporte la session complète (log + réponse ECA) en Markdown, téléchargé
+ * comme fichier .md — utile pour une démonstration ou un partage externe
+ * de session ECA (contrairement à lvlTermCopyFullLog, qui copie en brut
+ * dans le presse-papier, ceci produit un fichier horodaté téléchargeable). */
+function lvlTermExportSession() {
+  const out = document.getElementById('lvl-term-output');
+  const replyZone = document.getElementById('lvl-term-reply-zone');
+  const reply = document.getElementById('lvl-term-reply');
+  if (!out) return;
+  const ctxLabel = _lvlTermCtx ? levelPromptLabel(_lvlTermCtx).replace(' ?>', '') : 'session';
+  const now = new Date();
+  const ts = now.toISOString().slice(0, 19).replace(/[T:]/g, '-');
+  let md = `# Session ECA — ${ctxLabel}\n\n_Exportée le ${now.toLocaleString('fr-FR')}_\n\n## Log\n\n\`\`\`\n`;
+  md += (out.innerText || out.textContent || '').trim();
+  md += '\n```\n';
+  if (replyZone && !replyZone.hidden && reply) {
+    const replyText = (reply.innerText || reply.textContent || '').trim();
+    if (replyText) md += `\n## Dernière réponse ECA\n\n${replyText}\n`;
+  }
+  const blob = new Blob([md], { type: 'text/markdown' });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  a.href = url;
+  a.download = `eca-session-${ctxLabel.replace(/[^a-zA-Z0-9_-]+/g, '_')}-${ts}.md`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+  const btn = document.querySelector('.eca-session-titlebar button[onclick="lvlTermExportSession()"]');
+  if (btn) { const orig = btn.textContent; btn.textContent = '✅'; setTimeout(() => { btn.textContent = orig; }, 1200); }
+}
+
+/** Met à jour le badge d'activité de session (titlebar) — compte cumulé des
+ * appels d'outils par famille + nombre de sous-agents spawnés. Masqué tant
+ * qu'aucun appel n'a eu lieu (évite un badge vide dès l'ouverture). */
+function lvlTermUpdateActivityBadge() {
+  const badge = document.getElementById('lvl-term-activity-badge');
+  if (!badge) return;
+  const c = _lvlTermActivityCounts;
+  const totalTools = Object.values(c).reduce((s, n) => s + n, 0);
+  if (totalTools === 0 && _lvlTermSubagentCount === 0) { badge.hidden = true; return; }
+  const parts = [];
+  if (totalTools) parts.push(`🔧 ${totalTools} appel(s)`);
+  if (c.read)  parts.push(`📄 ${c.read}`);
+  if (c.edit)  parts.push(`✏️ ${c.edit}`);
+  if (c.shell) parts.push(`⚡ ${c.shell}`);
+  if (c.git)   parts.push(`🔀 ${c.git}`);
+  if (_lvlTermSubagentCount) parts.push(`🤖 ${_lvlTermSubagentCount} sous-agent(s)`);
+  badge.textContent = parts.join(' · ');
+  badge.hidden = false;
+}
+
+// ── Bouton flottant "Aller en bas" ────────────────────────────────────────
+// Affiché quand l'utilisateur a scrollé au-dessus du bas de la zone de
+// sortie (ex. pour relire un passage pendant qu'un stream est actif) —
+// masqué automatiquement dès qu'on est de nouveau en bas.
+function lvlTermScrollToBottom() {
+  const out = document.getElementById('lvl-term-output');
+  if (out) out.scrollTop = out.scrollHeight;
+  const btn = document.getElementById('lvl-term-scrollbottom-btn');
+  if (btn) btn.hidden = true;
+}
+
+function lvlTermCheckScrollToBottom() {
+  const out = document.getElementById('lvl-term-output');
+  const btn = document.getElementById('lvl-term-scrollbottom-btn');
+  if (!out || !btn) return;
+  const distanceFromBottom = out.scrollHeight - out.scrollTop - out.clientHeight;
+  btn.hidden = distanceFromBottom < 60;
+}
+
+// ── Recherche dans le log (Ctrl+F scopé à #lvl-term-output) ──────────────
+let _lvlTermSearchMatches = [];
+let _lvlTermSearchIdx = -1;
+
+function lvlTermSearchOpen() {
+  const bar = document.getElementById('lvl-term-search-bar');
+  const input = document.getElementById('lvl-term-search-input');
+  if (!bar || !input) return;
+  bar.hidden = false;
+  input.focus();
+  input.select();
+}
+
+function lvlTermSearchClose() {
+  const bar = document.getElementById('lvl-term-search-bar');
+  const input = document.getElementById('lvl-term-search-input');
+  if (bar) bar.hidden = true;
+  if (input) input.value = '';
+  lvlTermSearchClearHighlights();
+  _lvlTermSearchMatches = [];
+  _lvlTermSearchIdx = -1;
+  const count = document.getElementById('lvl-term-search-count');
+  if (count) count.textContent = '0/0';
+}
+
+function lvlTermSearchClearHighlights() {
+  const out = document.getElementById('lvl-term-output');
+  if (!out) return;
+  out.querySelectorAll('mark.lvl-term-search-hit').forEach(m => {
+    const parent = m.parentNode;
+    parent.replaceChild(document.createTextNode(m.textContent), m);
+    parent.normalize();
+  });
+}
+
+function lvlTermSearchInput() {
+  const input = document.getElementById('lvl-term-search-input');
+  const out   = document.getElementById('lvl-term-output');
+  const count = document.getElementById('lvl-term-search-count');
+  if (!input || !out || !count) return;
+  lvlTermSearchClearHighlights();
+  _lvlTermSearchMatches = [];
+  _lvlTermSearchIdx = -1;
+  const term = input.value.trim();
+  if (!term) { count.textContent = '0/0'; return; }
+  const termLower = term.toLowerCase();
+
+  // Parcourt les text nodes de la zone de sortie et surligne chaque
+  // occurrence (insensible à la casse) avec <mark class="lvl-term-search-hit">.
+  const walker = document.createTreeWalker(out, NodeFilter.SHOW_TEXT, {
+    acceptNode: n => (n.parentElement && n.parentElement.closest('script,style'))
+      ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT,
+  });
+  const textNodes = [];
+  let n;
+  while ((n = walker.nextNode())) textNodes.push(n);
+
+  textNodes.forEach(node => {
+    const text = node.textContent;
+    const lower = text.toLowerCase();
+    if (!lower.includes(termLower)) return;
+    const frag = document.createDocumentFragment();
+    let last = 0;
+    let idx;
+    while ((idx = lower.indexOf(termLower, last)) !== -1) {
+      if (idx > last) frag.appendChild(document.createTextNode(text.slice(last, idx)));
+      const mark = document.createElement('mark');
+      mark.className = 'lvl-term-search-hit';
+      mark.textContent = text.slice(idx, idx + term.length);
+      frag.appendChild(mark);
+      _lvlTermSearchMatches.push(mark);
+      last = idx + term.length;
+    }
+    if (last < text.length) frag.appendChild(document.createTextNode(text.slice(last)));
+    node.parentNode.replaceChild(frag, node);
+  });
+
+  count.textContent = `${_lvlTermSearchMatches.length ? 1 : 0}/${_lvlTermSearchMatches.length}`;
+  if (_lvlTermSearchMatches.length) {
+    _lvlTermSearchIdx = 0;
+    lvlTermSearchFocusCurrent();
+  }
+}
+
+function lvlTermSearchFocusCurrent() {
+  const count = document.getElementById('lvl-term-search-count');
+  _lvlTermSearchMatches.forEach(m => m.classList.remove('lvl-term-search-hit-active'));
+  if (_lvlTermSearchIdx < 0 || _lvlTermSearchIdx >= _lvlTermSearchMatches.length) return;
+  const el = _lvlTermSearchMatches[_lvlTermSearchIdx];
+  el.classList.add('lvl-term-search-hit-active');
+  el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  if (count) count.textContent = `${_lvlTermSearchIdx + 1}/${_lvlTermSearchMatches.length}`;
+}
+
+function lvlTermSearchNav(delta) {
+  if (!_lvlTermSearchMatches.length) return;
+  _lvlTermSearchIdx = (_lvlTermSearchIdx + delta + _lvlTermSearchMatches.length) % _lvlTermSearchMatches.length;
+  lvlTermSearchFocusCurrent();
+}
+
+function lvlTermSearchKeydown(e) {
+  if (e.key === 'Escape') { e.preventDefault(); lvlTermSearchClose(); document.getElementById('lvl-term-input')?.focus(); return; }
+  if (e.key === 'Enter') { e.preventDefault(); lvlTermSearchNav(e.shiftKey ? -1 : 1); return; }
+}
+
 function openLevelTerminal(level, ctx, autoCmd = null) {
   const requestedCtx = { level, ...ctx };
 
@@ -4582,6 +4820,10 @@ function openLevelTerminal(level, ctx, autoCmd = null) {
   _lvlTermSessionId = 'lvlterm-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8);
   _lvlTermSubagentSections = new Map();
   _taskTimers = new Map(); // reset chronomètres à chaque nouvelle session
+  _lvlTermActivityCounts = { read: 0, edit: 0, shell: 0, git: 0, agent: 0, task: 0, skill: 0, other: 0 };
+  _lvlTermSubagentCount = 0;
+  lvlTermUpdateActivityBadge();
+  lvlTermSearchClose();
 
   const overlay = document.getElementById('level-terminal-overlay');
   const out     = document.getElementById('lvl-term-output');
@@ -4619,6 +4861,9 @@ function openLevelTerminal(level, ctx, autoCmd = null) {
 
   out.innerHTML = '';
   overlay.hidden = false;
+  lvlTermApplyFontSize(localStorage.getItem(LVL_TERM_FONTSIZE_KEY) || 'md');
+  const scrollBtn = document.getElementById('lvl-term-scrollbottom-btn');
+  if (scrollBtn) scrollBtn.hidden = true;
 
   const welcome = [];
   if (level === 'sandbox') {
@@ -5014,8 +5259,13 @@ function lvlTermAppendTool(toolInfo) {
   const color = TOOL_FAMILY_COLOR[toolInfo.family] || TOOL_FAMILY_COLOR.other;
 
   if (toolInfo.isSubagent && toolInfo.subagentChatId) {
+    _lvlTermSubagentCount++;
+    lvlTermUpdateActivityBadge();
     return lvlTermFinalizeSubagentSection(toolInfo, color);
   }
+
+  _lvlTermActivityCounts[toolInfo.family] = (_lvlTermActivityCounts[toolInfo.family] || 0) + 1;
+  lvlTermUpdateActivityBadge();
 
   const line = document.createElement('div');
   line.className = 'eca-session-line dim eca-tool-line';
@@ -5192,6 +5442,26 @@ function lvlTermFinalizeSubagentSection(toolInfo, color) {
 
 function levelTerminalKeydown(e) {
   const input = document.getElementById('lvl-term-input');
+  if (e.ctrlKey && (e.key === '=' || e.key === '+')) {
+    e.preventDefault();
+    lvlTermAdjustFontSize(1);
+    return;
+  }
+  if (e.ctrlKey && e.key === '-') {
+    e.preventDefault();
+    lvlTermAdjustFontSize(-1);
+    return;
+  }
+  if (e.ctrlKey && e.key === '0') {
+    e.preventDefault();
+    lvlTermAdjustFontSize(0);
+    return;
+  }
+  if (e.ctrlKey && (e.key === 'f' || e.key === 'F')) {
+    e.preventDefault();
+    lvlTermSearchOpen();
+    return;
+  }
   if (e.key === 'Escape' && !input.value.trim() && _lvlTermAbortCtrl) {
     e.preventDefault();
     levelTerminalStop();
@@ -5928,8 +6198,14 @@ function openHistoryModal(projId) {
         } else if (isJson) {
           viewBtn = `<button class="btn btn-ghost btn-sm" style="padding:2px 7px;font-size:10px;flex-shrink:0" title="Voir ${r.label} (rapport structuré run.pl)" onclick="openReportView({label:'${r.label}', kind:'run', run:'run.pl'}, {sbId:'${sbId}', sbName:'${(currentSandbox&&currentSandbox.name)||sbId}', entityId:'${proj.entity}', projId:'${projId}', projName:'${proj.name}'})">👁️</button>`;
         }
-        // 📋 summary / 💡 explain icons — only on run-reports (.json)
-        const miniIcons = isJson ? reportMiniIcons(r, sbId, proj.entity, projId) : '';
+        // 🔍 Analyse — chorus-check --summary --explain --from-report (sans pipeline)
+        const safeProjName = (proj.name || '').replace(/'/g, "\\'");
+        const miniIcons = isJson
+          ? `<button class="btn btn-ghost btn-sm"
+               style="padding:2px 8px;font-size:10px;flex-shrink:0;border:1px solid var(--text-muted);opacity:.8"
+               title="chorus-check --summary --explain --from-report (sans pipeline)"
+               onclick="lvlTermAnalyseRun('${sbId}','${proj.entity}','${projId}','${safeProjName}','${r.label}',${r.explain_file ? `'${r.explain_file}'` : 'null'},${r.synthese_file ? `'${r.synthese_file}'` : 'null'})">🔍 Analyse</button>`
+          : '';
 
         html += `<div class="hm-report-row">
           <div class="hm-report-icon">${r.icon||'📋'}</div>
@@ -6427,101 +6703,6 @@ function _parseOrgTable(raw, headingRegex) {
   return { headers: split(tableLines[0]), rows: tableLines.slice(1).map(split) };
 }
 
-// ── _renderPipelineFromIndexOrg ───────────────────────────────────────────
-// Rend la vue Pipeline cross-agents à partir du contenu brut de index.org.
-// Sections utilisées : * Agents, * Thresholds cross-reference,
-//                      * Control slots, * Frames
-function _renderPipelineFromIndexOrg(raw, pipeline) {
-  const esc = s => String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-
-  // ── Section helpers ─────────────────────────────────────────────────────
-  function section(title, body) {
-    return `
-      <div style="margin-bottom:20px">
-        <div style="font-size:10px;font-weight:700;color:var(--text-muted);text-transform:uppercase;
-                    letter-spacing:.1em;margin-bottom:10px;padding-bottom:4px;
-                    border-bottom:1px solid var(--border)">${esc(title)}</div>
-        ${body}
-      </div>`;
-  }
-
-  function orgTable(t, colStyles) {
-    if (!t || !t.rows.length) return '<div style="color:var(--text-muted);font-size:12px">—</div>';
-    const thStyle = 'padding:4px 10px;font-size:10px;font-weight:600;color:var(--text-muted);' +
-                    'text-align:left;border-bottom:1px solid var(--border);white-space:nowrap';
-    const tdStyle = (i) => `padding:4px 10px;font-size:11px;color:var(--text-secondary);` +
-                            `vertical-align:top;border-bottom:1px solid var(--border-light);` +
-                            (colStyles && colStyles[i] ? colStyles[i] : '');
-    return `<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse">
-      <thead><tr>${t.headers.map(h => `<th style="${thStyle}">${esc(h)}</th>`).join('')}</tr></thead>
-      <tbody>${t.rows.map(r =>
-        `<tr>${r.map((c, i) => `<td style="${tdStyle(i)}">${esc(c)}</td>`).join('')}</tr>`
-      ).join('')}</tbody>
-    </table></div>`;
-  }
-
-  const parts = [];
-
-  // ── 1. Flux pipeline ───────────────────────────────────────────────────
-  if (pipeline.length) {
-    const flow = pipeline.map((ag, i) => {
-      const deferred = ag.deferred > 0
-        ? `<span style="font-size:10px;color:var(--warn,#FF9F0A);margin-left:6px">⏭ ${ag.deferred}</span>` : '';
-      const status = ag.status === '✅' || ag.status === 'true'
-        ? `<span style="font-size:11px;color:var(--ok,#30D158)">✅</span>` : '';
-      const arrow = i < pipeline.length - 1
-        ? `<span style="color:var(--text-muted);margin:0 8px;align-self:center">→</span>` : '';
-      return `
-        <div style="display:flex;align-items:center">
-          <div style="background:var(--bg-elevated);border:1px solid var(--border);border-radius:6px;
-                      padding:6px 12px;display:flex;align-items:center;gap:6px">
-            <span style="font-size:10px;color:var(--accent);font-weight:700">#${esc(ag.pos)}</span>
-            <span class="mono" style="font-size:12px;font-weight:600;color:var(--text-primary)">${esc(ag.slug)}</span>
-            ${status}${deferred}
-          </div>
-          ${arrow}
-        </div>`;
-    }).join('');
-    parts.push(section('Flux pipeline', `<div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center">${flow}</div>`));
-  }
-
-  // ── 2. Seuils comparatifs ──────────────────────────────────────────────
-  const thresholds = _parseOrgTable(raw, /^\*\s+Thresholds?\s+cross.reference/i);
-  if (thresholds) {
-    // Colorier les cellules ⏭ en warning, — en muted
-    const colStyleFn = (i) => i === 0
-      ? 'font-weight:500;color:var(--text-primary);white-space:nowrap'
-      : '';
-    const table = orgTable(thresholds, null);
-    // Post-process cell coloring for ⏭ and —
-    const colorized = table
-      .replace(/>⏭([^<]*)</g, `><span style="color:var(--warn,#FF9F0A)">⏭$1</span><`)
-      .replace(/>—</g, `><span style="color:var(--text-muted)">—</span><`);
-    parts.push(section('Seuils comparatifs (cross-référence)', colorized));
-  }
-
-  // ── 3. Control slots ───────────────────────────────────────────────────
-  const ctrlSlots = _parseOrgTable(raw, /^\*\s+Control slots/i);
-  if (ctrlSlots) {
-    const colorized = orgTable(ctrlSlots, null)
-      .replace(/>_NEEDED</g, `><span style="color:var(--accent);font-weight:600">_NEEDED</span><`)
-      .replace(/>_DEFAULT</g, `><span style="color:var(--text-secondary);font-weight:600">_DEFAULT</span><`);
-    parts.push(section('Control slots (_NEEDED / _DEFAULT)', colorized));
-  }
-
-  // ── 4. Frames ─────────────────────────────────────────────────────────
-  const frames = _parseOrgTable(raw, /^\*\s+Frames\b/i);
-  if (frames) parts.push(section('Frames (inter-Frame relationships)', orgTable(frames, null)));
-
-  // ── 5. BOARD slots (optionnel) ─────────────────────────────────────────
-  const board = _parseOrgTable(raw, /^\*\s+BOARD/i);
-  if (board) parts.push(section('BOARD slots (inter-agents)', orgTable(board, null)));
-
-  return parts.length
-    ? parts.join('')
-    : '<div style="color:var(--text-muted);font-size:13px;padding:20px 0">Aucune section pipeline trouvée dans index.org.</div>';
-}
-
 // ── _parseIndexOrgAgents ───────────────────────────────────────────────────
 // Fallback client-side : extrait les agents depuis le contenu brut de index.org
 // quand le scanner serveur retourne pipeline=[] (format "* Agents" non encore
@@ -6568,7 +6749,6 @@ async function openSandboxCorpus() {
   document.getElementById('sbc-overview-content').innerHTML = 'Chargement…';
   document.getElementById('sbc-corpus-list').innerHTML = 'Chargement…';
   document.getElementById('sbc-agents-list').innerHTML = 'Chargement…';
-  document.getElementById('sbc-frames-list').innerHTML = 'Chargement…';
   switchSbcTab('corpus');
   document.getElementById('sb-corpus-overlay').hidden = false;
 
@@ -6888,23 +7068,6 @@ async function openSandboxCorpus() {
     `).join('');
   }
 
-  // ── Panel Pipeline : vue cross-agents depuis index.org ─────────────────
-  // Charge index.org via l'endpoint existant et en extrait les sections
-  // cross-agents (flux pipeline, seuils comparatifs, control slots, frames).
-  // Fonctionne sans restart serveur — fallback sur message si index absent.
-  document.getElementById('sbc-frames-list').innerHTML =
-    '<div style="color:var(--text-muted);font-size:12px;padding:16px 0">Chargement pipeline…</div>';
-  (async () => {
-    let indexRaw = null;
-    try {
-      const ri = await fetch(`${API}/api/sandboxes/${sb.id}/agents/index/org`);
-      if (ri.ok) indexRaw = await ri.text();
-    } catch {}
-    document.getElementById('sbc-frames-list').innerHTML =
-      indexRaw ? _renderPipelineFromIndexOrg(indexRaw, pipeline)
-               : '<div style="color:var(--text-muted);font-size:13px;padding:20px 0">index.org introuvable — KB non encore générée.</div>';
-  })();
-
   // ── Thesaurus panel — removed from the sandbox-level Corpus modal (the
   // info is now available, filtered by project, in the "Thesaurus" tab of
   // the Project view — see renderPvThesaurusTab()). `thesaurus` is still
@@ -6918,7 +7081,7 @@ function closeSandboxCorpus() {
 
 function switchSbcTab(tab) {
   _sbcCurrentTab = tab;
-  ['overview', 'corpus', 'agents', 'frames'].forEach(t => {
+  ['overview', 'corpus', 'agents'].forEach(t => {
     const btn   = document.getElementById(`sbc-tab-${t}`);
     const panel = document.getElementById(`sbc-panel-${t}`);
     const active = t === tab;
@@ -7437,6 +7600,23 @@ function openNewSandboxModal() {
 function closeNewSbModal() {
   document.getElementById('newsb-modal-overlay').hidden = true;
 }
+
+// ── Terminal ECA : scroll listener (bouton "Aller en bas") + Ctrl+F global ──
+(function() {
+  function setup() {
+    const out = document.getElementById('lvl-term-output');
+    if (out) out.addEventListener('scroll', lvlTermCheckScrollToBottom);
+    const overlay = document.getElementById('level-terminal-overlay');
+    if (overlay) overlay.addEventListener('keydown', (e) => {
+      if (e.ctrlKey && (e.key === 'f' || e.key === 'F')) {
+        e.preventDefault();
+        lvlTermSearchOpen();
+      }
+    });
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', setup);
+  else setup();
+})();
 
 // Live-preview context path slug as user types
 (function() {

@@ -1182,6 +1182,40 @@ input, select, textarea { font-family: inherit; }
   height: 80vh;
   display: flex; flex-direction: column;
   overflow: hidden;
+  font-size: 100%; /* base pour le zoom data-fontsize ci-dessous */
+}
+/* ── Taille de police réglable à chaud (boutons A-/A+) ──────────────────
+   Scopé exclusivement au panel du terminal ECA : zoom le texte des zones
+   log / réponse ECA / taskboard / input, sans toucher au reste de la
+   webapp (titlebar, badges, boutons gardent leur taille fixe). */
+.lvl-term-panel[data-fontsize="xxs3"] { font-size: 50%; }
+.lvl-term-panel[data-fontsize="xxs2"] { font-size: 60%; }
+.lvl-term-panel[data-fontsize="xxs"]  { font-size: 70%; }
+.lvl-term-panel[data-fontsize="xs"]   { font-size: 85%; }
+.lvl-term-panel[data-fontsize="sm"]   { font-size: 92%; }
+.lvl-term-panel[data-fontsize="md"]   { font-size: 100%; }
+.lvl-term-panel[data-fontsize="lg"]   { font-size: 115%; }
+.lvl-term-panel[data-fontsize="xl"]   { font-size: 130%; }
+.lvl-term-panel[data-fontsize="xxl"]  { font-size: 145%; }
+.lvl-term-panel .eca-session-output,
+.lvl-term-panel .eca-session-line,
+.lvl-term-panel #lvl-term-reply,
+.lvl-term-panel #lvl-term-taskboard,
+.lvl-term-panel .eca-session-input,
+.lvl-term-panel .eca-session-prompt-label {
+  font-size: 1em;
+}
+/* ── Recherche dans le log (Ctrl+F) ────────────────────────────────────── */
+mark.lvl-term-search-hit {
+  background: rgba(245,159,10,.45);
+  color: inherit;
+  border-radius: 2px;
+  padding: 0 1px;
+}
+mark.lvl-term-search-hit-active {
+  background: #F59E0A;
+  color: #0D1117;
+  font-weight: 600;
 }
 /* When the session-wrap is directly inside the level terminal panel,
    flatten its top-left corner so it connects flush with the badge. */
