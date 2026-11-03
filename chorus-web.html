@@ -547,39 +547,32 @@
       <input class="form-input" id="import-name" type="text" placeholder="e.g. ID-CA v3.2 EAL4 dossier" oninput="validateImportName()">
       <div id="import-name-hint" style="font-size:11px;margin-top:4px;min-height:14px"></div>
     </div>
-    <div class="form-group" id="import-source-group">
-      <label class="form-label">Source type</label>
-      <!-- Auto-derived from the selected file's extension (updateImportFileHint())
-           — manual options kept only as a fallback display / for the frozen
-           re-import branch (startImport() § reimportId), which never shows
-           this group to the user. Aligned with extensions actually handled
-           server-side (server/routes/projects.js § ext = path.extname(...)),
-           "zip"/"url" removed: never supported by chorus-import-project. -->
-      <select class="form-select" id="import-source">
-        <option value="pdf">PDF</option>
-        <option value="docx">Word (.docx)</option>
-        <option value="xlsx">Excel (.xlsx/.csv)</option>
-        <option value="md">Markdown / texte (.md/.txt)</option>
-        <option value="json">JSON machine-readable (.json — ex. CBOM/CycloneDX)</option>
-      </select>
-    </div>
+    <!-- import-source : champ fantôme — type auto-détecté depuis l'extension
+         du fichier (updateImportFileHint → inferImportSourceFromFilename).
+         Jamais affiché ; utilisé comme métadonnée newProj.type dans startImport()
+         et dans la branche ré-import (openImportModal § reimportProjId). -->
+    <input type="hidden" id="import-source" value="pdf">
     <div class="form-group" id="import-path-group">
-      <label class="form-label">Source file</label>
+      <label class="form-label">Source file(s) <span style="font-size:10px;color:var(--text-muted)">(Ctrl/⌘+clic = Mode Fusion)</span></label>
       <!-- Real file picker — a project document is a binary upload, not a
            path typed by the user (the webapp runs server-side, it has no
            access to the operator's local filesystem by path). Transmitted
-           as multipart/form-data to POST .../projects/import (multer
+           as multipart/form-data to POST .../projects/upload (multer
            upload.single('file') server-side, see server/routes/projects.js).
            accept list mirrors the extensions actually handled by the
            conversion skills (chorus-pdf/word/excel) + inline md/txt + raw
            machine-readable JSON (e.g. CBOM/CycloneDX — chorus-import-project.md
            § Phase -0.1 sandbox-local extension discovery explicitly supports
            this as a source format, no conversion skill needed: the file is
-           read directly as structured data). -->
+           read directly as structured data).
+           multiple: selecting N files activates Merge mode — each file is
+           uploaded individually to sources/<projId>/ and
+           chorus-import-project receives all paths (N > 1 → auto-merge). -->
       <input class="form-input" id="import-file" type="file"
              accept=".pdf,.docx,.xlsx,.csv,.md,.txt,.json"
+             multiple
              oninput="updateImportFileHint()" onchange="updateImportFileHint()">
-      <div id="import-file-hint" style="font-size:11px;margin-top:4px;min-height:14px;color:var(--text-muted)">Aucun fichier sélectionné</div>
+      <div id="import-file-hint" style="font-size:11px;margin-top:4px;min-height:14px;color:var(--text-muted)">Aucun fichier — ou plusieurs (Ctrl/⌘+clic) pour Mode Fusion</div>
       <!-- import-path kept as a hidden legacy field: the re-import branch
            (startImport() § reimportId path) still reads/writes it to carry
            the original project's sourceFile across modal re-opens — never
@@ -682,11 +675,9 @@
       <div id="lvl-term-resizer-reply" hidden
            class="lvl-term-resizer" title="Redimensionner Log / Réponse ECA"></div>
       <!-- Zone 3 : Réponse ECA (sticky, visible dès le 1er chunk de texte) -->
-      <div id="lvl-term-reply-zone" hidden style="
-          display:flex;flex-direction:column;
-          height:200px;min-height:60px;
-          border-top:none;
-          background:var(--surface2,#1a2332);flex-shrink:0">
+      <!-- NB: display/flex-direction/min-height/background/flex-shrink sont dans le CSS (#lvl-term-reply-zone).
+           Seul height est inline pour permettre au resizer de le modifier dynamiquement. -->
+      <div id="lvl-term-reply-zone" hidden style="height:200px">
         <div style="display:flex;align-items:center;gap:8px;padding:4px 10px;
             border-bottom:1px solid var(--border,#30363d);
             background:rgba(88,166,255,.08);font-size:11px;font-family:'JetBrains Mono',monospace;flex-shrink:0">

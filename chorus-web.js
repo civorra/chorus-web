@@ -7020,7 +7020,6 @@ function openImportModal(reimportProjId) {
 
   const nameGroup      = document.getElementById('import-name-group');
   const nameLabel      = document.getElementById('import-name-label');
-  const sourceGroup    = document.getElementById('import-source-group');
   const pathGroup      = document.getElementById('import-path-group');
   const contextGroup   = document.getElementById('import-context-group');
 
@@ -7038,7 +7037,6 @@ function openImportModal(reimportProjId) {
 
     // Hide all form fields (no user input required)
     nameGroup.hidden    = true;
-    sourceGroup.hidden  = true;
     pathGroup.hidden    = true;
     contextGroup.hidden = true;
 
@@ -7087,7 +7085,6 @@ function openImportModal(reimportProjId) {
     if (titleEl) titleEl.textContent = 'Importer un projet';
 
     nameLabel.textContent = 'Project name';
-    sourceGroup.hidden    = false;
     pathGroup.hidden      = false;
     contextGroup.hidden   = false;
 
@@ -7195,46 +7192,65 @@ function computeReimportSlug(newName, sbId, existingProj) {
   return { ok: true, slug, id };
 }
 
-// Infers the import-source <select> value from a File's extension — keeps
-// the (now auto-derived, no longer user-facing) field consistent with
-// whatever file the user actually picked, without requiring a manual
-// selection in sync with the file picker.
+// Infers the import-source hidden-field value from a File's extension.
+// Returns one of: 'pdf' | 'docx' | 'xlsx' | 'md' | 'json'
 function inferImportSourceFromFilename(filename) {
   const ext = (filename.split('.').pop() || '').toLowerCase();
-  if (ext === 'pdf') return 'pdf';
-  if (ext === 'docx') return 'docx';
+  if (ext === 'pdf')              return 'pdf';
+  if (ext === 'docx')             return 'docx';
   if (ext === 'xlsx' || ext === 'csv') return 'xlsx';
-  if (ext === 'md' || ext === 'txt') return 'md';
-  if (ext === 'json') return 'json';
-  return 'pdf';
+  if (ext === 'md'   || ext === 'txt') return 'md';
+  if (ext === 'json')             return 'json';
+  return 'pdf'; // fallback
 }
 
-// Called on file picker change — updates the inline hint (filename + size)
-// and keeps import-source in sync (see inferImportSourceFromFilename above).
-// Mirrors the live-validation pattern of validateImportName() below.
+// Returns a short human-readable label for the auto-detected source type.
+// 'conv. auto' signals that chorus-import-project will run a conversion
+// skill (chorus-pdf / chorus-word / chorus-excel) before alignment.
+function _importSourceLabel(source) {
+  return {
+    pdf:  '📄 PDF — conv. auto',
+    docx: '📝 Word — conv. auto',
+    xlsx: '📊 Excel/CSV — conv. auto',
+    md:   '✍️ Markdown/texte — direct',
+    json: '🔧 JSON — direct',
+  }[source] || source;
+}
+
+// Called on file picker change — updates the inline hint (filename + size +
+// auto-detected type) and keeps import-source hidden field in sync.
 function updateImportFileHint() {
-  const input = document.getElementById('import-file');
-  const hint  = document.getElementById('import-file-hint');
-  const sourceSel = document.getElementById('import-source');
+  const input     = document.getElementById('import-file');
+  const hint      = document.getElementById('import-file-hint');
+  const sourceHid = document.getElementById('import-source');
   if (!input || !hint) return;
   const files = input.files ? Array.from(input.files) : [];
   if (!files.length) {
-    hint.textContent = 'Aucun fichier — ou plusieurs (Ctrl/⌘+clic) pour Mode Fusion';
+    hint.innerHTML = '<span>Aucun fichier — ou plusieurs (Ctrl/⌘+clic) pour Mode Fusion</span>';
     hint.style.color = 'var(--text-muted)';
     return;
   }
   if (files.length === 1) {
+    const src    = inferImportSourceFromFilename(files[0].name);
     const sizeKb = Math.round(files[0].size / 1024);
-    hint.textContent = `✓ ${files[0].name} (${sizeKb} Ko)`;
-    hint.style.color = 'var(--success, #10B981)';
-    if (sourceSel) sourceSel.value = inferImportSourceFromFilename(files[0].name);
+    if (sourceHid) sourceHid.value = src;
+    hint.innerHTML =
+      `<span style="color:var(--success,#10B981)">✓ ${escapeHtml(files[0].name)} (${sizeKb} Ko)</span>` +
+      `<span style="margin-left:10px;color:var(--text-muted);font-size:10px">${_importSourceLabel(src)}</span>`;
+    hint.style.color = '';
   } else {
-    const totalKb = Math.round(files.reduce((s, f) => s + f.size, 0) / 1024);
-    const names = files.map(f => f.name).join(', ');
-    hint.textContent = `✓ Mode Fusion — ${files.length} fichiers (${totalKb} Ko) : ${names}`;
-    hint.style.color = 'var(--success, #10B981)';
-    // Type informationnel uniquement en mode Fusion — dérivé du premier fichier
-    if (sourceSel) sourceSel.value = inferImportSourceFromFilename(files[0].name);
+    // Mode Fusion — type dérivé du premier fichier (informatif uniquement)
+    const src      = inferImportSourceFromFilename(files[0].name);
+    const totalKb  = Math.round(files.reduce((s, f) => s + f.size, 0) / 1024);
+    if (sourceHid) sourceHid.value = src;
+    const labels = files.map(f => {
+      const s = inferImportSourceFromFilename(f.name);
+      return `${escapeHtml(f.name)} <span style="color:var(--text-muted);font-size:10px">${_importSourceLabel(s)}</span>`;
+    }).join('<br>');
+    hint.innerHTML =
+      `<span style="color:var(--success,#10B981)">✓ Mode Fusion — ${files.length} fichiers (${totalKb} Ko)</span>` +
+      `<div style="margin-top:4px;line-height:1.7">${labels}</div>`;
+    hint.style.color = '';
   }
 }
 
