@@ -26,6 +26,44 @@ router.get('/scan', (req, res) => {
   }
 });
 
+// Débloque un checkpoint resté en status "running" sans mise à jour depuis
+// longtemps (session chorus-feed --unattended crashée — conteneur
+// redémarré, process tué — avant d'avoir pu réécrire "waiting"/
+// "stopped_max_passes"/"converged"). Déclenché par le bouton webapp
+// "⚠️ Feed bloqué" (cf. chorus-web.js § isFeedStatusStaleRunning /
+// FEED_RUNNING_STALE_MS) — jamais automatique, toujours un clic explicite.
+//
+// Sécurité serveur (ne pas se fier uniquement au client) : refuse si le
+// fichier n'existe pas, si status n'est pas "running", ou si last_update
+// est trop récent (< STALE_MS) — un vrai "running" en cours ne doit jamais
+// être débloqué silencieusement.
+const FEED_UNSTICK_STALE_MS = 10 * 60 * 1000; // garder en phase avec chorus-web.js
+router.post('/sandboxes/:sbId/feed-status/unstick', (req, res) => {
+  try {
+    const { SANDBOXES_DIR } = require('../../chorus/fs');
+    const sbPath = path.join(SANDBOXES_DIR(), req.params.sbId);
+    const p = path.join(sbPath, '.chorus-unattended-state.json');
+    if (!fs.existsSync(p)) {
+      return res.status(404).json({ ok: false, error: 'Checkpoint introuvable' });
+    }
+    const d = JSON.parse(fs.readFileSync(p, 'utf8'));
+    if (d.status !== 'running') {
+      return res.status(409).json({ ok: false, error: `status actuel = "${d.status}", pas "running" — rien à débloquer` });
+    }
+    const lastUpdateMs = d.last_update ? new Date(d.last_update).getTime() : NaN;
+    if (Number.isNaN(lastUpdateMs) || (Date.now() - lastUpdateMs) <= FEED_UNSTICK_STALE_MS) {
+      return res.status(409).json({ ok: false, error: 'last_update trop récent — une session est probablement réellement en cours' });
+    }
+    d.status = 'waiting';
+    d.current_file = null;
+    d.current_mode = null;
+    fs.writeFileSync(p, JSON.stringify(d, null, 2), 'utf8');
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
 router.get('/sandboxes/:sbId', (req, res) => {
   try {
     const sb = chorus.scanSandbox(req.params.sbId);
@@ -104,6 +142,7 @@ router.get('/sandboxes/:sbId/feed-status', (req, res) => {
       suggestedNextFile:       d.suggested_next_file          || null,
       deferredUnchangedPasses: d.deferred_unchanged_passes    || 0,
       unresolvedDeferredNotes: d.unresolved_deferred_notes    || [],
+      lastUpdate:  d.last_update                      || null,
     }});
   } catch (err) {
     res.status(500).json({ ok: false, error: err.message });

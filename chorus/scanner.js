@@ -604,6 +604,13 @@ function readFeedStatus(sbPath) {
       suggestedNextFile:       d.suggested_next_file           || null,
       deferredUnchangedPasses: d.deferred_unchanged_passes     || 0,
       unresolvedDeferredNotes: d.unresolved_deferred_notes     || [],
+      // Exposed so the webapp can detect a "stale running" checkpoint —
+      // a session that crashed (container restart, process killed) mid-pass
+      // without ever rewriting status away from "running", which would
+      // otherwise leave the Feed button permanently disabled/stuck on
+      // "⏳ Feed en cours…" with no way to recover short of manually editing
+      // the JSON file. See chorus-web.js § FEED_RUNNING_STALE_MS.
+      lastUpdate:  d.last_update                       || null,
     };
   } catch { return null; }
 }

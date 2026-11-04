@@ -3226,9 +3226,54 @@ async function fetchFeedStatus(sbId) {
   } catch { return null; }
 }
 
+// Déclenché par le bouton "⚠️ Feed bloqué" (checkpoint running périmé —
+// cf. isFeedStatusStaleRunning). Demande confirmation (action irréversible
+// sur le fichier JSON, même si bénigne), appelle le endpoint serveur qui
+// revalide côté serveur avant d'écrire, puis rafraîchit immédiatement
+// l'affichage du bouton sans attendre le prochain tick de polling.
+async function unstickFeedStatus(sbId, feedStatus) {
+  const ok = window.confirm(
+    `Checkpoint "running" sans mise à jour depuis plus de ${Math.round(FEED_RUNNING_STALE_MS / 60000)} min ` +
+    `(dernière maj : ${feedStatus.lastUpdate || '?'}).\n\n` +
+    `Cela indique très probablement qu'une session chorus-feed --unattended précédente ` +
+    `a crashé (conteneur redémarré, process tué) sans jamais réécrire son statut.\n\n` +
+    `Débloquer le bouton (reset local à "waiting") ?`
+  );
+  if (!ok) return;
+  try {
+    const r = await fetch(`${API}/api/sandboxes/${sbId}/feed-status/unstick`, { method: 'POST' });
+    const d = await r.json();
+    if (!d.ok) { alert(`Échec du déblocage : ${d.error || 'erreur inconnue'}`); return; }
+    const fs = await fetchFeedStatus(sbId);
+    updateConfirmFeedBtn(fs, currentSandbox && currentSandbox.hasScoping);
+  } catch (e) {
+    alert(`Échec du déblocage : ${e.message}`);
+  }
+}
+
 // Seuil à partir duquel une stagnation (Deferred inchangé sur N passes
 // consécutives) est jugée significative et affichée à l'utilisateur.
 const FEED_STAGNATION_WARN_THRESHOLD = 2;
+
+// Seuil (ms) à partir duquel un checkpoint resté en status "running" sans
+// mise à jour est considéré périmé (session crashée — conteneur redémarré,
+// process tué — plutôt qu'une passe simplement longue). chorus-feed.md
+// documente qu'un crash laisse le checkpoint en "running" indéfiniment
+// (reprise prévue CÔTÉ AGENT au prochain lancement — "resume from
+// current_file" — mais rien ne relance cet agent automatiquement depuis la
+// webapp), ce qui bloquait silencieusement le bouton sur "⏳ Feed en
+// cours…" sans aucun moyen de débloquer autrement qu'en éditant le fichier
+// JSON à la main (incident 2026-11-04, sandbox 06-CC-3.1.5). Valeur
+// généreuse (10 min) pour ne jamais faux-positiver sur une passe Mode
+// B --enrich légitimement longue sur un gros corpus.
+const FEED_RUNNING_STALE_MS = 10 * 60 * 1000;
+
+function isFeedStatusStaleRunning(feedStatus) {
+  if (!feedStatus || feedStatus.status !== 'running' || !feedStatus.lastUpdate) return false;
+  const last = new Date(feedStatus.lastUpdate).getTime();
+  if (Number.isNaN(last)) return false;
+  return (Date.now() - last) > FEED_RUNNING_STALE_MS;
+}
 
 // Construit, à partir des champs structurés du checkpoint (chorus-feed.md
 // § Step 4 — new_rules_this_pass / suggested_next_file /
@@ -3296,6 +3341,25 @@ function updateConfirmFeedBtn(feedStatus, hasScoping) {
 
   switch (feedStatus.status) {
     case 'running':
+      if (isFeedStatusStaleRunning(feedStatus)) {
+        // Checkpoint figé en "running" sans mise à jour depuis plus de
+        // FEED_RUNNING_STALE_MS — session crashée (conteneur redémarré,
+        // process tué) plutôt qu'une passe en cours. Le JSON ne se corrige
+        // jamais tout seul (seul un nouveau chorus-feed écrirait "waiting"),
+        // donc ne pas laisser le bouton bloqué indéfiniment : proposer de
+        // débloquer manuellement (reset local status → "waiting", puis
+        // relance normale) plutôt que forcer une édition du fichier à la main.
+        btn.disabled    = false;
+        btn.textContent = '⚠️ Feed bloqué (session crashée ?)';
+        btn.style.color       = 'var(--warn,#FF9F0A)';
+        btn.style.borderColor = 'var(--warn,#FF9F0A)';
+        btn.style.opacity     = '1';
+        btn.title   = `Checkpoint "running" sans mise à jour depuis plus de ${Math.round(FEED_RUNNING_STALE_MS / 60000)} min ` +
+          `(dernière maj : ${feedStatus.lastUpdate}) — la session précédente a probablement crashé. ` +
+          `Cliquer pour débloquer (reset local à "waiting") et relancer.`;
+        btn.onclick = () => unstickFeedStatus(currentSandbox.id, feedStatus);
+        break;
+      }
       btn.disabled    = true;
       btn.textContent = '⏳ Feed en cours…';
       btn.style.color       = 'var(--accent,#0A84FF)';
