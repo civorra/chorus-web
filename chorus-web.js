@@ -4894,7 +4894,16 @@ function openLevelTerminal(level, ctx, autoCmd = null) {
   // Re-opening a minimised terminal on EXACTLY the same context: do not
   // reinitialise anything (session/stream in progress, output already shown) —
   // simply show the overlay again as-is, restored identically.
-  if (_lvlTermMinimized && lvlTermSameCtx(_lvlTermCtx, requestedCtx)) {
+  // ⚠️ Guard: skip this restoration path entirely when a fresh `autoCmd` is
+  // provided (e.g. "Confirmer → Feed" / "Pipeline Feed" buttons) — otherwise
+  // a minimised terminal from a PREVIOUS click (possibly on a stale/older
+  // prompt — server restarted, --max-passes/next_action context changed
+  // since) gets silently restored as-is and the new autoCmd is never sent.
+  // lvlTermSameCtx() does not distinguish ctx.kind ('pipeline-feed' vs a
+  // plain consultation terminal), so without this guard any repeat click
+  // on a "launch with fresh context" button while a same-context terminal
+  // is minimised would replay the old session instead of starting anew.
+  if (!autoCmd && _lvlTermMinimized && lvlTermSameCtx(_lvlTermCtx, requestedCtx)) {
     hideMinimizedTerminalIndicator();
     _lvlTermMinimized = false;
     document.getElementById('level-terminal-overlay').hidden = false;
