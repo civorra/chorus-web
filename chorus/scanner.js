@@ -596,6 +596,14 @@ function readFeedStatus(sbPath) {
       pendingA:    (d.files_mode_a_pending  || []).length,
       pendingB:    (d.files_mode_b_pending  || []).length,
       nextAction:  d.next_action                       || null,
+      // Structured counterparts to next_action's free text (chorus-feed.md
+      // § Step 4) — consumed directly by the UI without regex-parsing the
+      // free-text next_action, which would be fragile against LLM phrasing
+      // drift across sessions. See chorus-feed.md § Webapp integration.
+      newRulesThisPass:        d.new_rules_this_pass           || 0,
+      suggestedNextFile:       d.suggested_next_file           || null,
+      deferredUnchangedPasses: d.deferred_unchanged_passes     || 0,
+      unresolvedDeferredNotes: d.unresolved_deferred_notes     || [],
     };
   } catch { return null; }
 }

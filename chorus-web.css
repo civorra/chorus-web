@@ -1201,10 +1201,35 @@ input, select, textarea { font-family: inherit; }
 .lvl-term-panel .eca-session-line,
 .lvl-term-panel #lvl-term-reply,
 .lvl-term-panel #lvl-term-taskboard,
+.lvl-term-panel #lvl-term-taskboard-summary,
+.lvl-term-panel #lvl-term-taskboard-list,
 .lvl-term-panel .eca-session-input,
-.lvl-term-panel .eca-session-prompt-label {
-  font-size: 1em;
+.lvl-term-panel .eca-session-prompt-label,
+.lvl-term-panel .lvl-term-badge,
+.lvl-term-panel #lvl-term-skill-banner,
+.lvl-term-panel #lvl-term-skill-name,
+.lvl-term-panel #lvl-term-skill-history,
+.lvl-term-panel #lvl-term-ask-banner,
+.lvl-term-panel #lvl-term-ask-question,
+.lvl-term-panel #lvl-term-search-bar,
+.lvl-term-panel #lvl-term-search-input,
+.lvl-term-panel #lvl-term-search-count,
+.lvl-term-panel .eca-session-title {
+  font-size: 1em !important; /* !important nécessaire : ces zones portent
+    toutes un font-size inline (style="font-size:...px") dans le HTML,
+    de spécificité supérieure à une règle externe sans !important — sans
+    quoi le zoom A-/A+ n'avait strictement aucun effet sur ces zones. */
 }
+/* Les éléments ci-dessus ont aussi, pour certains, des sous-éléments avec
+   leur propre font-size inline (ex: spans internes au taskboard-list,
+   générés dynamiquement par JS) — propager 1em en cascade pour que le
+   zoom s'applique uniformément, y compris aux badges/labels imbriqués. */
+.lvl-term-panel #lvl-term-taskboard-list *,
+.lvl-term-panel #lvl-term-skill-banner *,
+.lvl-term-panel #lvl-term-ask-banner * {
+  font-size: 1em !important;
+}
+
 /* ── Recherche dans le log (Ctrl+F) ────────────────────────────────────── */
 mark.lvl-term-search-hit {
   background: rgba(245,159,10,.45);

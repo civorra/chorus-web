@@ -96,6 +96,14 @@ router.get('/sandboxes/:sbId/feed-status', (req, res) => {
       pendingA:    (d.files_mode_a_pending || []).length,
       pendingB:    (d.files_mode_b_pending || []).length,
       nextAction:  d.next_action                      || null,
+      // Structured counterparts to next_action's free text — see
+      // chorus-feed.md § Step 4 / § Webapp integration. Kept in sync with
+      // chorus/scanner.js's readFeedStatus() (two separate consumers of the
+      // same checkpoint file, for the scan cache and the live polling route).
+      newRulesThisPass:        d.new_rules_this_pass          || 0,
+      suggestedNextFile:       d.suggested_next_file          || null,
+      deferredUnchangedPasses: d.deferred_unchanged_passes    || 0,
+      unresolvedDeferredNotes: d.unresolved_deferred_notes    || [],
     }});
   } catch (err) {
     res.status(500).json({ ok: false, error: err.message });

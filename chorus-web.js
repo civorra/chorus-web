@@ -3126,17 +3126,64 @@ function confirmPipelineFeedPreflight() {
 // ─── CONFIRM → FEED ───────────────────────────────────────────────────────
 // Session N du pipeline : l'utilisateur clique "Confirmer → Feed".
 // Lance chorus-feed --unattended dans une session dédiée.
-function launchConfirmFeed() {
+// `maxPasses` (optionnel) : si fourni, injecte --max-passes <N> dans la
+// commande — utilisé par launchConfirmFeedWithHigherMaxPasses() ci-dessous
+// quand le checkpoint précédent s'est arrêté en stopped_max_passes (sans
+// cela, relancer sans --max-passes recalcule le même plafond par défaut
+// (2 × nb fichiers corpus) et re-bloque immédiatement sur le même palier).
+// `nextAction` (optionnel) : le champ `next_action` du précédent
+// `.chorus-unattended-state.json` (checkpoint de la passe précédente) —
+// contient un résumé détaillé écrit par la session ECA précédente (règle
+// ajoutée, items Deferred reconfirmés non-codifiables et pourquoi, fichier
+// à prioriser à la prochaine passe, etc.). Sans ce contexte, chaque
+// relance ne dispose que de la mécanique Mode A/B générique
+// (files_mode_b_pending) — fonctionnellement suffisante, mais sans la
+// justification/priorisation explicite de la session précédente, au
+// risque de retraiter inutilement des items déjà reconnus non-codifiables.
+function launchConfirmFeed(maxPasses, nextAction) {
   if (!currentSandbox) return;
   const sbId = currentSandbox.id;
+  const maxPassesFlag = maxPasses ? ` --max-passes ${maxPasses}` : '';
+  const prevContext = nextAction
+    ? `\n\nContexte de la session précédente (checkpoint .chorus-unattended-state.json, ` +
+      `champ next_action) — à prendre en compte pour prioriser cette passe, ne pas ` +
+      `redemander de clarification dessus :\n"${nextAction}"`
+    : '';
   const cmd =
-    `Lance : chorus-feed ${sbId} --unattended\n\n` +
+    `Lance : chorus-feed ${sbId} --unattended${maxPassesFlag}\n\n` +
     `SCOPING.md a été confirmé par l'utilisateur avant cette session. ` +
-    `Utilise-le tel quel sans redemander de validation.`;
+    `Utilise-le tel quel sans redemander de validation.` +
+    (maxPasses
+      ? ` Le plafond --max-passes ${maxPasses} a été fixé explicitement par ` +
+        `l'utilisateur pour dépasser le précédent arrêt stopped_max_passes — ` +
+        `ne pas le recalculer ni le reproposer.`
+      : '') +
+    prevContext;
   openLevelTerminal('sandbox', { sbId, kind: 'pipeline-feed' }, cmd);
   // Basculer immédiatement le bouton en état "running" sans attendre le polling
   updateConfirmFeedBtn({ status: 'running', passesDone: 0, maxPasses: 0, coveragePct: 0, pendingA: 0, pendingB: 0 }, true);
   startFeedStatusPolling(sbId, { status: 'running' });
+}
+
+// Déclenché par le bouton "⚠️ Max passes" (état stopped_max_passes) :
+// propose un nouveau plafond à l'utilisateur avant de relancer, au lieu de
+// relancer silencieusement avec le même plafond par défaut qui re-bloquerait
+// immédiatement sans aucune progression (cf. note dans launchConfirmFeed).
+function launchConfirmFeedWithHigherMaxPasses(currentMaxPasses, nextAction) {
+  const current = Number(currentMaxPasses) || 0;
+  const suggested = current + Math.max(6, Math.ceil(current / 2));
+  const input = window.prompt(
+    `Le plafond --max-passes précédent (${current}) est atteint sans convergence.\n\n` +
+    `Nouveau plafond --max-passes à utiliser pour relancer chorus-feed --unattended :`,
+    String(suggested)
+  );
+  if (input === null) return; // annulé
+  const n = parseInt(input, 10);
+  if (!Number.isInteger(n) || n <= current) {
+    alert(`Valeur invalide — le nouveau plafond doit être un entier strictement supérieur à ${current}.`);
+    return;
+  }
+  launchConfirmFeed(n, nextAction);
 }
 
 // ─── PIPELINE FEED BUTTON ─────────────────────────────────────────────────
@@ -3165,6 +3212,47 @@ async function fetchFeedStatus(sbId) {
     const d = await r.json();
     return d.ok ? d.feedStatus : null;
   } catch { return null; }
+}
+
+// Seuil à partir duquel une stagnation (Deferred inchangé sur N passes
+// consécutives) est jugée significative et affichée à l'utilisateur.
+const FEED_STAGNATION_WARN_THRESHOLD = 2;
+
+// Construit, à partir des champs structurés du checkpoint (chorus-feed.md
+// § Step 4 — new_rules_this_pass / suggested_next_file /
+// deferred_unchanged_passes / unresolved_deferred_notes), un court suffixe
+// compact pour le libellé du bouton (ex: " · +1 règle · ⚠️ 2 passes sans
+// progrès") et une phrase longue pour le tooltip. Centralisé ici car
+// réutilisé par les deux états ('waiting' et 'stopped_max_passes') qui
+// peuvent tous deux porter ces informations.
+function feedStatusBadges(feedStatus) {
+  const labelParts = [];
+  const titleParts = [];
+
+  if (feedStatus.newRulesThisPass > 0) {
+    labelParts.push(`+${feedStatus.newRulesThisPass} règle${feedStatus.newRulesThisPass > 1 ? 's' : ''}`);
+    titleParts.push(`${feedStatus.newRulesThisPass} nouvelle(s) règle(s) ajoutée(s) lors de la dernière passe`);
+  }
+  if (feedStatus.deferredUnchangedPasses >= FEED_STAGNATION_WARN_THRESHOLD) {
+    labelParts.push(`⚠️ ${feedStatus.deferredUnchangedPasses} passes sans progrès`);
+    titleParts.push(`Deferred inchangé depuis ${feedStatus.deferredUnchangedPasses} passes consécutives — le backlog restant nécessite probablement un autre agent/fichier non encore enrichi`);
+  }
+  if (feedStatus.suggestedNextFile) {
+    labelParts.push(`→ ${feedStatus.suggestedNextFile}`);
+    titleParts.push(`Fichier suggéré pour la prochaine passe : ${feedStatus.suggestedNextFile}`);
+  }
+  if ((feedStatus.unresolvedDeferredNotes || []).length > 0) {
+    const n = feedStatus.unresolvedDeferredNotes.length;
+    titleParts.push(
+      `${n} item(s) Deferred reconfirmé(s) non-codifiable(s) cette passe : ` +
+      feedStatus.unresolvedDeferredNotes.map(x => `${x.item} (${x.reason})`).join(' · ')
+    );
+  }
+
+  return {
+    labelSuffix: labelParts.length ? ` · ${labelParts.join(' · ')}` : '',
+    titleSuffix: titleParts.length ? ` · ${titleParts.join(' · ')}` : '',
+  };
 }
 
 // Adapte l'apparence du bouton selon l'état du checkpoint.
@@ -3205,13 +3293,16 @@ function updateConfirmFeedBtn(feedStatus, hasScoping) {
 
     case 'waiting': {
       const pending = (feedStatus.pendingA || 0) + (feedStatus.pendingB || 0);
+      const badges = feedStatusBadges(feedStatus);
       btn.disabled    = false;
-      btn.textContent = `▶ Feed (${feedStatus.passesDone}/${feedStatus.maxPasses})`;
-      btn.style.color       = 'var(--ok,#30D158)';
-      btn.style.borderColor = 'var(--ok,#30D158)';
+      btn.textContent = `▶ Feed (${feedStatus.passesDone}/${feedStatus.maxPasses})${badges.labelSuffix}`;
+      btn.style.color       = badges.labelSuffix.includes('⚠️') ? 'var(--warn,#FF9F0A)' : 'var(--ok,#30D158)';
+      btn.style.borderColor = badges.labelSuffix.includes('⚠️') ? 'var(--warn,#FF9F0A)' : 'var(--ok,#30D158)';
       btn.style.opacity     = '1';
-      btn.title   = `${pending} fichier(s) en attente · couverture ${feedStatus.coveragePct}% · cliquer pour continuer`;
-      btn.onclick = launchConfirmFeed;
+      btn.title   = feedStatus.nextAction
+        ? `${pending} fichier(s) en attente · couverture ${feedStatus.coveragePct}%${badges.titleSuffix} · ${feedStatus.nextAction}`
+        : `${pending} fichier(s) en attente · couverture ${feedStatus.coveragePct}%${badges.titleSuffix} · cliquer pour continuer`;
+      btn.onclick = () => launchConfirmFeed(undefined, feedStatus.nextAction);
       break;
     }
 
@@ -3226,15 +3317,17 @@ function updateConfirmFeedBtn(feedStatus, hasScoping) {
       stopFeedStatusPolling();
       break;
 
-    case 'stopped_max_passes':
+    case 'stopped_max_passes': {
+      const badges = feedStatusBadges(feedStatus);
       btn.disabled    = false;
-      btn.textContent = '⚠️ Max passes';
+      btn.textContent = `⚠️ Max passes${badges.labelSuffix}`;
       btn.style.color       = 'var(--warn,#FF9F0A)';
       btn.style.borderColor = 'var(--warn,#FF9F0A)';
       btn.style.opacity     = '1';
-      btn.title   = `${feedStatus.passesDone}/${feedStatus.maxPasses} passes — Deferred restants non résolus`;
-      btn.onclick = launchConfirmFeed;
+      btn.title   = `${feedStatus.passesDone}/${feedStatus.maxPasses} passes — plafond atteint sans convergence${badges.titleSuffix} · cliquer pour fixer un nouveau --max-passes`;
+      btn.onclick = () => launchConfirmFeedWithHigherMaxPasses(feedStatus.maxPasses, feedStatus.nextAction);
       break;
+    }
 
     default:
       btn.disabled    = false;
@@ -3242,7 +3335,12 @@ function updateConfirmFeedBtn(feedStatus, hasScoping) {
       btn.style.color       = 'var(--ok,#30D158)';
       btn.style.borderColor = 'var(--ok,#30D158)';
       btn.style.opacity     = '1';
-      btn.onclick = launchConfirmFeed;
+      // Cas non explicitement géré ci-dessus (ex: status "cancelled", ou
+      // toute valeur imprévue) — transmettre quand même nextAction si
+      // présent, par cohérence avec les cas 'waiting'/'stopped_max_passes'
+      // (sans quoi ce fallback silencieux perdait le contexte alors même
+      // qu'il pouvait être présent dans le checkpoint).
+      btn.onclick = () => launchConfirmFeed(undefined, feedStatus.nextAction);
   }
 }
 
