@@ -3274,7 +3274,11 @@ function updateConfirmFeedBtn(feedStatus, hasScoping) {
     btn.style.borderColor = 'var(--ok,#30D158)';
     btn.style.opacity     = '1';
     btn.title   = 'SCOPING.md confirmé — lance chorus-feed --unattended';
-    btn.onclick = launchConfirmFeed;
+    // ⚠️ Wrapper obligatoire — `btn.onclick = launchConfirmFeed;` (sans
+    // wrapper) transmettrait le PointerEvent du clic DOM natif comme
+    // premier argument (maxPasses), produisant un prompt du type
+    // "chorus-feed ... --max-passes [object PointerEvent]".
+    btn.onclick = () => launchConfirmFeed();
     return;
   }
 
