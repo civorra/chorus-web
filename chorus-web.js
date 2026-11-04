@@ -1222,6 +1222,22 @@ function bcGoSandbox() {
   if (currentEntityId) renderProjectsTab();
 }
 
+// "← Sandbox" depuis la vue projet : comme bcGoSandbox() mais efface aussi
+// currentEntityId — ramène directement à la vue globale du sandbox (liste
+// des entities), sans repasser par le niveau entity intermédiaire.
+function bcGoSandboxRoot() {
+  if (!currentSandbox) { goHome(); return; }
+  document.getElementById('bc-project').hidden = true;
+  document.getElementById('bc-entity').hidden  = true;
+  document.getElementById('bc-sep1').hidden    = true;
+  document.getElementById('bc-sep2').hidden    = true;
+  document.getElementById('bc-sandbox').textContent = currentSandbox.name;
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  document.getElementById('page-sandbox').classList.add('active');
+  currentEntityId = null;
+  renderProjectsTab();
+}
+
 // ─── RECENT PROJECTS ──────────────────────────────────────────
 function relDate(dateStr) {
   if (!dateStr) return '—';
@@ -1671,10 +1687,26 @@ function auditNextAction(audit, projId, compact, sp = '', entityId = null) {
       : `<button class="btn btn-ghost btn-sm" onclick="startAudit('${projId}')" style="font-size:11px">🔬 Auditer</button>`;
   }
   if (audit.gapsComblables > 0 && !audit.patchApplied) {
-    // Corrections comblables disponibles
-    return compact
-      ? `<button class="btn btn-ghost btn-sm" onclick="${sp}startAudit('${projId}', true)" title="Appliquer ${audit.gapsComblables} correction(s) comblable(s) (--patch)">✅ ${audit.gapsComblables}</button>`
-      : `<button class="btn btn-ghost btn-sm" onclick="startAudit('${projId}', true)" style="font-size:11px">✅ Patch (${audit.gapsComblables})</button>`;
+    // Corrections comblables disponibles — tooltip enrichi avec le détail par élément
+    // si disponible (audit.gapsComblablesDetail), sinon libellé générique de secours.
+    const detail = Array.isArray(audit.gapsComblablesDetail) ? audit.gapsComblablesDetail : [];
+    const compactTitle = detail.length
+      ? `Appliquer ${audit.gapsComblables} correction(s) comblable(s) :\n`
+        + detail.map(d => `• ${d.element} — ${d.slot} = ${d.valeur}`).join('\n')
+      : `Appliquer ${audit.gapsComblables} correction(s) comblable(s) (--patch)`;
+    if (compact) {
+      return `<button class="btn btn-ghost btn-sm" onclick="${sp}startAudit('${projId}', true)" title="${escapeHtml(compactTitle)}">✅ ${audit.gapsComblables}</button>`;
+    }
+    const btn = `<button class="btn btn-ghost btn-sm" onclick="startAudit('${projId}', true)" style="font-size:11px" title="Déclenche chorus-audit-import --patch : écrit les valeurs ci-dessous directement dans le JSON du projet.">✅ Patch (${audit.gapsComblables})</button>`;
+    const explain = detail.length
+      ? `<div style="font-size:11px;color:var(--text-muted);margin-top:5px">
+           ✅ <strong>${audit.gapsComblables}</strong> donnée(s) déjà présente(s) dans le document source mais non extraite(s) à l'import :
+           <ul style="margin:4px 0 0 16px;padding:0">
+             ${detail.map(d => `<li><code>${escapeHtml(d.element)}</code> → <code>${escapeHtml(d.slot)}</code> = <strong>${escapeHtml(String(d.valeur))}</strong>${d.justification ? ` <span style="opacity:.75">(${escapeHtml(d.justification)})</span>` : ''}</li>`).join('')}
+           </ul>
+         </div>`
+      : `<div style="font-size:11px;color:var(--text-muted);margin-top:5px">✅ <strong>${audit.gapsComblables}</strong> donnée(s) déjà présente(s) dans le document source mais non extraite(s) à l'import — cliquer pour les appliquer automatiquement.</div>`;
+    return btn + explain;
   }
   // Plus de comblables — guidance contextuelle (pas de Pipeline, déjà disponible)
   if (compact) return ''; // rien à afficher en vue compacte
@@ -4447,12 +4479,6 @@ let _lvlTermMinimized = false; // true si le terminal est réduit (overlay masqu
 // section (plutôt que de les mélanger dans le flux linéaire principal).
 // Réinitialisé à chaque ouverture de terminal (openLevelTerminal).
 let _lvlTermSubagentSections = new Map();
-// ── Compteur d'activité de session (démonstration des capacités ECA) ─────
-// Cumule les appels d'outils par famille + le nombre de sous-agents
-// spawnés, affiché en titlebar (#lvl-term-activity-badge). Réinitialisé à
-// chaque ouverture de terminal (openLevelTerminal).
-let _lvlTermActivityCounts = { read: 0, edit: 0, shell: 0, git: 0, agent: 0, task: 0, skill: 0, other: 0 };
-let _lvlTermSubagentCount = 0;
 
 function levelPromptLabel(ctx) {
   const { level, sbId, entityId, projId, reportFile } = ctx;
@@ -4636,26 +4662,6 @@ function lvlTermExportSession() {
   if (btn) { const orig = btn.textContent; btn.textContent = '✅'; setTimeout(() => { btn.textContent = orig; }, 1200); }
 }
 
-/** Met à jour le badge d'activité de session (titlebar) — compte cumulé des
- * appels d'outils par famille + nombre de sous-agents spawnés. Masqué tant
- * qu'aucun appel n'a eu lieu (évite un badge vide dès l'ouverture). */
-function lvlTermUpdateActivityBadge() {
-  const badge = document.getElementById('lvl-term-activity-badge');
-  if (!badge) return;
-  const c = _lvlTermActivityCounts;
-  const totalTools = Object.values(c).reduce((s, n) => s + n, 0);
-  if (totalTools === 0 && _lvlTermSubagentCount === 0) { badge.hidden = true; return; }
-  const parts = [];
-  if (totalTools) parts.push(`🔧 ${totalTools} appel(s)`);
-  if (c.read)  parts.push(`📄 ${c.read}`);
-  if (c.edit)  parts.push(`✏️ ${c.edit}`);
-  if (c.shell) parts.push(`⚡ ${c.shell}`);
-  if (c.git)   parts.push(`🔀 ${c.git}`);
-  if (_lvlTermSubagentCount) parts.push(`🤖 ${_lvlTermSubagentCount} sous-agent(s)`);
-  badge.textContent = parts.join(' · ');
-  badge.hidden = false;
-}
-
 // ── Bouton flottant "Aller en bas" ────────────────────────────────────────
 // Affiché quand l'utilisateur a scrollé au-dessus du bas de la zone de
 // sortie (ex. pour relire un passage pendant qu'un stream est actif) —
@@ -4820,9 +4826,6 @@ function openLevelTerminal(level, ctx, autoCmd = null) {
   _lvlTermSessionId = 'lvlterm-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8);
   _lvlTermSubagentSections = new Map();
   _taskTimers = new Map(); // reset chronomètres à chaque nouvelle session
-  _lvlTermActivityCounts = { read: 0, edit: 0, shell: 0, git: 0, agent: 0, task: 0, skill: 0, other: 0 };
-  _lvlTermSubagentCount = 0;
-  lvlTermUpdateActivityBadge();
   lvlTermSearchClose();
 
   const overlay = document.getElementById('level-terminal-overlay');
@@ -5259,13 +5262,8 @@ function lvlTermAppendTool(toolInfo) {
   const color = TOOL_FAMILY_COLOR[toolInfo.family] || TOOL_FAMILY_COLOR.other;
 
   if (toolInfo.isSubagent && toolInfo.subagentChatId) {
-    _lvlTermSubagentCount++;
-    lvlTermUpdateActivityBadge();
     return lvlTermFinalizeSubagentSection(toolInfo, color);
   }
-
-  _lvlTermActivityCounts[toolInfo.family] = (_lvlTermActivityCounts[toolInfo.family] || 0) + 1;
-  lvlTermUpdateActivityBadge();
 
   const line = document.createElement('div');
   line.className = 'eca-session-line dim eca-tool-line';
