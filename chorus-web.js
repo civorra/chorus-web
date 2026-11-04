@@ -169,6 +169,18 @@ function buildSandboxEntry(sb, iconIndex) {
     // lu par scanner.js § readLastFixHistory. Persiste après convergence (total_gaps=0)
     // → permet d'afficher les corrections appliquées même quand strengthen montre 0 gap.
     fixHistory: sb.fixHistory || null,
+    // feedStatus — état du checkpoint chorus-feed --unattended
+    // (.chorus-unattended-state.json, lu par scanner.js § readFeedStatus).
+    // ⚠️ Champ manquant ici jusqu'au 2026-11-04 : updateConfirmFeedBtn()
+    // recevait donc toujours `null` au chargement initial de la page
+    // (currentSandbox.feedStatus était undefined), forçant systématiquement
+    // la branche "pas encore de checkpoint" — bouton "✅ Confirmer → Feed"
+    // avec onclick = launchConfirmFeed() SANS ARGUMENT, quel que soit l'état
+    // réel du fichier sur disque (passes_done, next_action, etc. tous perdus
+    // jusqu'au premier tick du polling, lui-même jamais démarré pour la même
+    // raison — cf. selectSandbox()'s `if (currentSandbox.hasScoping &&
+    // currentSandbox.feedStatus)` guard, toujours faux sans ce champ).
+    feedStatus: sb.feedStatus || null,
   };
 
   const entities = entityList.map(e => ({
