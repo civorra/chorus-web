@@ -194,7 +194,15 @@ function scanFlatProject(entityPath, slug, jsonFile, runReportIndex) {
       aConfirmer:   _aConfirmer,
       avgConf:      null,
       norm:         null,
-      date:         (j.generated_at || '').slice(0, 10) || null,
+      // Fix (2026-11-04): keep full date+time (not just the 10-char date
+      // portion) — a sandbox can accumulate several runs the same day
+      // (cf. incident 2026-10-14, same root cause already fixed for the
+      // `testing[slug].lastRun.date` field further below in this file,
+      // which this "Last run" sandbox-list/KPI path had NOT been aligned
+      // with). Consumers (chorus-web.js) already slice(0,10) where only
+      // the date is needed (date:) and keep the full string where the
+      // time matters (dateTime:) — see chorus-web.js lines ~201-202.
+      date:         (j.generated_at || '').replace('T', ' ') || null,
       rows:         [],
     };
   } else {
@@ -269,11 +277,24 @@ function scanFlatProject(entityPath, slug, jsonFile, runReportIndex) {
         || (totalComblables > 0 && patchesApplied >= totalComblables);
       // gapsComblables = résidu actif (non encore patchés)
       const gapsComblables = Math.max(0, totalComblables - patchesApplied);
+      // gaps_comblables_detail : array d'objets {element, slot, valeur, justification}
+      // écrit par chorus-audit-import (Phase 3.5) pour que la webapp affiche un texte
+      // explicatif par élément plutôt qu'un simple compteur. Optionnel pour compat
+      // ascendante avec un _audit plus ancien n'ayant pas encore ce champ — fallback []
+      // (le bouton retombe alors sur le texte générique côté chorus-web.js).
+      // Défensif : si tous les comblables ont déjà été patchés (résidu=0), ne pas
+      // exposer un detail résiduel même si le skill a oublié de le vider (Phase 4.3
+      // est censée faire gaps_comblables_detail=[] après --patch, mais on ne fait
+      // pas confiance aveuglément à un JSON produit par une invocation plus ancienne).
+      const gapsComblablesDetail = (gapsComblables > 0 && Array.isArray(aud.gaps_comblables_detail))
+        ? aud.gaps_comblables_detail
+        : [];
       auditData = {
         run:              true,
         date:             aud.patch_date || aud.date || null,
         report:           aud.report     || null,
         gapsComblables,
+        gapsComblablesDetail,
         gapsPartiels:     aud.gaps_partiels     ?? aud.gaps_extraction_partielle     ?? 0,
         gapsAbsents:      aud.gaps_absents      ?? aud.gaps_structurellement_absents ?? 0,
         gapsMapping:      aud.gaps_mapping      ?? aud.gaps_mapping_a_confirmer      ?? 0,
