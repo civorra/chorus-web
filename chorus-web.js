@@ -7203,13 +7203,29 @@ function mdvRuleRenderOrg() {
   }
 }
 
+// Rendu syntax-highlighted du YAML de règle via highlight.js (langage Perl).
+// Choix de `perl` plutôt que `yaml` comme langage de coloration : un fichier
+// de règle Chorus mélange quelques clés YAML (RULE:/FIND:/EXCEPTION:/ACTION:)
+// avec du code Perl embarqué dans des blocs `|` (sigils $/@/%, ->, opérateurs,
+// mots-clés my/for/unless/push...) — c'est ce code Perl qui a le plus besoin
+// d'être mis en valeur, et un highlighter YAML le traiterait comme une simple
+// chaîne de bloc scalaire sans aucune coloration interne. `perl` colore
+// correctement tout le corps du fichier ; les quelques lignes de clés YAML
+// restent en texte neutre (acceptable, déjà visuellement distinctes par leur
+// position en tête de ligne).
+function mdvHighlightYaml(text) {
+  if (typeof hljs === 'undefined') return `<pre class="mono" style="font-size:12px;white-space:pre-wrap;word-break:break-word">${escapeHtml(text)}</pre>`;
+  const html = hljs.highlight(text, { language: 'perl', ignoreIllegals: true }).value;
+  return `<pre class="mono hljs" style="font-size:12px;white-space:pre-wrap;word-break:break-word;background:transparent;padding:0"><code>${html}</code></pre>`;
+}
+
 async function mdvRuleRenderYaml() {
   if (!_mdvRuleCtx) return;
   _mdvRuleCtx.view = 'yaml';
   mdvRuleUpdateToggleStyle();
   const content = document.getElementById('mdv-content');
   if (_mdvRuleCtx.yamlText != null) {
-    content.innerHTML = `<pre class="mono" style="font-size:12px;white-space:pre-wrap;word-break:break-word">${escapeHtml(_mdvRuleCtx.yamlText)}</pre>`;
+    content.innerHTML = mdvHighlightYaml(_mdvRuleCtx.yamlText);
     return;
   }
   content.innerHTML = 'Chargement…';
@@ -7219,7 +7235,7 @@ async function mdvRuleRenderYaml() {
     const r = await fetch(`${API}/api/sandboxes/${sbId}/rules/${slug}/${ymlFile}`);
     if (!r.ok) throw new Error((await r.json().catch(()=>({error:r.statusText}))).error || r.statusText);
     _mdvRuleCtx.yamlText = await r.text();
-    content.innerHTML = `<pre class="mono" style="font-size:12px;white-space:pre-wrap;word-break:break-word">${escapeHtml(_mdvRuleCtx.yamlText)}</pre>`;
+    content.innerHTML = mdvHighlightYaml(_mdvRuleCtx.yamlText);
   } catch (e) {
     content.innerHTML =
       `<div style="color:var(--error);font-size:12px">Impossible de charger ${ymlFile} : ${e.message}<br>` +
