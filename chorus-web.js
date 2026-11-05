@@ -6891,14 +6891,22 @@ function mdvMakeRuleCatalogClickable(slug, highlightRuleId) {
   if (!targetTable) return;
   const headers = [...targetTable.querySelectorAll('thead th')].map(th => th.textContent.trim().toLowerCase());
   const ruleCol = headers.indexOf('rule');
+  const numCol  = headers.indexOf('#');
   if (ruleCol === -1) return;
   let highlightRow = null;
   targetTable.querySelectorAll('tbody tr').forEach(tr => {
     const cells = tr.querySelectorAll('td');
     const ruleCell = cells[ruleCol];
     if (!ruleCell) return;
-    const ruleId = ruleCell.textContent.trim();
-    if (!ruleId) return;
+    const name = ruleCell.textContent.trim();
+    if (!name) return;
+    // Même reconstruction d'id composite que côté serveur
+    // (chorus/parser.js extractRuleCatalogue Format B) — nécessaire quand
+    // "#" et "Rule" sont deux colonnes séparées (ex: 05-CC-3.1.4,
+    // "R01" + "component-identifier-grammar") pour retomber sur le nom
+    // réel du fichier YAML (R01-component-identifier-grammar.yml).
+    const num = numCol !== -1 ? (cells[numCol]?.textContent.trim() || '') : '';
+    const ruleId = (num && !new RegExp(`^${num}[-_]`, 'i').test(name)) ? `${num}-${name}` : name;
     tr.style.cursor = 'pointer';
     tr.addEventListener('click', () => openRuleView(slug, ruleId));
     tr.addEventListener('mouseenter', () => { tr.style.background = 'var(--bg-hover,rgba(255,255,255,.04))'; });
@@ -7089,11 +7097,69 @@ function renderRuleFieldsHtml(fields, ruleId) {
   return `<div style="font-size:14px;font-weight:700;margin-bottom:10px;font-family:'JetBrains Mono',monospace">${escapeHtml(ruleId)}</div><div>${rows}</div>`;
 }
 
-// Rend la vue "org" d'une règle. Essaie d'abord l'extraction + rendu
-// structuré du bloc "** Rule: <id>" (lisible : labels distincts, valeurs
-// séparées) ; si le format n'est pas reconnu (ex: agent au format table pipe
-// "* Rule catalog" sans bloc heading détaillé pour cette règle), retombe sur
-// l'ancien rendu Markdown brut du fichier entier avec surlignage/scroll.
+// Mini-parseur de table pipe org-mode — réplique volontairement
+// chorus/parser.js extractOrgTable() (module Node, non disponible côté
+// client navigateur) plutôt que de l'importer, pour éviter toute dépendance
+// cross-bundle. Garder les deux implémentations synchronisées si l'une
+// évolue (même tolérance "ligne blanche ne clôt pas la table").
+function _clientExtractOrgTable(content, headingRegex) {
+  const lines = content.split('\n');
+  const idx = lines.findIndex(l => headingRegex.test(l.trim()));
+  if (idx === -1) return [];
+  const rows = [];
+  for (let i = idx + 1; i < lines.length; i++) {
+    const trimmed = lines[i].trim();
+    if (!trimmed.startsWith('|')) {
+      if (trimmed === '') continue;
+      if (rows.length) break;
+      if (/^\*+\s+\S/.test(trimmed)) break;
+      continue;
+    }
+    if (/^\|[-+|]+\|?$/.test(trimmed)) continue;
+    rows.push(trimmed.split('|').slice(1, -1).map(c => c.trim()));
+  }
+  return rows;
+}
+
+// Extrait, depuis une table pipe "* Rule catalog" (format récent — colonnes
+// "# | Rule | Purpose | Corpus §/p.", où "#" porte l'id R0N et "Rule" le
+// nom/slug de la règle), la ligne correspondant à `ruleId` et la restitue
+// sous forme de champs structurés compatibles avec renderRuleFieldsHtml().
+// `ruleId` peut être soit l'id de colonne "#" (ex: "R01"), soit le nom
+// composé "R01-component-identifier-grammar" (convention de nommage YAML
+// 1:1 — cf. ruleYamlFilename()) : les deux formes sont acceptées pour rester
+// cohérent avec l'appelant (openRuleView() passe l'id tel qu'extrait de
+// extractRuleCatalogue(), qui concatène déjà "#"-"Rule" dans certains flux).
+function extractRuleCatalogTableFields(orgText, ruleId) {
+  const tableRows = _clientExtractOrgTable(orgText, /^\*\s+Rule\s+catalog(ue)?\b/i);
+  if (!tableRows.length) return null;
+  const header = tableRows[0].map(h => h.toLowerCase());
+  const numCol     = header.findIndex(h => h === '#');
+  const nameCol    = header.findIndex(h => /^rule$/.test(h));
+  const purposeCol = header.findIndex(h => /^purpose$/.test(h));
+  const corpusCol  = header.findIndex(h => /corpus/.test(h));
+  if (nameCol === -1) return null;
+
+  const match = tableRows.slice(1).find(r => {
+    const num  = numCol  !== -1 ? (r[numCol]  || '').trim() : '';
+    const name = nameCol !== -1 ? (r[nameCol] || '').trim() : '';
+    const composite = num && name ? `${num}-${name}` : name;
+    return ruleId === num || ruleId === name || ruleId === composite;
+  });
+  if (!match) return null;
+
+  const fields = [];
+  if (nameCol !== -1 && match[nameCol]) fields.push({ label: 'Rule', value: match[nameCol].trim() });
+  if (purposeCol !== -1 && match[purposeCol]) fields.push({ label: 'Purpose', value: match[purposeCol].trim() });
+  if (corpusCol !== -1 && match[corpusCol]) fields.push({ label: 'Corpus', value: match[corpusCol].trim() });
+  return fields.length ? fields : null;
+}
+
+// Rend la vue "org" d'une règle. Essaie dans l'ordre :
+//  1. bloc heading "** Rule: <id>" (ancien format, ex: 03-ETSI)
+//  2. ligne de la table pipe "* Rule catalog" (format récent, ex: 05-CC-3.1.4)
+// Si aucun des deux n'est reconnu, retombe sur l'ancien rendu Markdown brut
+// du fichier entier avec surlignage/scroll.
 function mdvRuleRenderOrg() {
   if (!_mdvRuleCtx || !_mdvRuleCtx.orgText) return;
   _mdvRuleCtx.view = 'org';
@@ -7108,6 +7174,12 @@ function mdvRuleRenderOrg() {
       content.innerHTML = renderRuleFieldsHtml(fields, ruleId);
       return;
     }
+  }
+
+  const tableFields = extractRuleCatalogTableFields(_mdvRuleCtx.orgText, ruleId);
+  if (tableFields) {
+    content.innerHTML = renderRuleFieldsHtml(tableFields, ruleId);
+    return;
   }
 
   // Repli : rendu Markdown brut + surlignage/scroll (comportement précédent).
@@ -7313,9 +7385,9 @@ async function openSandboxCorpus() {
           ${hdr('Pipeline — ' + pipeline.length + ' agent(s)')}
           ${pipeline.length
             ? `<div style="font-size:12px;color:var(--text-secondary);line-height:1.8">${
-                pipeline.map(a => `<span style="font-family:'JetBrains Mono',monospace;font-size:11px">#${a.pos}</span>
+                pipeline.map(a => `<span class="sbc-pipeline-agent-row" style="cursor:pointer" onclick="openAgentOrgView('${a.slug}')" title="Voir ${a.slug}.org (KB agent)"><span style="font-family:'JetBrains Mono',monospace;font-size:11px">#${a.pos}</span>
                   <strong>${a.slug}</strong>
-                  <span style="color:var(--text-muted)">${a.ruleFileCount ? '· ' + a.ruleFileCount + ' règles' : ''}</span><br>`).join('')
+                  <span style="color:var(--text-muted)">${a.ruleFileCount ? '· ' + a.ruleFileCount + ' règles' : ''}</span></span><br>`).join('')
               }</div>`
             : '<div style="color:var(--text-muted);font-size:12px">Aucun agent.</div>'}
         </div>

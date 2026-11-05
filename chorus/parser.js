@@ -149,21 +149,37 @@ function extractOrgSection(content, headingRegex, maxLen) {
   return text;
 }
 
+// Reconnaît les deux libellés de heading observés dans les agents KB :
+//   - "Frame catalogue" / "Frame catalog"  (ancien format heading-style,
+//     ex: 03-ETSI, 08-ANSSI-PG-083-CENTRIC — niveau ** ou *)
+//   - "Catalogue des Frames"               (format pipe récent, ex:
+//     05-CC-3.1.4/agent-adv.org — toujours niveau *)
+// Le niveau du heading de section (`*` ou `**`) n'est pas fixe non plus —
+// seul compte le fait qu'un heading de niveau <= celui-ci referme la section.
+const FRAME_CATALOGUE_HEADING_RE = /^\*+\s+(Frame\s+catalog(ue)?|Catalogue\s+des\s+Frames)\s*$/i;
+
 function extractFrameCatalogue(content) {
   const lines = content.split('\n');
-  const startIdx = lines.findIndex(l => /^\*\*\s+Frame catalogue/i.test(l.trim()));
+  const startIdx = lines.findIndex(l => FRAME_CATALOGUE_HEADING_RE.test(l.trim()));
   if (startIdx === -1) return [];
+  const sectionLevel = (lines[startIdx].match(/^\*+/) || ['*'])[0].length;
   const frames = [];
   let current = null;
   for (let i = startIdx + 1; i < lines.length; i++) {
     const line = lines[i];
-    if (/^\*\*\s+\S/.test(line.trim())) break;
-    const h3 = line.match(/^\*\*\*\s+(.+)/);
-    if (h3) {
-      const name = h3[1].trim();
-      if (/^type_element\s*=/i.test(name)) continue;
-      current = { name, inputs: [], computed: [], optional: [] };
-      frames.push(current);
+    const headingMatch = line.trim().match(/^(\*+)\s+(.+)/);
+    if (headingMatch) {
+      const level = headingMatch[1].length;
+      if (level <= sectionLevel) break;  // fin de la section Frame catalogue
+      const name = headingMatch[2].trim();
+      if (/^type_element\s*[=~]/i.test(name)) continue;  // sous-heading de variante, pas un nouveau Frame
+      // Un nouveau Frame démarre à tout heading de niveau sectionLevel+1
+      // (`**` si section en `*`, `***` si section en `**`) qui n'est pas
+      // une variante `type_element = ...` / `type_element =~ ...`.
+      if (level === sectionLevel + 1) {
+        current = { name, inputs: [], computed: [], optional: [] };
+        frames.push(current);
+      }
       continue;
     }
     if (!current) continue;
@@ -222,6 +238,7 @@ function extractRuleCatalogue(content) {
   const tableRows = extractOrgTable(content, /^\*\s+Rule\s+catalog(ue)?\b/i);
   if (!tableRows.length) return [];
   const header = tableRows[0].map(h => h.toLowerCase());
+  const numCol     = header.findIndex(h => h === '#');
   const idCol      = header.findIndex(h => /^rule$/.test(h));
   const corpusCol  = header.findIndex(h => /^corpus$/.test(h));
   const purposeCol = header.findIndex(h => /^purpose$/.test(h));
@@ -229,12 +246,25 @@ function extractRuleCatalogue(content) {
   const headingLine = lines.findIndex(l => /^\*\s+Rule\s+catalog(ue)?\b/i.test(l.trim()));
   return tableRows.slice(1)
     .filter(r => r[idCol] && r[idCol].trim())
-    .map(r => ({
-      id:      r[idCol].trim(),
-      intent:  purposeCol !== -1 ? (r[purposeCol] || '').trim() : '',
-      corpus:  corpusCol  !== -1 ? (r[corpusCol]  || '').trim() : '',
-      line:    headingLine !== -1 ? headingLine + 1 : null,
-    }));
+    .map(r => {
+      const name = r[idCol].trim();
+      const num  = numCol !== -1 ? (r[numCol] || '').trim() : '';
+      // Deux conventions co-existent dans les sandboxes réels :
+      //  - id composite déjà présent dans la colonne "Rule" (ex: 06-CC-3.1.5
+      //    "R01-sar-component-identifier-grammar") → id = name tel quel.
+      //  - id séparé entre "#" (R01) et "Rule" (nom sans préfixe, ex:
+      //    05-CC-3.1.4 "component-identifier-grammar") → reconstruire le
+      //    nom composite, qui est la seule forme garantissant un match
+      //    1:1 avec le fichier YAML réel (rules/<slug>/R0N-<nom>.yml —
+      //    cf. chorus-web.js ruleYamlFilename()/convention documentée).
+      const id = (num && !new RegExp(`^${num}[-_]`, 'i').test(name)) ? `${num}-${name}` : name;
+      return {
+        id,
+        intent:  purposeCol !== -1 ? (r[purposeCol] || '').trim() : '',
+        corpus:  corpusCol  !== -1 ? (r[corpusCol]  || '').trim() : '',
+        line:    headingLine !== -1 ? headingLine + 1 : null,
+      };
+    });
 }
 
 // ── README.org ────────────────────────────────────────────────────────────
