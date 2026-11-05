@@ -19,6 +19,7 @@ const { CHORUS_HOME, SANDBOXES_DIR }     = require('./fs');
 const { scanAll, scanSandbox, scanEntity,
         scanProject, scanSandboxCorpus,
         readAgentOrgFile,
+        readRuleYamlFile,
         readLastCheckResults,
         readLastStrengthenReport }       = require('./scanner');
 const { parseReport, readReport,
@@ -40,6 +41,7 @@ module.exports = {
   buildRunReportIndex,
   scanSandboxCorpus,
   readAgentOrgFile,
+  readRuleYamlFile,
   readLastCheckResults,
   readLastStrengthenReport,
   resolveThesaurusPending,

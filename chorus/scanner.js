@@ -37,6 +37,20 @@ function readAgentOrgFile(sbId, slug) {
   return readFileSafe(path.join(sbPath, 'agent', 'chorus', `${slug}.org`));
 }
 
+// ── Lecture brute d'un fichier rules/<slug>/<filename>.yml ────────────────
+// Utilisée par le viewer "Rule catalog" (chorus-web.js openRuleView) pour
+// basculer entre la définition .org et le YAML exécuté correspondant d'une
+// même règle — toujours lecture seule, jamais d'écriture depuis cette route.
+// `filename` validé séparément de `slug` (même pattern + extension .yml
+// imposée) pour éviter tout path traversal (../, chemins absolus, etc.).
+
+function readRuleYamlFile(sbId, slug, filename) {
+  if (!/^[\w-]+$/.test(slug)) return null;
+  if (!/^[\w-]+\.yml$/.test(filename)) return null;
+  const sbPath = path.join(SANDBOXES_DIR(), sbId);
+  return readFileSafe(path.join(sbPath, 'rules', slug, filename));
+}
+
 // ── scanSandboxCorpus ─────────────────────────────────────────────────────
 //
 // Source : agent/chorus/index.org (pipeline + Integrated corpus) et
@@ -770,6 +784,7 @@ function scanAll() {
 
 module.exports = {
   readAgentOrgFile,
+  readRuleYamlFile,
   readLastCheckResults,
   readLastStrengthenReport,
   readLastFixHistory,

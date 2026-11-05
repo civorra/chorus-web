@@ -1,12 +1,13 @@
 /**
  * server/routes/scan.js — Scan sandboxes + corpus KB
  *
- *   GET  /api/scan                              → scan global
- *   GET  /api/sandboxes/:sbId                   → scan sandbox individuel
- *   GET  /api/sandboxes/:sbId/corpus            → corpus + modélisation KB
- *   GET  /api/sandboxes/:sbId/agents/:slug/org  → contenu brut agent/<slug>.org
- *   POST /api/sandboxes/:sbId/entities          → crée une nouvelle entity
- *                                                  (workspace/<entity>/{sources,reports})
+ *   GET  /api/scan                                    → scan global
+ *   GET  /api/sandboxes/:sbId                         → scan sandbox individuel
+ *   GET  /api/sandboxes/:sbId/corpus                  → corpus + modélisation KB
+ *   GET  /api/sandboxes/:sbId/agents/:slug/org        → contenu brut agent/<slug>.org
+ *   GET  /api/sandboxes/:sbId/rules/:slug/:filename   → contenu brut rules/<slug>/<filename>.yml
+ *   POST /api/sandboxes/:sbId/entities                → crée une nouvelle entity
+ *                                                        (workspace/<entity>/{sources,reports})
  */
 'use strict';
 
@@ -153,6 +154,19 @@ router.get('/sandboxes/:sbId/agents/:slug/org', (req, res) => {
   try {
     const content = chorus.readAgentOrgFile(req.params.sbId, req.params.slug);
     if (!content) return res.status(404).json({ ok: false, error: 'Fichier KB agent introuvable' });
+    res.type('text/plain').send(content);
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+// Lecture brute d'un fichier YAML de règle (rules/<slug>/<filename>.yml) —
+// utilisé par le viewer "Rule catalog" pour basculer entre la définition
+// .org d'une règle et son YAML exécuté. Toujours lecture seule.
+router.get('/sandboxes/:sbId/rules/:slug/:filename', (req, res) => {
+  try {
+    const content = chorus.readRuleYamlFile(req.params.sbId, req.params.slug, req.params.filename);
+    if (!content) return res.status(404).json({ ok: false, error: 'Fichier YAML de règle introuvable' });
     res.type('text/plain').send(content);
   } catch (err) {
     res.status(500).json({ ok: false, error: err.message });

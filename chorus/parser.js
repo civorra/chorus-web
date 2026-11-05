@@ -179,32 +179,62 @@ function extractFrameCatalogue(content) {
 
 function extractRuleCatalogue(content) {
   const lines = content.split('\n');
-  const rules = [];
-  let current = null;
-  let inIntent = false;
-  const fieldRe = /^\s*(CHERCHER|FIND|CONDITION|EXCEPTION|ACTION|EFFET|Notes|Signature|Description|Called by|Exported)\s*:/i;
-  for (const line of lines) {
-    const h = line.match(/^\*\*\s+Rule:\s*(.+)/i);
-    if (h) {
-      if (current) rules.push(current);
-      current = { id: h[1].trim(), intent: '' };
-      inIntent = false;
-      continue;
-    }
-    if (!current) continue;
-    const mIntent = line.match(/^\s*Intent\s*:\s*(.+)/i);
-    if (mIntent) { current.intent = mIntent[1].trim(); inIntent = true; continue; }
-    if (!inIntent) continue;
-    if (line.trim() === '' || fieldRe.test(line) || /^\*+\s/.test(line.trim())) {
-      inIntent = false;
-    } else if (/^\s{3,}\S/.test(line)) {
-      current.intent += ' ' + line.trim();
-    } else {
-      inIntent = false;
-    }
+
+  // ── Format A — "** Rule: <id>" heading style (older agents, e.g. 03-ETSI) ──
+  const headingRules = [];
+  {
+    let current = null;
+    let inIntent = false;
+    const fieldRe = /^\s*(CHERCHER|FIND|CONDITION|EXCEPTION|ACTION|EFFET|Notes|Signature|Description|Called by|Exported)\s*:/i;
+    let startLine = null;
+    lines.forEach((line, idx) => {
+      const h = line.match(/^\*\*\s+Rule:\s*(.+)/i);
+      if (h) {
+        if (current) headingRules.push(current);
+        current = { id: h[1].trim(), intent: '', line: idx + 1 };
+        inIntent = false;
+        return;
+      }
+      if (!current) return;
+      const mIntent = line.match(/^\s*Intent\s*:\s*(.+)/i);
+      if (mIntent) { current.intent = mIntent[1].trim(); inIntent = true; return; }
+      if (!inIntent) return;
+      if (line.trim() === '' || fieldRe.test(line) || /^\*+\s/.test(line.trim())) {
+        inIntent = false;
+      } else if (/^\s{3,}\S/.test(line)) {
+        current.intent += ' ' + line.trim();
+      } else {
+        inIntent = false;
+      }
+    });
+    if (current) headingRules.push(current);
   }
-  if (current) rules.push(current);
-  return rules;
+  if (headingRules.length) return headingRules;
+
+  // ── Format B — "* Rule catalog" pipe table (current convention, e.g.
+  //    06-CC-3.1.5: | Rule | Corpus | Purpose |). No per-rule line anchor
+  //    available (a table row has no heading of its own to scroll to) —
+  //    `line` points at the table heading itself; callers needing a precise
+  //    scroll target should search client-side for the rule id's first
+  //    occurrence in the raw .org text instead (cf. chorus-web.js
+  //    openRuleView()).
+  // ────────────────────────────────────────────────────────────────────
+  const tableRows = extractOrgTable(content, /^\*\s+Rule\s+catalog(ue)?\b/i);
+  if (!tableRows.length) return [];
+  const header = tableRows[0].map(h => h.toLowerCase());
+  const idCol      = header.findIndex(h => /^rule$/.test(h));
+  const corpusCol  = header.findIndex(h => /^corpus$/.test(h));
+  const purposeCol = header.findIndex(h => /^purpose$/.test(h));
+  if (idCol === -1) return [];
+  const headingLine = lines.findIndex(l => /^\*\s+Rule\s+catalog(ue)?\b/i.test(l.trim()));
+  return tableRows.slice(1)
+    .filter(r => r[idCol] && r[idCol].trim())
+    .map(r => ({
+      id:      r[idCol].trim(),
+      intent:  purposeCol !== -1 ? (r[purposeCol] || '').trim() : '',
+      corpus:  corpusCol  !== -1 ? (r[corpusCol]  || '').trim() : '',
+      line:    headingLine !== -1 ? headingLine + 1 : null,
+    }));
 }
 
 // ── README.org ────────────────────────────────────────────────────────────

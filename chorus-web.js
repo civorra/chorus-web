@@ -6632,6 +6632,9 @@ async function openMdView(sbId, entityId, projId, filename) {
 
 function closeMdView() {
   _mdvCtx = null;
+  _mdvRuleCtx = null;
+  const toggle = document.getElementById('mdv-rule-toggle');
+  if (toggle) toggle.hidden = true;
   document.getElementById('md-view-overlay').hidden = true;
 }
 
@@ -6840,10 +6843,13 @@ function orgToMarkdownLite(text) {
     .replace(/^#\+\w+:.*$/gm, '');
 }
 
-async function openAgentOrgView(slug) {
+async function openAgentOrgView(slug, highlightRuleId) {
   if (!currentSandbox) return;
   const sbId = currentSandbox.id;
   _mdvCtx = null;  // pas un rapport explain — pas de cross-check
+  _mdvRuleCtx = null;
+  const ruleToggle = document.getElementById('mdv-rule-toggle');
+  if (ruleToggle) ruleToggle.hidden = true;
   const crossArea = document.getElementById('mdv-cross-area');
   if (crossArea) crossArea.innerHTML = '';
   document.getElementById('mdv-title').textContent = `${slug}.org`;
@@ -6856,11 +6862,314 @@ async function openAgentOrgView(slug) {
     if (!r.ok) throw new Error((await r.json().catch(()=>({error:r.statusText}))).error || r.statusText);
     const text = await r.text();
     document.getElementById('mdv-content').innerHTML =
-      (typeof marked !== 'undefined') ? marked.parse(orgToMarkdownLite(text)) : `<pre>${text}</pre>`;
+      (typeof marked !== 'undefined') ? marked.parse(orgToMarkdownLite(replaceRuleHeadingsWithTable(text))) : `<pre>${text}</pre>`;
+    mdvMakeRuleCatalogClickable(slug, highlightRuleId);
   } catch (e) {
     document.getElementById('mdv-content').innerHTML =
       `<div style="color:var(--error);font-size:12px">Impossible de charger ${slug}.org : ${e.message}</div>`;
   }
+}
+
+// Post-traitement DOM du rendu Markdown standard de agent/chorus/<slug>.org :
+// rend chaque ligne de la vraie table "Rule catalog" (| # | Rule | Purpose |
+// Corpus §/p. |, ou toute variante avec une colonne "Rule") cliquable →
+// ouvre le viewer org/YAML de cette règle (openRuleView). C'est l'UNIQUE
+// point d'entrée vers ce viewer — openSandboxCorpus() (carte Agent) ne fait
+// plus qu'appeler openAgentOrgView(slug, ruleId) pour scroller/surligner la
+// ligne correspondante, jamais openRuleView() directement.
+function mdvMakeRuleCatalogClickable(slug, highlightRuleId) {
+  const content = document.getElementById('mdv-content');
+  // Trouve la table dont l'en-tête contient une colonne "Rule" — repère le
+  // <table> via son premier <th> correspondant (insensible à la casse/accents
+  // du libellé exact de colonne, ex: "Rule" ou "Règle").
+  const tables = content.querySelectorAll('table');
+  let targetTable = null;
+  for (const t of tables) {
+    const headers = [...t.querySelectorAll('thead th')].map(th => th.textContent.trim().toLowerCase());
+    if (headers.includes('rule')) { targetTable = t; break; }
+  }
+  if (!targetTable) return;
+  const headers = [...targetTable.querySelectorAll('thead th')].map(th => th.textContent.trim().toLowerCase());
+  const ruleCol = headers.indexOf('rule');
+  if (ruleCol === -1) return;
+  let highlightRow = null;
+  targetTable.querySelectorAll('tbody tr').forEach(tr => {
+    const cells = tr.querySelectorAll('td');
+    const ruleCell = cells[ruleCol];
+    if (!ruleCell) return;
+    const ruleId = ruleCell.textContent.trim();
+    if (!ruleId) return;
+    tr.style.cursor = 'pointer';
+    tr.addEventListener('click', () => openRuleView(slug, ruleId));
+    tr.addEventListener('mouseenter', () => { tr.style.background = 'var(--bg-hover,rgba(255,255,255,.04))'; });
+    tr.addEventListener('mouseleave', () => { if (tr !== highlightRow) tr.style.background = ''; });
+    if (highlightRuleId && ruleId === highlightRuleId) highlightRow = tr;
+  });
+  if (highlightRow) {
+    highlightRow.scrollIntoView({ block: 'center' });
+    highlightRow.style.outline = '2px solid var(--accent,#0A84FF)';
+    highlightRow.style.outlineOffset = '-1px';
+    setTimeout(() => { highlightRow.style.outline = ''; }, 2500);
+  }
+}
+
+// ─── RULE VIEWER (org ↔ YAML toggle) ───────────────────────────────────
+// Déclenché par un clic sur une ligne de la liste dépliable "Rule catalog"
+// d'une carte Agent (sbc-agents-list). Réutilise l'overlay générique
+// md-view-overlay plutôt qu'un nouveau composant — ajoute seulement un
+// toggle org/yaml dans son header (caché pour tout autre usage du viewer).
+let _mdvRuleCtx = null;  // { sbId, slug, ruleId, orgText, yamlText, view: 'org'|'yaml' }
+
+// Convention de nommage confirmée 1:1 sur tous les sandboxes inspectés :
+// le fichier YAML d'une règle porte exactement le même nom que son id
+// (ex: règle "R02-adv-tds-design-level-sufficient" → fichier
+// "R02-adv-tds-design-level-sufficient.yml"), que l'agent.org utilise le
+// format table pipe ("* Rule catalog") ou l'ancien format heading
+// ("** Rule: <id>") — cf. chorus/parser.js extractRuleCatalogue().
+function ruleYamlFilename(ruleId) {
+  return `${ruleId}.yml`;
+}
+
+async function openRuleView(slug, ruleId) {
+  if (!currentSandbox) return;
+  const sbId = currentSandbox.id;
+  _mdvCtx = null;  // pas un rapport explain — pas de cross-check
+  const crossArea = document.getElementById('mdv-cross-area');
+  if (crossArea) crossArea.innerHTML = '';
+
+  const ymlFile = ruleYamlFilename(ruleId);
+  _mdvRuleCtx = { sbId, slug, ruleId, orgText: null, yamlText: null, view: 'org' };
+
+  document.getElementById('mdv-title').textContent = ruleId;
+  document.getElementById('mdv-sub').textContent = `${sbId} / agent/chorus/${slug}.org`;
+  document.getElementById('mdv-content').innerHTML = 'Chargement…';
+  document.getElementById('md-view-overlay').hidden = false;
+
+  const toggle = document.getElementById('mdv-rule-toggle');
+  if (toggle) toggle.hidden = false;
+  mdvRuleUpdateToggleStyle();
+
+  try {
+    const r = await fetch(`${API}/api/sandboxes/${sbId}/agents/${slug}/org`);
+    if (!r.ok) throw new Error((await r.json().catch(()=>({error:r.statusText}))).error || r.statusText);
+    _mdvRuleCtx.orgText = await r.text();
+  } catch (e) {
+    document.getElementById('mdv-content').innerHTML =
+      `<div style="color:var(--error);font-size:12px">Impossible de charger ${slug}.org : ${e.message}</div>`;
+    return;
+  }
+  mdvRuleRenderOrg();
+}
+
+// ── Synthèse d'une vraie table Markdown "Rule catalog" à partir des blocs
+// heading "** Rule: <id>" (format agents historiques — ex: crypto-alea.org,
+// qui n'a pas de table "* Rule catalog" du tout, contrairement au format
+// pipe des agents récents type 05-CC-3.1.4). Remplace chaque bloc heading
+// par UNE ligne de table (`| <id> | <Intent tronqué> |`), afin que
+// marked.parse produise une vraie <table> cliquable, identique en
+// comportement à celle déjà présente sur les agents au format pipe
+// (cf. mdvMakeRuleCatalogClickable qui cherche une colonne "Rule").
+// Le détail complet de chaque règle (CHERCHER/CONDITION/...) reste
+// accessible via openRuleView() au clic sur la ligne — rien n'est perdu,
+// juste déplacé hors du flux de lecture linéaire du panneau Détails.
+function replaceRuleHeadingsWithTable(orgText) {
+  const lines = orgText.split('\n');
+  const headingRe = /^\*\*\s+Rule:\s*(.+?)\s*$/i;
+  const out = [];
+  let i = 0;
+  let tableRows = null;  // accumulateur de la table en cours de synthèse
+  const flushTable = () => {
+    if (tableRows && tableRows.length) {
+      out.push('| Rule | Intent |', '|---|---|', ...tableRows, '');
+    }
+    tableRows = null;
+  };
+  while (i < lines.length) {
+    const m = lines[i].trim().match(headingRe);
+    if (!m) {
+      // Toute ligne qui n'est pas un heading "** Rule:" clôt la table en
+      // cours de synthèse (sauf les lignes de continuation du bloc, déjà
+      // consommées via `end` ci-dessous — donc ici il s'agit forcément
+      // d'une ligne hors bloc règle : heading de niveau différent, texte
+      // libre, etc.).
+      flushTable();
+      out.push(lines[i]);
+      i++;
+      continue;
+    }
+    const ruleId = m[1].trim();
+    let end = lines.length;
+    for (let j = i + 1; j < lines.length; j++) {
+      if (/^\*+\s/.test(lines[j].trim())) { end = j; break; }
+    }
+    const blockLines = lines.slice(i + 1, end);
+    const fields = parseRuleFields(blockLines);
+    const intentField = fields.find(f => f.label.toLowerCase() === 'intent');
+    const intent = (intentField?.value || '').replace(/\|/g, '\\|');
+    tableRows = tableRows || [];
+    tableRows.push(`| ${ruleId} | ${intent} |`);
+    i = end;
+  }
+  flushTable();
+  return out.join('\n');
+}
+
+// ── Extraction du bloc heading "** Rule: <id>" depuis le texte org brut ──
+// Ne dépend pas du HTML déjà rendu par marked (qui a aplati l'indentation
+// et perdu la frontière exacte des labels) — reparse directement le texte
+// source, avec la même liste de labels que chorus/parser.js extractRuleCatalogue()
+// (fieldRe) plus Intent qui est traité à part dans le parser.
+const RULE_FIELD_LABELS = ['Intent', 'CHERCHER', 'FIND', 'CONDITION', 'EXCEPTION',
+  'ACTION', 'EFFET', 'Notes', 'Signature', 'Description', 'Called by', 'Exported'];
+
+function extractRuleHeadingBlock(orgText, ruleId) {
+  const lines = orgText.split('\n');
+  const escId = ruleId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const headingRe = new RegExp(`^\\*\\*\\s+Rule:\\s*${escId}\\s*$`, 'i');
+  let start = -1;
+  for (let i = 0; i < lines.length; i++) {
+    if (headingRe.test(lines[i].trim())) { start = i; break; }
+  }
+  if (start === -1) return null;
+  let end = lines.length;
+  for (let i = start + 1; i < lines.length; i++) {
+    if (/^\*+\s/.test(lines[i].trim())) { end = i; break; }
+  }
+  return lines.slice(start + 1, end);
+}
+
+// Parse un bloc de lignes "** Rule: <id>" (hors heading) en une liste
+// ordonnée [{ label, value }] — regroupe les lignes de continuation
+// indentées (3+ espaces, sans nouveau label) sous le label précédent.
+function parseRuleFields(blockLines) {
+  const labelRe = new RegExp(`^\\s*(${RULE_FIELD_LABELS.join('|')})\\s*:\\s*(.*)$`, 'i');
+  const fields = [];
+  let current = null;
+  for (const line of blockLines) {
+    const m = line.match(labelRe);
+    if (m) {
+      if (current) fields.push(current);
+      current = { label: m[1], value: m[2].trim() };
+      continue;
+    }
+    if (current && /^\s{3,}\S/.test(line)) {
+      current.value += (current.value ? ' ' : '') + line.trim();
+      continue;
+    }
+    // Ligne hors label connu et hors continuation (ex: paragraphe de
+    // commentaire libre type "⚠️ Limitation...") — rattachée au dernier
+    // label en cours si elle est elle-même indentée, sinon ignorée ici
+    // (reste visible uniquement dans la vue YAML/brute).
+    if (current && line.trim() && /^\s+\S/.test(line)) {
+      current.value += (current.value ? ' ' : '') + line.trim();
+    }
+  }
+  if (current) fields.push(current);
+  return fields;
+}
+
+// Rendu HTML structuré d'une règle : libellés en gras, valeurs des champs
+// techniques (CHERCHER/FIND/CONDITION/EXCEPTION/ACTION/EFFET) en <code>,
+// les champs textuels (Intent/Notes/Description/...) en paragraphe normal.
+// ⚠️ Doit produire du HTML strictement flush-left (aucune ligne de sortie
+// indentée de 4+ espaces) : CommonMark/marked interprète toute ligne
+// indentée à 4+ espaces comme un bloc de code littéral (échappé), pas comme
+// du HTML brut — d'où l'utilisation de .replace(/\n\s*/g, '') ci-dessous sur
+// le résultat final plutôt que des template strings multi-lignes indentées.
+const RULE_CODE_FIELDS = new Set(['CHERCHER', 'FIND', 'CONDITION', 'EXCEPTION', 'ACTION', 'EFFET']);
+
+function renderRuleFieldsHtml(fields, ruleId) {
+  const rows = fields.map(f => {
+    const isCode = RULE_CODE_FIELDS.has(f.label.toUpperCase()) || RULE_CODE_FIELDS.has(f.label);
+    const valueHtml = isCode
+      ? `<code class="mono" style="font-size:12px;white-space:pre-wrap;word-break:break-word">${escapeHtml(f.value)}</code>`
+      : `<span style="white-space:pre-wrap">${escapeHtml(f.value)}</span>`;
+    return `<div style="display:flex;gap:12px;padding:8px 0;border-bottom:1px solid var(--border,#30363d)"><div style="flex:0 0 110px;font-weight:700;font-size:11px;color:var(--accent,#0A84FF);text-transform:uppercase;letter-spacing:.3px">${escapeHtml(f.label)}</div><div style="flex:1;font-size:12px;line-height:1.5">${valueHtml}</div></div>`;
+  }).join('');
+  return `<div style="font-size:14px;font-weight:700;margin-bottom:10px;font-family:'JetBrains Mono',monospace">${escapeHtml(ruleId)}</div><div>${rows}</div>`;
+}
+
+// Rend la vue "org" d'une règle. Essaie d'abord l'extraction + rendu
+// structuré du bloc "** Rule: <id>" (lisible : labels distincts, valeurs
+// séparées) ; si le format n'est pas reconnu (ex: agent au format table pipe
+// "* Rule catalog" sans bloc heading détaillé pour cette règle), retombe sur
+// l'ancien rendu Markdown brut du fichier entier avec surlignage/scroll.
+function mdvRuleRenderOrg() {
+  if (!_mdvRuleCtx || !_mdvRuleCtx.orgText) return;
+  _mdvRuleCtx.view = 'org';
+  mdvRuleUpdateToggleStyle();
+  const content = document.getElementById('mdv-content');
+  const ruleId = _mdvRuleCtx.ruleId;
+
+  const blockLines = extractRuleHeadingBlock(_mdvRuleCtx.orgText, ruleId);
+  if (blockLines) {
+    const fields = parseRuleFields(blockLines);
+    if (fields.length) {
+      content.innerHTML = renderRuleFieldsHtml(fields, ruleId);
+      return;
+    }
+  }
+
+  // Repli : rendu Markdown brut + surlignage/scroll (comportement précédent).
+  const html = (typeof marked !== 'undefined')
+    ? marked.parse(orgToMarkdownLite(_mdvRuleCtx.orgText))
+    : `<pre>${escapeHtml(_mdvRuleCtx.orgText)}</pre>`;
+  content.innerHTML = html;
+  const walker = document.createTreeWalker(content, NodeFilter.SHOW_ELEMENT);
+  let target = null;
+  while (walker.nextNode()) {
+    const el = walker.currentNode;
+    if (el.children.length) continue;  // ne considérer que les feuilles
+    if ((el.textContent || '').includes(ruleId)) { target = el; break; }
+  }
+  if (target) {
+    target.scrollIntoView({ block: 'center' });
+    target.style.outline = '2px solid var(--accent,#0A84FF)';
+    target.style.outlineOffset = '2px';
+    target.style.borderRadius = '3px';
+    setTimeout(() => { target.style.outline = ''; target.style.outlineOffset = ''; }, 2500);
+  }
+}
+
+async function mdvRuleRenderYaml() {
+  if (!_mdvRuleCtx) return;
+  _mdvRuleCtx.view = 'yaml';
+  mdvRuleUpdateToggleStyle();
+  const content = document.getElementById('mdv-content');
+  if (_mdvRuleCtx.yamlText != null) {
+    content.innerHTML = `<pre class="mono" style="font-size:12px;white-space:pre-wrap;word-break:break-word">${escapeHtml(_mdvRuleCtx.yamlText)}</pre>`;
+    return;
+  }
+  content.innerHTML = 'Chargement…';
+  const { sbId, slug, ruleId } = _mdvRuleCtx;
+  const ymlFile = ruleYamlFilename(ruleId);
+  try {
+    const r = await fetch(`${API}/api/sandboxes/${sbId}/rules/${slug}/${ymlFile}`);
+    if (!r.ok) throw new Error((await r.json().catch(()=>({error:r.statusText}))).error || r.statusText);
+    _mdvRuleCtx.yamlText = await r.text();
+    content.innerHTML = `<pre class="mono" style="font-size:12px;white-space:pre-wrap;word-break:break-word">${escapeHtml(_mdvRuleCtx.yamlText)}</pre>`;
+  } catch (e) {
+    content.innerHTML =
+      `<div style="color:var(--error);font-size:12px">Impossible de charger ${ymlFile} : ${e.message}<br>` +
+      `<span style="color:var(--text-muted)">Cette règle n'a peut-être pas de fichier YAML propre (ex: générée inline, ou nommage non conforme à la convention R<NN>-slug.yml).</span></div>`;
+  }
+}
+
+function mdvRuleToggleView(view) {
+  if (!_mdvRuleCtx) return;
+  if (view === 'yaml') mdvRuleRenderYaml();
+  else mdvRuleRenderOrg();
+}
+
+function mdvRuleUpdateToggleStyle() {
+  if (!_mdvRuleCtx) return;
+  const btnOrg  = document.getElementById('mdv-rule-toggle-org');
+  const btnYaml = document.getElementById('mdv-rule-toggle-yaml');
+  if (!btnOrg || !btnYaml) return;
+  const active   = 'background:var(--accent,#0A84FF);color:#fff;cursor:pointer;font-size:11px;padding:3px 10px;line-height:1.4;border:none';
+  const inactive = 'background:none;color:var(--text-secondary);cursor:pointer;font-size:11px;padding:3px 10px;line-height:1.4;border:none';
+  btnOrg.style.cssText  = _mdvRuleCtx.view === 'org'  ? active : inactive;
+  btnYaml.style.cssText = _mdvRuleCtx.view === 'yaml' ? active : inactive;
 }
 
 // ─── SANDBOX CORPUS MODAL ─────────────────────────────────────
@@ -7234,7 +7543,32 @@ async function openSandboxCorpus() {
     document.getElementById('sbc-agents-list').innerHTML =
       '<div style="color:var(--text-muted);font-size:13px;padding:20px 0">Aucun agent/pipeline trouvé pour ce sandbox (agent/chorus/index.org absent ou vide).</div>';
   } else {
-    document.getElementById('sbc-agents-list').innerHTML = pipeline.map(ag => `
+    document.getElementById('sbc-agents-list').innerHTML = pipeline.map(ag => {
+      const rules = ag.rules || [];
+      // Liste dépliable des règles individuelles — chaque ligne cliquable
+      // ouvre le panneau Détails de l'agent (vraie table org "Rule catalog"),
+      // scrollé/surligné sur la ligne de cette règle. Le viewer org/YAML
+      // (openRuleView) ne s'ouvre jamais depuis ici directement — uniquement
+      // par un clic sur la ligne du tableau dans ce panneau Détails
+      // (cf. mdvMakeRuleCatalogClickable).
+      const rulesDetail = rules.length ? `
+        <details style="margin-bottom:6px">
+          <summary style="cursor:pointer;font-size:11px;color:var(--text-secondary);list-style:none;display:flex;align-items:center;gap:4px">
+            <span class="sbc-rule-chevron" style="font-size:9px">▸</span>
+            📜 ${rules.length} règle${rules.length!==1?'s':''}
+          </summary>
+          <div style="margin-top:4px;display:flex;flex-direction:column;gap:2px">
+            ${rules.map(r => `
+              <div class="sbc-rule-row" style="display:flex;align-items:baseline;gap:6px;padding:2px 4px;border-radius:3px;cursor:pointer"
+                   onclick="openAgentOrgView('${ag.slug}','${escapeHtml(r.id)}')"
+                   title="${escapeHtml(r.intent || '')}">
+                <span class="mono" style="font-size:10px;color:var(--accent);flex-shrink:0">${escapeHtml(r.id)}</span>
+                <span style="font-size:10px;color:var(--text-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(r.intent || r.corpus || '')}</span>
+              </div>
+            `).join('')}
+          </div>
+        </details>` : `<div style="font-size:11px;color:var(--text-secondary);margin-bottom:6px">📜 ${ag.ruleFileCount} règle${ag.ruleFileCount!==1?'s':''}</div>`;
+      return `
       <div class="sbc-agent-card">
         <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
           <span class="mono" style="font-size:11px;color:var(--accent);font-weight:700">#${ag.pos}</span>
@@ -7243,14 +7577,14 @@ async function openSandboxCorpus() {
         <div class="mono" style="font-size:10px;color:var(--text-muted);margin-bottom:6px">${ag.module}</div>
         <div style="font-size:11px;color:var(--text-secondary);margin-bottom:4px">${ag.status || ''}</div>
         ${ag.corpusFile ? `<div style="font-size:10px;color:var(--text-muted);font-family:'JetBrains Mono',monospace;margin-bottom:6px">📄 ${ag.corpusFile}</div>` : ''}
-        <div style="display:flex;align-items:center;gap:10px;font-size:11px;color:var(--text-secondary)">
-          <span>🧩 ${(ag.frames||[]).length} frame${(ag.frames||[]).length!==1?'s':''}</span>
-          <span>📜 ${ag.ruleFileCount} règle${ag.ruleFileCount!==1?'s':''}</span>
+        <div style="font-size:11px;color:var(--text-secondary);margin-bottom:4px">🧩 ${(ag.frames||[]).length} frame${(ag.frames||[]).length!==1?'s':''}</div>
+        ${rulesDetail}
+        <div style="display:flex;align-items:center;gap:10px;font-size:11px">
           <span style="flex:1"></span>
           <button class="btn btn-ghost btn-sm" style="padding:2px 9px;font-size:10px" title="Voir ${ag.slug}.org (KB agent)" onclick="openAgentOrgView('${ag.slug}')">👁️ Détails</button>
         </div>
       </div>
-    `).join('');
+    `; }).join('');
   }
 
   // ── Thesaurus panel — removed from the sandbox-level Corpus modal (the
