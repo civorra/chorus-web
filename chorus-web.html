@@ -581,7 +581,23 @@
     </div>
     <div class="form-group" id="import-context-group">
       <label class="form-label">Entity (obligatoire)</label>
-      <select class="form-select" id="import-context"></select>
+      <select class="form-select" id="import-context" onchange="handleEntitySelectChange()"></select>
+      <!-- Inline "new entity" sub-form — shown only when the user picks the
+           "➕ Nouveau groupe…" option injected by openImportModal(). Calls
+           POST /sandboxes/:sbId/entities (server/routes/scan.js), already
+           implemented server-side but never wired to any UI control before
+           this form (see chorus-web.js § confirmCreateEntity()). -->
+      <div id="new-entity-inline" hidden style="margin-top:8px;display:flex;gap:8px;align-items:flex-start">
+        <div style="flex:1">
+          <input type="text" class="form-input" id="new-entity-name"
+                 placeholder="Nom du nouveau groupe…"
+                 oninput="document.getElementById('new-entity-error').textContent=''"
+                 onkeydown="if(event.key==='Enter'){event.preventDefault();confirmCreateEntity();}">
+          <div id="new-entity-error" style="font-size:11px;color:var(--danger,#e06c75);margin-top:3px;min-height:14px"></div>
+        </div>
+        <button type="button" class="btn btn-primary btn-sm" id="new-entity-confirm-btn" onclick="confirmCreateEntity()">Créer</button>
+        <button type="button" class="btn btn-ghost btn-sm" onclick="cancelCreateEntity()">Annuler</button>
+      </div>
     </div>
     <div class="modal-footer">
       <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>

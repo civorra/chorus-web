@@ -7889,13 +7889,85 @@ function openImportModal(reimportProjId) {
   const preselectId = reimportProjId
     ? ((PROJECTS[currentSandbox?.id]||[]).find(p=>p.id===reimportProjId)?.entity)
     : currentEntityId;
+  // "➕ Nouveau groupe…" option toujours proposée en dernière position
+  // (même s'il existe déjà des entities) — ouvre le sous-formulaire inline
+  // géré par handleEntitySelectChange()/confirmCreateEntity() ci-dessous.
   entitySel.innerHTML = entities.map(c =>
     `<option value="${c.id}"${c.id === preselectId ? ' selected' : ''}>${c.label} — ${c.path}</option>`
-  ).join('');
+  ).join('') + '<option value="__new_entity__">➕ Nouveau groupe…</option>';
   if (!entities.length) {
-    // Aucun niveau 'default' : pas d'entity ⇒ pas d'option sélectionnable,
-    // the user must create an entity before they can import.
-    entitySel.innerHTML = '<option value="">— aucune entity, créez-en une —</option>';
+    // Aucun niveau 'default' : pas d'entity ⇒ seule l'option de création
+    // reste disponible, pré-sélectionnée pour guider l'utilisateur.
+    entitySel.innerHTML = '<option value="__new_entity__" selected>➕ Nouveau groupe…</option>';
+  }
+  // Toujours repartir d'un sous-formulaire fermé à l'ouverture de la modal
+  // (sauf si on vient de forcer la sélection ci-dessus faute d'entity —
+  // dans ce cas on l'ouvre directement pour gagner un clic).
+  document.getElementById('new-entity-name').value = '';
+  document.getElementById('new-entity-error').textContent = '';
+  document.getElementById('new-entity-inline').hidden = !!entities.length;
+}
+
+// Affiche/masque le sous-formulaire inline de création d'entity selon la
+// sélection courante du <select id="import-context"> — voir openImportModal()
+// pour l'injection de l'option "__new_entity__".
+function handleEntitySelectChange() {
+  const sel = document.getElementById('import-context');
+  const inline = document.getElementById('new-entity-inline');
+  inline.hidden = sel.value !== '__new_entity__';
+  if (!inline.hidden) document.getElementById('new-entity-name').focus();
+}
+
+// Annule la création en cours : referme le sous-formulaire et retombe sur
+// l'entity actuellement scopée (ou la première disponible) si elle existe,
+// sinon laisse "__new_entity__" sélectionné (aucune autre option valide).
+function cancelCreateEntity() {
+  document.getElementById('new-entity-inline').hidden = true;
+  const sel = document.getElementById('import-context');
+  const entities = currentSandbox ? (ENTITIES[currentSandbox.id] || []) : [];
+  if (entities.length) {
+    sel.value = entities.some(c => c.id === currentEntityId) ? currentEntityId : entities[0].id;
+  }
+}
+
+// Crée une nouvelle entity via POST /sandboxes/:sbId/entities
+// (server/routes/scan.js — déjà implémenté côté serveur, jusqu'ici jamais
+// invoqué par aucun contrôle UI) puis rafraîchit ENTITIES[sbId] et
+// re-sélectionne la nouvelle entity dans le <select> du formulaire d'import,
+// sans fermer ni réinitialiser le reste de la modal (fichier déjà choisi
+// par l'utilisateur conservé).
+async function confirmCreateEntity() {
+  if (!currentSandbox) return;
+  const nameInput = document.getElementById('new-entity-name');
+  const errEl     = document.getElementById('new-entity-error');
+  const label     = nameInput.value.trim();
+  if (!label) { errEl.textContent = 'Nom requis.'; nameInput.focus(); return; }
+
+  const btn = document.getElementById('new-entity-confirm-btn');
+  btn.disabled = true;
+  errEl.textContent = '';
+  try {
+    const res = await fetch(`${API}/api/sandboxes/${currentSandbox.id}/entities`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ label }),
+    });
+    const data = await res.json();
+    if (!data.ok) { errEl.textContent = data.error || 'Échec de la création.'; return; }
+
+    await refreshSandboxReports(currentSandbox.id);
+
+    const entitySel = document.getElementById('import-context');
+    const entities = ENTITIES[currentSandbox.id] || [];
+    entitySel.innerHTML = entities.map(c =>
+      `<option value="${c.id}"${c.id === data.entity.id ? ' selected' : ''}>${c.label} — ${c.path}</option>`
+    ).join('') + '<option value="__new_entity__">➕ Nouveau groupe…</option>';
+
+    document.getElementById('new-entity-inline').hidden = true;
+  } catch (e) {
+    errEl.textContent = 'Erreur réseau — réessayez.';
+  } finally {
+    btn.disabled = false;
   }
 }
 
@@ -7904,6 +7976,7 @@ function closeModal() {
 }
 
 function quickImport(projId) {
+
   if (!currentSandbox) return;
   const proj = (PROJECTS[currentSandbox.id] || []).find(p => p.id === projId);
   if (!proj) return;
@@ -8124,8 +8197,14 @@ function startImport() {
     alert('Sélectionnez un ou plusieurs fichiers à importer.');
     return;
   }
-  if (!context) {
-    document.getElementById('import-context').focus();
+  if (!context || context === '__new_entity__') {
+    // Soit aucune entity sélectionnée, soit "➕ Nouveau groupe…" choisi
+    // mais jamais confirmé via confirmCreateEntity() — on ne laisse jamais
+    // partir un import avec cette valeur de contrôle interne.
+    document.getElementById('new-entity-inline').hidden = false;
+    document.getElementById('new-entity-name').focus();
+    document.getElementById('new-entity-error').textContent =
+      'Créez d\'abord le nouveau groupe (bouton "Créer") avant de lancer l\'import.';
     return;
   }
   closeModal();
