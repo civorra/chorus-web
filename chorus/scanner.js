@@ -62,13 +62,27 @@ function scanSandboxCorpus(sbId) {
   let corpusFiles = [];
   const corpusDir = path.join(sbPath, 'corpus');
   try {
-    corpusFiles = fs.readdirSync(corpusDir, { withFileTypes: true })
-      .filter(e => e.isFile() && !NON_DOC_EXT_RE.test(e.name) && !e.name.startsWith('.'))
-      .map(e => {
+    // Top-level files
+    const topEntries = fs.readdirSync(corpusDir, { withFileTypes: true });
+    for (const e of topEntries) {
+      if (e.isFile() && !NON_DOC_EXT_RE.test(e.name) && !e.name.startsWith('.')) {
         let size = null;
         try { size = fs.statSync(path.join(corpusDir, e.name)).size; } catch {}
-        return { name: e.name, size };
-      });
+        corpusFiles.push({ name: e.name, size });
+      } else if (e.isDirectory() && !e.name.startsWith('.')) {
+        // One level deep — corpus/sources/, corpus/NNN-*.md split dirs, etc.
+        const subDir = path.join(corpusDir, e.name);
+        try {
+          for (const se of fs.readdirSync(subDir, { withFileTypes: true })) {
+            if (se.isFile() && !NON_DOC_EXT_RE.test(se.name) && !se.name.startsWith('.')) {
+              let size = null;
+              try { size = fs.statSync(path.join(subDir, se.name)).size; } catch {}
+              corpusFiles.push({ name: `${e.name}/${se.name}`, size });
+            }
+          }
+        } catch {}
+      }
+    }
   } catch {}
 
   const readme   = parseSandboxReadme(sbPath);
@@ -102,7 +116,7 @@ function scanSandboxCorpus(sbId) {
   // Accepte deux formats de heading :
   //   Ancien : "* Pipeline global" — colonnes: pos | module | slug | kb | status
   //   Nouveau: "* Agents"          — colonnes: #   | Slug   | KB org | Rules | Helpers | Mode A | Deferred-S | Deferred-C
-  const pipelineRows = extractOrgTable(indexContent, /^\*\s+(Pipeline global|Agents)\b/i);
+  const pipelineRows = extractOrgTable(indexContent, /^\*\s+(Pipeline\b|Agents)\b/i);
   const pipelineHeader = pipelineRows[0] || [];
   // Détection du format par la position de 'Slug' dans l'en-tête
   const isNewAgentFormat = /slug/i.test(pipelineHeader[1] || '');

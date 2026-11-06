@@ -7299,7 +7299,7 @@ function _parseIndexOrgAgents(raw) {
   if (!raw) return [];
   const lines = raw.split('\n');
   // Trouver le heading "* Agents" ou "* Pipeline global"
-  const hi = lines.findIndex(l => /^\*\s+(Agents|Pipeline global)\b/i.test(l.trim()));
+  const hi = lines.findIndex(l => /^\*\s+(Agents|Pipeline)\b/i.test(l.trim()));
   if (hi === -1) return [];
   // Extraire les lignes de table (commencent par '|') jusqu'au prochain heading
   const tableLines = [];
