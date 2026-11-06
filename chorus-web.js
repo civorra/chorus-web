@@ -713,15 +713,21 @@ function renderProjectPage(proj, entLabel) {
   if (imports.length) {
     importsHtml += `<table class="pv-import-table">
       <thead><tr>
-        <th>Date</th><th>Version</th><th>Frames</th><th>Modèle</th><th>Note</th>
+        <th>Date</th><th>Version</th><th>Frames</th><th>Modèle</th><th>Note</th><th></th>
       </tr></thead><tbody>`;
     [...imports].reverse().forEach(imp => {
+      const viewBtn = imp.file
+        ? `<button class="btn btn-ghost btn-sm" style="padding:2px 7px;font-size:10px"
+             title="Voir ${imp.file}"
+             onclick="openMdView('${sb.id}','${proj.entity}','${proj.id}','${imp.file}')">👁️ Rapport</button>`
+        : '';
       importsHtml += `<tr>
         <td style="font-family:'JetBrains Mono',monospace">${imp.date}</td>
         <td><span class="pv-version-badge">${imp.version}</span></td>
         <td style="color:var(--accent);font-family:'JetBrains Mono',monospace">${imp.frames}</td>
         <td style="color:var(--text-secondary)">${imp.model || '—'}</td>
         <td style="color:var(--text-muted);font-size:11px">${imp.note || '—'}</td>
+        <td style="white-space:nowrap">${viewBtn}</td>
       </tr>`;
     });
     importsHtml += `</tbody></table>`;

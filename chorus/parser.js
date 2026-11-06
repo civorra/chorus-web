@@ -54,7 +54,7 @@ function parseImportReportOrg(content) {
   return {
     date:       header.DATE || null,
     source:     header.SOURCE || null,
-    output:     header.OUTPUT || null,
+    output:     header.OUTPUT || header.OUTPUT_JSON || null,
     mode:       header.MODE || null,
     extension:  header.EXTENSION || null,
     frames:     toInt(findSummary(/Éléments produits/i))
