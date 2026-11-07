@@ -695,12 +695,12 @@ function renderProjectPage(proj, entLabel) {
     ].filter(Boolean).join('');
     const auditDate = aud.date ? `<span style="font-size:10px;color:var(--text-muted);margin-left:8px">${aud.date}</span>` : '';
     const reportLink = ''; // remplacé par le bouton "📄 Rapport détaillé" dans auditNextAction
-    const auditBtnInner = auditNextAction(aud, proj.id, false, '', proj.entity || '');
+    const auditBtnInner = auditNextAction(aud, proj.id, false, '', proj.entity || '', proj.hasUnintegratedThesaurus || false);
     apercuHtml += `
       <div style="font-size:12px;font-weight:600;color:${statusClr};margin-bottom:6px">${statusTxt}${auditDate}</div>
       <div class="pv-last-import">${rows}</div>
       ${reportLink}
-      <div style="margin-top:8px">${auditBtnInner}</div>`;
+      <div id="pv-apercu-audit-action" style="margin-top:8px">${auditBtnInner}</div>`;
   }
   apercuHtml += `</div>`;
 
@@ -957,10 +957,11 @@ async function renderPvThesaurusTab() {
           <td style="padding:4px 8px;color:var(--success);font-size:11px">${a.confidence || ''}</td>
           <td style="padding:4px 8px;font-size:11px">${_pvThesOriginBadge(a.confidence, a.sourceImport)}</td>
           <td style="padding:4px 8px;white-space:nowrap">${
-            // "Annuler" disponible pour les confirmations legacy 'manual' uniquement.
-            // Niveau 2 (manual-project) : annulation non encore supportée (future tâche).
-            // Niveau 3 entity-promoted : annulation non applicable.
-            _pvThesOrigin(a.confidence).kind === 'manual'
+            // "Annuler" disponible pour les confirmations manuelles :
+            //   manual         → legacy (pré-WEB-027, dans thesaurus.org)
+            //   manual-project → Niveau 2 (project-scoped, <projId>.thesaurus.json)
+            // Niveau 3 entity-promoted : annulation non applicable (intentionnel).
+            ['manual', 'manual-project'].includes(_pvThesOrigin(a.confidence).kind)
             ? `<button class="btn btn-ghost" style="font-size:11px;padding:2px 8px;color:var(--text-muted)" onclick="pvThesUnconfirm(${i})" title="Remet ce terme en attente de confirmation">↩️ Annuler</button>`
             : ''}</td>
         </tr>`).join('')}
@@ -1125,6 +1126,25 @@ async function _pvThesSubmitResolve(body) {
     // multiple rows point to the same term).
     const cacheKey = `${currentSandbox.id}/${currentProject.entity}/${currentProject.id}`;
     delete _pvThesaurusCache[cacheKey];
+
+    // Optimistic update — the thesaurus file is now newer than the project JSON.
+    // Update PROJECTS cache + currentProject so the button appears immediately
+    // without a full F5. The aperçu tab is NOT re-rendered (would switch tabs),
+    // so we patch only the audit-action div directly via its stable id.
+    const sbIdOpt = currentSandbox.id;
+    const liveProj = (PROJECTS[sbIdOpt] || []).find(p => p.id === currentProject?.id);
+    if (liveProj) {
+      liveProj.hasUnintegratedThesaurus = true;
+      currentProject = liveProj;
+    }
+    const auditActionEl = document.getElementById('pv-apercu-audit-action');
+    if (auditActionEl && currentProject?.audit) {
+      auditActionEl.innerHTML = auditNextAction(
+        currentProject.audit, currentProject.id, false, '',
+        currentProject.entity || '', true
+      );
+    }
+
     renderPvThesaurusTab();
   } catch (err) {
     alert(`Erreur : ${err.message}`);
@@ -1697,7 +1717,7 @@ function renderProjectsTab() {
 //   compact=true  → court (card/row) — pas de Pipeline (déjà présent dans pc-actions)
 //   compact=false → full (panel aperçu) — guidance texte si gaps résiduels
 // entityId : optionnel — requis pour afficher le bouton "📄 Rapport" en mode full
-function auditNextAction(audit, projId, compact, sp = '', entityId = null) {
+function auditNextAction(audit, projId, compact, sp = '', entityId = null, hasUnintegratedThesaurus = false) {
   if (!audit) {
     // Jamais audité
     return compact
@@ -1733,9 +1753,13 @@ function auditNextAction(audit, projId, compact, sp = '', entityId = null) {
     steps.push(`<div style="font-size:11px;color:var(--text-muted);margin-top:5px">⚠️ <strong>${audit.gapsPartiels}</strong> élément(s) partiels — pages source incomplètes. Identifier les éléments concernés dans le rapport, extraire les pages manquantes, relancer <code>chorus-import-project</code>, puis <code>chorus-audit-import</code>.</div>`);
   if (audit.gapsMapping > 0) {
     steps.push(`<div style="font-size:11px;color:var(--text-muted);margin-top:5px">🔄 <strong>${audit.gapsMapping}</strong> mapping(s) à confirmer — termes du document non reconnus par le KB.</div>`);
-    steps.push(`<button class="btn btn-ghost btn-sm" style="margin-top:4px;font-size:11px"
-      onclick="startAuditResolveMapping('${projId}','${entityId}')"
-      title="Relancer chorus-import-project depuis la même source après résolution du thésaurus">🔄 Ré-importer après thésaurus</button>`);
+    if (hasUnintegratedThesaurus) {
+      steps.push(`<button class="btn btn-ghost btn-sm" style="margin-top:4px;font-size:11px"
+        onclick="startAuditResolveMapping('${projId}','${entityId}')"
+        title="Relancer chorus-import-project depuis la même source après résolution du thésaurus">🔄 Ré-importer après thésaurus</button>`);
+    } else {
+      steps.push(`<div style="font-size:11px;color:var(--text-muted);margin-top:3px">ℹ️ Confirmer les mappings dans l'onglet <strong>Thesaurus</strong> pour activer le ré-import.</div>`);
+    }
   }
   if (audit.framesManquantes > 0) {
     steps.push(`<div style="font-size:11px;color:var(--text-muted);margin-top:5px">🚫 <strong>${audit.framesManquantes}</strong> type(s) de Frame manquant(s) — non classifiables par le KB actuel.</div>`);
@@ -1766,7 +1790,7 @@ function startAuditResolveMapping(projId, entityId) {
   const outFile = `workspace/${entityId}/${projId}.json`;
 
   const cmd = srcFile
-    ? `chorus-import-project ${sbId} ${srcFile} --context ${entityId} --out ${outFile}\n`
+    ? `chorus-import-project ${sbId} ${srcFile} --context ${entityId} --out ${outFile} --keep-patches\n`
       + `ℹ️ Résoudre les mappings 🔄 : mettre à jour le thésaurus (global.org ou <client>.org)\n`
       + `puis relancer chorus-audit-import ${sbId} ${outFile}`
     : `chorus-audit-import ${sbId} ${outFile}\n`
@@ -1865,7 +1889,7 @@ function projCard(p) {
   const compColor = (p.verdict === 'FAILED') ? 'var(--error)'
     : comp >= 90 ? 'var(--success)' : comp >= 75 ? 'var(--warn)' : 'var(--error)';
   const auditBadge = renderAuditBadge(p.audit || null);
-  const auditBtn = auditNextAction(p.audit || null, p.id, true, sp, p.entity || '');
+  const auditBtn = auditNextAction(p.audit || null, p.id, true, sp, p.entity || '', p.hasUnintegratedThesaurus || false);
   return `
     <div class="proj-card imported" style="cursor:pointer" onclick="selectProject('${p.id}')">
       <div class="pc-header">
@@ -1932,7 +1956,7 @@ function projRow(p) {
   const compColor = (p.verdict === 'FAILED') ? 'var(--error)'
     : comp >= 90 ? 'var(--success)' : comp >= 75 ? 'var(--warn)' : 'var(--error)';
   const auditBadgeRow = renderAuditBadge(p.audit || null);
-  const auditBtnRow = auditNextAction(p.audit || null, p.id, true, sp, p.entity || '');
+  const auditBtnRow = auditNextAction(p.audit || null, p.id, true, sp, p.entity || '', p.hasUnintegratedThesaurus || false);
   return `
     <div class="proj-row imported" style="cursor:pointer" onclick="selectProject('${p.id}')">
       <span class="pr-name" title="${p.name}">${icon} ${p.name}</span>

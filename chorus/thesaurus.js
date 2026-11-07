@@ -612,7 +612,74 @@ function resolveThesaurusPending(sbId, shard, term, sourceImport, action, opts =
 //          resolveThesaurusPending où le shard source est toujours global.org
 //          pour les lignes Pending.
 function unconfirmThesaurusAlias(sbId, shard, term, sourceImport, opts = {}) {
-  const sbPath    = path.join(SANDBOXES_DIR(), sbId);
+  const sbPath = path.join(SANDBOXES_DIR(), sbId);
+
+  // ── Niveau 2 — workspace/<entity>/<projId>.thesaurus.json ────────────────
+  // Tenter en priorité si projectId + entityId disponibles : les confirmations
+  // "🔑 Valider (projet)" écrivent dans le JSON projet-scoped, pas dans le .org.
+  if (opts.projectId && opts.entityId) {
+    const lv2Path = _projectThesaurusPath(sbPath, opts.entityId, opts.projectId);
+    const lv2Raw  = readFileSafe(lv2Path);
+    let lv2Data;
+    try { lv2Data = lv2Raw ? JSON.parse(lv2Raw) : null; } catch { lv2Data = null; }
+
+    if (lv2Data) {
+      const teArr = lv2Data.aliases_type_element || [];
+      const svArr = lv2Data.aliases_slot_values  || [];
+      const teIdx = teArr.findIndex(a => a.term === term && a.source_import === sourceImport);
+      const svIdx = svArr.findIndex(a => a.term === term && a.source_import === sourceImport);
+
+      if (teIdx >= 0 || svIdx >= 0) {
+        // Garde-fou : refuser si l'alias n'a pas été confirmé manuellement
+        const conf = teIdx >= 0 ? teArr[teIdx].confidence : svArr[svIdx].confidence;
+        if (!/validated via chorus-web/i.test(conf || '')) {
+          throw new Error(`Alias résolu à l'import — annulation refusée (confidence="${conf}")`);
+        }
+
+        const typeElement = teIdx >= 0 ? teArr[teIdx].type_element : null;
+        const slot        = svIdx >= 0 ? svArr[svIdx].slot          : null;
+        const value       = svIdx >= 0 ? svArr[svIdx].value         : null;
+
+        // Supprimer du JSON Niveau 2
+        if (teIdx >= 0) teArr.splice(teIdx, 1);
+        if (svIdx >= 0) svArr.splice(svIdx, 1);
+        if (!lv2Data._meta) lv2Data._meta = {};
+        lv2Data._meta.updated = new Date().toISOString().slice(0, 10);
+        fs.writeFileSync(lv2Path, JSON.stringify(lv2Data, null, 2), 'utf8');
+
+        // Re-ajouter en Pending dans le thésaurus entity (thesaurus.org Niveau 3)
+        const orgPath    = _thesaurusReadPathForShard(sbPath, shard);
+        const orgContent = readFileSafe(orgPath);
+        if (orgContent) {
+          const orgLines   = orgContent.split('\n');
+          const proposed   = typeElement
+            ? `type_element: ${typeElement} ?`
+            : (slot ? `${slot}: ${value} ?` : '');
+          const pendingRow = _makeOrgRow([term, proposed, '⚠️ _a_confirmer', sourceImport, shard]);
+          const pBounds    = _findOrgSectionBounds(orgLines, /^\*\s+Pending/i);
+          if (pBounds) {
+            const ins = _findTableInsertionPoint(orgLines, pBounds.start, pBounds.end);
+            if (ins) orgLines.splice(ins.lastRowIdx + 1, 0, pendingRow);
+            else     orgLines.splice(pBounds.end, 0, pendingRow);
+            fs.writeFileSync(_thesaurusWritePathForShard(sbPath, shard), orgLines.join('\n'), 'utf8');
+          }
+        }
+
+        // Journal (best-effort)
+        try {
+          _appendThesaurusLog(sbPath, opts.entityId, opts.projectId, opts.projectName, {
+            date: new Date().toISOString().slice(0, 10),
+            term, action: '↩️ Annulé Niv.2 (retour en Pending)',
+            typeElement, slot, value, shard, sourceImport,
+          });
+        } catch { /* non-bloquant */ }
+
+        return { ok: true, shard, scope: shard, level: 2 };
+      }
+    }
+  }
+
+  // ── Niveau 3 / legacy — workspace/<entity>/thesaurus.org ou agent/thesaurus/ ──
   // WEB-027 : lire depuis workspace/<entity>/ ou legacy agent/thesaurus/
   const shardPath = _thesaurusReadPathForShard(sbPath, shard);
   const content   = readFileSafe(shardPath);

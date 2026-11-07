@@ -229,11 +229,11 @@ router.post('/sandboxes/:sbId/terminal', (req, res) => {
     const chatId = `eca-term-${sbId}-${sessionId}`;
     let agentsPrefix = '';
     let chatAlreadyExists = false;
+    const chorusHome = chorus.CHORUS_HOME();
     try {
       const list  = await eca.ecaRequest('/api/v1/chats', 'GET');
       chatAlreadyExists = Array.isArray(list) && !!list.find(c => c.id === chatId);
       if (!chatAlreadyExists) {
-        const chorusHome = chorus.CHORUS_HOME();
         agentsPrefix =
           `[Chorus ECA Terminal — sandbox: ${sbId}]\n` +
           `Workspace: ${chorusHome}. ` +
@@ -244,16 +244,18 @@ router.post('/sandboxes/:sbId/terminal', (req, res) => {
 
     // ── Directive skill — chargement explicite pour les commandes Chorus connues ──
     // ECA reçoit seulement le chemin de l'AGENTS.md, qu'il peut ne pas lire s'il
-    // connaît la commande de son entraînement. Sans appel à eca__skill(), nos
-    // améliorations (Phase 0-bis/2.0-bis/4-checkpoint, eca__task, eca__ask_user)
+    // connaît la commande de son entraînement. Sans eca__read_file() sur le skill,
+    // nos améliorations (Phase 0-bis/2.0-bis/4-checkpoint, eca__task, eca__ask_user)
     // sont ignorées. Solution : injecter une directive explicite pour forcer le
     // chargement du skill depuis le disque (version à jour).
+    // ⛔ eca__skill() est interdit pour les skills Chorus (non enregistrés dans
+    // eca-config.json — toujours KO) — utiliser eca__read_file() uniquement.
     const CHORUS_SKILL_MAP = {
       strengthen:       'chorus-strengthen',
       fix:              'chorus-fix',
       // les autres kinds n'ont pas de skill dédié ou sont gérés par le message lui-même
     };
-    // Pour tout message contenant un déclencheur Chorus connu, forcer eca__skill
+    // Pour tout message contenant un déclencheur Chorus connu, forcer eca__read_file
     const knownSkillPatterns = [
       { re: /\bchorus-strengthen\b/,     skill: 'chorus-strengthen'     },
       { re: /\bchorus-check\b/,          skill: 'chorus-check'          },
@@ -322,8 +324,9 @@ router.post('/sandboxes/:sbId/terminal', (req, res) => {
           const rulesBlock = rules.length
             ? '\nRègles critiques à respecter impérativement :\n' + rules.map(r => `  ${r}`).join('\n')
             : '';
+          const skillPath = path.join(chorusHome, 'engine', 'agent', 'skills', `${detectedSkill}.md`);
           return `\n\n[SKILL OBLIGATOIRE — à exécuter EN PREMIER, avant tout autre outil]\n` +
-            `Charge le skill via : eca__skill("${detectedSkill}")${rulesBlock}\n` +
+            `Charge le skill via : eca__read_file("${skillPath}")${rulesBlock}\n` +
             `⛔ NE commence JAMAIS à exécuter sans avoir d'abord chargé son skill — le skill contient les instructions à jour.`;
         })()
       : '';

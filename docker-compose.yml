@@ -60,7 +60,7 @@ services:
       # webapp (bouton "GitHub Copilot"), sans session Emacs/hôte préalable
       # — validé de bout en bout, mount désactivé pendant le test. ECA crée
       # alors lui-même son propre db.transit.json à l'intérieur du
-      # conteneur, de façon totalement autonome.
+      # conteneur, de façon totalement autonome.x
       #
       # Utilité résiduelle de ce mount : réutiliser une session OAuth
       # Anthropic Pro/Max ou Copilot DÉJÀ active sur l'hôte (ex. session
@@ -69,7 +69,7 @@ services:
       # Décommenter uniquement si ce raccourci est souhaité pour un poste
       # de dev donné ; sinon laisser commenté par défaut (déploiement
       # portable, zéro dépendance à l'environnement hôte).
-#      - ${OAUTH_CREDENTIALS}:/root/.cache/eca/db.transit.json:ro
+      - ${OAUTH_CREDENTIALS}:/root/.cache/eca/db.transit.json:ro
       # eca-config.json monté en volume : override du COPY Dockerfile.eca,
       # évite un rebuild pour changer de provider (Anthropic ↔ Copilot).
       - ./eca-config.json:/etc/eca/config.json:ro

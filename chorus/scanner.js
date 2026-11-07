@@ -335,6 +335,28 @@ function scanFlatProject(entityPath, slug, jsonFile, runReportIndex) {
     importedElementsCount = (projJson.elements || []).length;
   } catch { /* JSON invalide ou _import absent */ }
 
+  // ── hasUnintegratedThesaurus ───────────────────────────────────────────
+  // true si des confirmations manuelles du thésaurus (Niveau 2 ou 3) ont été
+  // enregistrées APRÈS le dernier chorus-import-project sur ce projet.
+  // Utilisé par chorus-web.js pour n'afficher "🔄 Ré-importer après thésaurus"
+  // que lorsqu'il y a effectivement de nouvelles décisions à intégrer.
+  let hasUnintegratedThesaurus = false;
+  try {
+    const projMtime = fs.statSync(jsonFile).mtimeMs;
+    // Niveau 2 — workspace/<entity>/<projId>.thesaurus.json (confirmations projet-scoped)
+    try {
+      if (fs.statSync(path.join(entityPath, `${slug}.thesaurus.json`)).mtimeMs > projMtime)
+        hasUnintegratedThesaurus = true;
+    } catch { /* fichier absent — pas de confirmations Niv.2 */ }
+    // Niveau 3 — workspace/<entity>/thesaurus.org (confirmations entity-scoped)
+    if (!hasUnintegratedThesaurus) {
+      try {
+        if (fs.statSync(path.join(entityPath, 'thesaurus.org')).mtimeMs > projMtime)
+          hasUnintegratedThesaurus = true;
+      } catch { /* fichier absent — pas de thésaurus Niv.3 */ }
+    }
+  } catch { /* impossible de stat le JSON — garder false */ }
+
   const sourceBasename = sourceFile
     ? path.basename(sourceFile).replace(/\.[^.]+$/, '')
     : null;
@@ -362,7 +384,8 @@ function scanFlatProject(entityPath, slug, jsonFile, runReportIndex) {
     runEntries,
     imports,
     norm:        reportData?.norm || null,
-    audit:       auditData,
+    audit:                    auditData,
+    hasUnintegratedThesaurus,
   };
 }
 
