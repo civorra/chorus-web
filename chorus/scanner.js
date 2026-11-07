@@ -113,17 +113,23 @@ function scanSandboxCorpus(sbId) {
   // Helpers locaux pour extraire les tables de index.org
   const { extractOrgTable } = require('./parser');
 
-  // Accepte deux formats de heading :
-  //   Ancien : "* Pipeline global" — colonnes: pos | module | slug | kb | status
-  //   Nouveau: "* Agents"          — colonnes: #   | Slug   | KB org | Rules | Helpers | Mode A | Deferred-S | Deferred-C
+  // Accepte trois formats de heading :
+  //   Ancien : "* Pipeline global" — colonnes: pos | module | slug | kb | status         (5 col min)
+  //   Nouveau: "* Agents"          — colonnes: #   | Slug   | KB org | Rules | …         (8 col)
+  //   Minimal: "* Pipeline"        — colonnes: #   | Slug   | Intent | Frames            (4 col)
+  //            → sandbox 03-style : l'agent crée un index.org enrichi hors-template
+  //              avec seulement 4 colonnes. La détection isNewAgentFormat (Slug en col 1)
+  //              s'applique — il suffit de pos + slug (2 col min) pour alimenter l'onglet.
   const pipelineRows = extractOrgTable(indexContent, /^\*\s+(Pipeline\b|Agents)\b/i);
   const pipelineHeader = pipelineRows[0] || [];
   // Détection du format par la position de 'Slug' dans l'en-tête
   const isNewAgentFormat = /slug/i.test(pipelineHeader[1] || '');
+  // Seuil minimum : nouveau format (Slug en col 1) → 2 col ; ancien format → 5 col
+  const pipelineMinCols = isNewAgentFormat ? 2 : 5;
   const pipeline = pipelineRows.slice(1)
-    .filter(r => r.length >= 5 && /^\d+$/.test((r[0] || '').trim()))
+    .filter(r => r.length >= pipelineMinCols && /^\d+$/.test((r[0] || '').trim()))
     .map(r => isNewAgentFormat
-      ? { pos: r[0], slug: r[1], module: r[2], kb: r[2], status: r[5] || '', deferred: parseInt(r[6]) || 0 }
+      ? { pos: r[0], slug: r[1], module: r[2] || '', kb: r[2] || '', status: r[5] || '', deferred: parseInt(r[6]) || 0 }
       : { pos: r[0], module: r[1], slug: r[2], kb: r[3], status: r[4], deferred: 0 }
     );
 
