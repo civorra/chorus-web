@@ -75,6 +75,53 @@ function _resolveSourceImportBasename(sbPath, sourceImport) {
   return null;
 }
 
+// Entity-aware variant of _resolveSourceImportBasename.
+//
+// WEB-028 — fix régression « onglet thésaurus vide » :
+//
+// Plusieurs entités d'un même sandbox utilisent des compteurs séquentiels
+// pour leurs rapports d'import (import-report-001.org, import-report-002.org…).
+// Le scanner global _resolveSourceImportBasename() parcourt TOUS les dossiers
+// workspace/<entity>/reports/ et retourne le PREMIER fichier trouvé — donc
+// toujours celui de l'entité alphabétiquement la plus basse (ex : "Alencon")
+// quelle que soit l'entité traitée. Résultat : sourceBasename est incorrect
+// pour toutes les entités qui viennent après alphabétiquement → les entrées
+// du thésaurus ne correspondent plus à la cible proj.sourceBasename dans la
+// webapp → onglet thésaurus vide.
+//
+// Solution : vérifier d'abord le dossier reports/ de l'entité courante avant
+// de tomber sur le scan global. Le scan global reste actif comme fallback pour
+// les IDs globalement uniques de la forme "import-report-<timestamp>" (sandboxes
+// récents, ex : eviden), où le report ne sera trouvé que dans une seule entité.
+function _resolveSourceImportBasenameInEntity(sbPath, entity, sourceImport) {
+  if (!sourceImport) return null;
+  // Repli immédiat : certaines lignes portent déjà un nom de fichier explicite.
+  const inlineMatch = sourceImport.match(/\(([^)]+)\)/);
+  if (inlineMatch) return path.basename(inlineMatch[1]).replace(/\.[^.]+$/, '');
+
+  const reportId = sourceImport.trim();
+  if (!/^import-report-\d+$/.test(reportId)) return null;
+
+  // 1) Chercher d'abord dans l'entité fournie.
+  const entityReportPath = path.join(sbPath, 'workspace', entity, 'reports', `${reportId}.org`);
+  const entityContent = readFileSafe(entityReportPath);
+  if (entityContent) {
+    const parsed = parseImportReportOrg(entityContent);
+    if (parsed.source) {
+      const sourcePath = parsed.source.replace(/\s*\([^)]*\)\s*$/, '').trim();
+      return path.basename(sourcePath).replace(/\.[^.]+$/, '');
+    }
+    const fichierMatch = entityContent.match(/Fichier\s*:\s*(\S+)/);
+    if (fichierMatch) {
+      const sourcePath = fichierMatch[1].replace(/\s*\([^)]*\)\s*$/, '').trim();
+      return path.basename(sourcePath).replace(/\.[^.]+$/, '');
+    }
+  }
+
+  // 2) Fallback : scan global (IDs globalement uniques comme "import-report-<timestamp>").
+  return _resolveSourceImportBasename(sbPath, sourceImport);
+}
+
 // ── Scan des thésaurus ────────────────────────────────────────────────────
 //
 // WEB-027 — Architecture thésaurus refonte :
@@ -232,12 +279,29 @@ function _collectProjectThesauri(sbPath, entity) {
 }
 
 function scanSandboxThesaurus(sbPath) {
+  // Resolver global (IDs uniques sandbox-wide, ex: "import-report-<timestamp>").
+  // ⚠️ NE PAS utiliser pour les ID séquentiels (import-report-001…) qui sont
+  // scopés par entité — utiliser resolveForEntity() à la place (WEB-028).
   const resolveCache = new Map();
   const resolve = (sourceImport) => {
     if (!sourceImport) return null;
     if (!resolveCache.has(sourceImport))
       resolveCache.set(sourceImport, _resolveSourceImportBasename(sbPath, sourceImport));
     return resolveCache.get(sourceImport);
+  };
+
+  // WEB-028 — resolver entity-aware avec cache par entité.
+  // Priorité : reports/<entity>/ en premier, fallback scan global.
+  // Évite la collision quand plusieurs entités partagent le même numéro
+  // séquentiel (import-report-001.org, import-report-002.org…).
+  const entityResolveCaches = new Map(); // entity → Map(sourceImport → basename)
+  const resolveForEntity = (entity, sourceImport) => {
+    if (!sourceImport) return null;
+    if (!entityResolveCaches.has(entity)) entityResolveCaches.set(entity, new Map());
+    const cache = entityResolveCaches.get(entity);
+    if (!cache.has(sourceImport))
+      cache.set(sourceImport, _resolveSourceImportBasenameInEntity(sbPath, entity, sourceImport));
+    return cache.get(sourceImport);
   };
 
   const entities = _collectThesaurusEntities(sbPath);
@@ -249,17 +313,20 @@ function scanSandboxThesaurus(sbPath) {
     // `entity` est le nouveau nom canonique ; `shard` maintenu pour compat appelants
     if (!content) return { entity, shard: entity, level: 3, projId: null, aliasesTypeElement: [], aliasesSlotValues: [], pending: [], outOfScope: [] };
 
+    // WEB-028 : utiliser le resolver entity-aware pour les IDs séquentiels.
+    const res = (si) => resolveForEntity(entity, si);
+
     const aliasesTypeElement = extractOrgTable(content, /^\*\s+Aliases\s*(—|-)\s*type_element/i)
       .slice(1).map(r => ({ term: r[0], target: r[1], confidence: r[2], sourceImport: r[3] || null,
-        sourceBasename: resolve(r[3] || null) }));
+        sourceBasename: res(r[3] || null) }));
     const aliasesSlotValues = extractOrgTable(content, /^\*\s+Aliases\s*(—|-)\s*slot values/i)
       .slice(1).map(r => ({ term: r[0], slot: r[1], value: r[2], confidence: r[3], sourceImport: r[4] || null,
-        sourceBasename: resolve(r[4] || null) }));
+        sourceBasename: res(r[4] || null) }));
     const pending = extractOrgTable(content, /^\*\s+Pending/i)
       .slice(1).map(r => ({
         term: r[0], proposed: r[1], flag: r[2], sourceImport: r[3] || null,
         scope: r[4] ? r[4].trim() : null,
-        sourceBasename: resolve(r[3] || null),
+        sourceBasename: res(r[3] || null),
       }));
     const outOfScope = extractOrgTable(content, /^\*\s+Out-of-scope/i)
       .slice(1).map(r => ({ term: r[0], reason: r[1] }));
@@ -270,6 +337,9 @@ function scanSandboxThesaurus(sbPath) {
   // ── Niveau 2 — shards projet (workspace/<entity>/<projId>.thesaurus.json) ─
   const level2Shards = [];
   for (const [entity] of entities.entries()) {
+    // WEB-028 : resolver entity-aware pour les IDs séquentiels.
+    const res2 = (si) => resolveForEntity(entity, si);
+
     for (const { projId, path: projPath } of _collectProjectThesauri(sbPath, entity)) {
       const content = readFileSafe(projPath);
       if (!content) continue;
@@ -283,12 +353,12 @@ function scanSandboxThesaurus(sbPath) {
         aliasesTypeElement: (data.aliases_type_element || []).map(a => ({
           term: a.term, target: a.type_element, confidence: a.confidence,
           sourceImport: a.source_import || null,
-          sourceBasename: a.source_import ? resolve(a.source_import) : null,
+          sourceBasename: a.source_import ? res2(a.source_import) : null,
         })),
         aliasesSlotValues: (data.aliases_slot_values || []).map(a => ({
           term: a.term, slot: a.slot, value: a.value, confidence: a.confidence,
           sourceImport: a.source_import || null,
-          sourceBasename: a.source_import ? resolve(a.source_import) : null,
+          sourceBasename: a.source_import ? res2(a.source_import) : null,
         })),
         pending: [],
         outOfScope: (data.out_of_scope || []).map(a => ({ term: a.term, reason: a.reason || '' })),
