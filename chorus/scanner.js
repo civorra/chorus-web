@@ -158,6 +158,30 @@ function scanSandboxCorpus(sbId) {
       ag.frames      = extractFrameCatalogue(agentContent);
       ag.rules       = extractRuleCatalogue(agentContent);
     }
+
+    // Fallback YAML — si extractRuleCatalogue n'a rien retourné (format KB
+    // incompatible : ancien format "Fichier YAML | Description" sandbox 01,
+    // ou format narratif "* Règles (Session …) ** R01 —" sandbox 03), lire
+    // directement les fichiers .yml dans rules/<slug>/ pour construire la liste.
+    // Les YAML portent obligatoirement RULE:/REGLE: en tête (convention Chorus).
+    if (!ag.rules.length && ag.ruleFileCount > 0) {
+      const rulesDir = path.join(sbPath, 'rules', ag.slug);
+      try {
+        ag.rules = fs.readdirSync(rulesDir)
+          .filter(f => f.endsWith('.yml'))
+          .sort()
+          .map(fname => {
+            const yamlContent = readFileSafe(path.join(rulesDir, fname));
+            // Lire RULE:/REGLE: pour l'intent (première ligne non commentaire)
+            const ruleMatch   = (yamlContent || '').match(/^(?:RULE|REGLE):\s*(.+)/m);
+            const intentMatch = (yamlContent || '').match(/^#\s*PURPOSE[^\n]*\n#\s*(.+)/m)
+                             || (yamlContent || '').match(/^#\s*OBJECTIF[^\n]*\n#\s*(.+)/m);
+            const id = fname.replace(/\.yml$/, '');     // ex: "R01-sf-porteurs-verticaux"
+            const intent = intentMatch ? intentMatch[1].trim() : (ruleMatch ? ruleMatch[1].trim() : '');
+            return { id, intent, corpus: '' };
+          });
+      } catch { /* rules/ absent — rester vide */ }
+    }
   }
 
   return { title, pipeline, integratedCorpus, corpusFiles, readme, thesaurus };
