@@ -6916,11 +6916,17 @@ function mdvMakeRuleCatalogClickable(slug, highlightRuleId) {
   let targetTable = null;
   for (const t of tables) {
     const headers = [...t.querySelectorAll('thead th')].map(th => th.textContent.trim().toLowerCase());
-    if (headers.includes('rule')) { targetTable = t; break; }
+    // Accepte : colonne "rule" (format standard) OU "fichier yaml" / "fichier" (sandbox 01)
+    if (headers.includes('rule') || headers.some(h => /^fichier(\s+yaml)?$/i.test(h))) {
+      targetTable = t; break;
+    }
   }
   if (!targetTable) return;
   const headers = [...targetTable.querySelectorAll('thead th')].map(th => th.textContent.trim().toLowerCase());
-  const ruleCol = headers.indexOf('rule');
+  // Colonne rule : priorité "rule", fallback "fichier yaml" / "fichier"
+  const ruleCol = headers.indexOf('rule') !== -1
+    ? headers.indexOf('rule')
+    : headers.findIndex(h => /^fichier(\s+yaml)?$/i.test(h));
   const numCol  = headers.indexOf('#');
   if (ruleCol === -1) return;
   let highlightRow = null;
@@ -6936,7 +6942,9 @@ function mdvMakeRuleCatalogClickable(slug, highlightRuleId) {
     // "R01" + "component-identifier-grammar") pour retomber sur le nom
     // réel du fichier YAML (R01-component-identifier-grammar.yml).
     const num = numCol !== -1 ? (cells[numCol]?.textContent.trim() || '') : '';
-    const ruleId = (num && !new RegExp(`^${num}[-_]`, 'i').test(name)) ? `${num}-${name}` : name;
+    // "Fichier YAML" (sandbox 01) : retirer l'extension .yml pour obtenir l'id
+    const cleanName = name.replace(/\.yml$/i, '');
+    const ruleId = (num && !new RegExp(`^${num}[-_]`, 'i').test(cleanName)) ? `${num}-${cleanName}` : cleanName;
     tr.style.cursor = 'pointer';
     tr.addEventListener('click', () => openRuleView(slug, ruleId));
     tr.addEventListener('mouseenter', () => { tr.style.background = 'var(--bg-hover,rgba(255,255,255,.04))'; });
@@ -7012,10 +7020,15 @@ async function openRuleView(slug, ruleId) {
 // juste déplacé hors du flux de lecture linéaire du panneau Détails.
 function replaceRuleHeadingsWithTable(orgText) {
   const lines = orgText.split('\n');
-  const headingRe = /^\*\*\s+Rule:\s*(.+?)\s*$/i;
+  // Format A (historique) : ** Rule: R01-nom-de-la-regle
+  const headingReA = /^\*\*\s+Rule:\s*(.+?)\s*$/i;
+  // Format B (sandbox 03) : ** R01 — Description courte  (ou ** R01 — Description ✅)
+  // L'ID est le préfixe RNN, l'intent est le reste après le tiret/em-dash.
+  const headingReB = /^\*\*\s+(R\d+(?:[A-Z]|bis|ter)?)\s*[—–-]+\s*(.+?)\s*$/i;
   const out = [];
   let i = 0;
-  let tableRows = null;  // accumulateur de la table en cours de synthèse
+  let tableRows = null;
+  let currentSection = '';   // libellé de la section * Règles en cours (pour regrouper)
   const flushTable = () => {
     if (tableRows && tableRows.length) {
       out.push('| Rule | Intent |', '|---|---|', ...tableRows, '');
@@ -7023,30 +7036,40 @@ function replaceRuleHeadingsWithTable(orgText) {
     tableRows = null;
   };
   while (i < lines.length) {
-    const m = lines[i].trim().match(headingRe);
-    if (!m) {
-      // Toute ligne qui n'est pas un heading "** Rule:" clôt la table en
-      // cours de synthèse (sauf les lignes de continuation du bloc, déjà
-      // consommées via `end` ci-dessous — donc ici il s'agit forcément
-      // d'une ligne hors bloc règle : heading de niveau différent, texte
-      // libre, etc.).
+    const trimmed = lines[i].trim();
+    const mA = trimmed.match(headingReA);
+    const mB = trimmed.match(headingReB);
+    if (!mA && !mB) {
       flushTable();
       out.push(lines[i]);
       i++;
       continue;
     }
-    const ruleId = m[1].trim();
-    let end = lines.length;
-    for (let j = i + 1; j < lines.length; j++) {
-      if (/^\*+\s/.test(lines[j].trim())) { end = j; break; }
+    let ruleId, intent;
+    if (mA) {
+      ruleId = mA[1].trim();
+      let end = lines.length;
+      for (let j = i + 1; j < lines.length; j++) {
+        if (/^\*+\s/.test(lines[j].trim())) { end = j; break; }
+      }
+      const blockLines = lines.slice(i + 1, end);
+      const fields = parseRuleFields(blockLines);
+      const intentField = fields.find(f => f.label.toLowerCase() === 'intent');
+      intent = (intentField?.value || '').replace(/\|/g, '\\|');
+      i = end;
+    } else {
+      // Format B — l'ID est le premier groupe (R01), l'intent est la description
+      ruleId = mB[1].trim();
+      intent = mB[2].trim().replace(/\|/g, '\\|');
+      // Consommer toutes les lignes de détail jusqu'au prochain heading
+      let end = lines.length;
+      for (let j = i + 1; j < lines.length; j++) {
+        if (/^\*+\s/.test(lines[j].trim())) { end = j; break; }
+      }
+      i = end;
     }
-    const blockLines = lines.slice(i + 1, end);
-    const fields = parseRuleFields(blockLines);
-    const intentField = fields.find(f => f.label.toLowerCase() === 'intent');
-    const intent = (intentField?.value || '').replace(/\|/g, '\\|');
     tableRows = tableRows || [];
     tableRows.push(`| ${ruleId} | ${intent} |`);
-    i = end;
   }
   flushTable();
   return out.join('\n');
