@@ -4230,12 +4230,24 @@ let _mdvCtx = null;   // contexte du viewer Markdown (sbId, entityId, projId, fi
 // plus English equivalents found on sandboxes with EN corpora
 // (e.g. 02-building-en) where Helpers.pm writes "non_conformity_motif"/"reason"
 // au lieu de "motif".
+// Generic fallback: any motif_* field present on the element (handles new
+// domain-specific Helpers — e.g. motif_structure, motif_facade,
+// motif_calfeutrement, motif_circulations from sandbox 03 construction bois,
+// or any future sandbox — without requiring hardcoded names here).
 function elementMotif(e) {
-  return e.motif ?? e.motif_impact ?? e.motif_generation ?? e.motif_affectation
+  // 1. Explicit well-known fields (fast path, preserves existing order)
+  const explicit = e.motif ?? e.motif_impact ?? e.motif_generation ?? e.motif_affectation
     ?? e.motif_enrolement ?? e.motif_introduction ?? e.motif_utilisation
     ?? e.motif_fin_de_vie ?? e.motif_renouvellement ?? e.motif_recouvrement
     ?? e.archi_motif ?? e.motif_fourniture_code_source
-    ?? e.non_conformity_motif ?? e.reason ?? e.non_conformity_reason ?? '—';
+    ?? e.non_conformity_motif ?? e.reason ?? e.non_conformity_reason;
+  if (explicit != null) return explicit;
+  // 2. Generic fallback: first motif_* field found (domain-agnostic)
+  const genericKey = Object.keys(e).find(k => k.startsWith('motif_'));
+  if (genericKey) return e[genericKey];
+  // 3. generic_motif (Helpers.pm fallback slot)
+  if (e.generic_motif != null) return e.generic_motif;
+  return '—';
 }
 
 // Transforms the elements[] of the real run-report-*.json into displayable rows.
