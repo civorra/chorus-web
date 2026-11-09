@@ -361,6 +361,14 @@ router.post('/sandboxes/:sbId/terminal', (req, res) => {
             ? '\nRègles critiques à respecter impérativement :\n' + rules.map(r => `  ${r}`).join('\n')
             : '';
           const skillPath = path.join(chorusHome, 'engine', 'agent', 'skills', `${detectedSkill}.md`);
+          const skillExists = fs.existsSync(skillPath);
+          if (!skillExists) {
+            // Pas de fichier skill sur disque — injecter les règles directement
+            // sans directive eca__read_file pour éviter un warning "fichier introuvable".
+            return rules.length
+              ? `\n\n[Protocole ${detectedSkill}]${rulesBlock}`
+              : '';
+          }
           return `\n\n[SKILL OBLIGATOIRE — à exécuter EN PREMIER, avant tout autre outil]\n` +
             `Charge le skill via : eca__read_file("${skillPath}")${rulesBlock}\n` +
             `⛔ NE commence JAMAIS à exécuter sans avoir d'abord chargé son skill — le skill contient les instructions à jour.`;
