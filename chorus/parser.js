@@ -54,7 +54,10 @@ function parseImportReportOrg(content) {
   return {
     date:       header.DATE || null,
     source:     header.SOURCE || null,
-    output:     header.OUTPUT || header.OUTPUT_JSON || null,
+    // header.JSON — alias produit par certaines versions du skill (ex: "#+JSON:")
+    // header.OUTPUT_JSON — alias legacy
+    // header.OUTPUT — nom canonique attendu par collectImportHistory
+    output:     header.OUTPUT || header.OUTPUT_JSON || header.JSON || null,
     mode:       header.MODE || null,
     extension:  header.EXTENSION || null,
     frames:     toInt(findSummary(/Éléments produits/i))
@@ -331,6 +334,7 @@ function parseSandboxReadme(sbPath) {
         let corpusRef = null;
         const detailRows = [];
         let detailHeaders = null;
+        const textLines = [];   // fallback: plain-text lines (old README format)
         let j = i + 1;
         for (; j < lines.length; j++) {
           const bl = lines[j];
@@ -342,11 +346,16 @@ function parseSandboxReadme(sbPath) {
             const cm = bt.match(/^Corpus\s*:\s*(.+)/i);
             if (cm) { corpusRef = cm[1].trim(); continue; }
           }
-          if (!bt.startsWith('|')) continue;
+          if (!bt.startsWith('|')) { textLines.push(bt); continue; }
           if (/^\|[-+]+\|?$/.test(bt)) continue;
           const cells = bt.split('|').slice(1, -1).map(c => c.trim());
           if (!detailHeaders) { detailHeaders = cells; continue; }
           detailRows.push(cells);
+        }
+        // Fallback: si aucun tableau org-mode trouvé, utiliser les lignes
+        // texte libre comme détail mono-colonne (ancien format README.org).
+        if (detailRows.length === 0 && textLines.length > 0) {
+          textLines.forEach(t => detailRows.push([t]));
         }
 
         coverageEntries.push({
