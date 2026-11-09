@@ -354,6 +354,8 @@ router.post('/sandboxes/:sbId/terminal', (req, res) => {
         '⛔ _audit OBLIGATOIREMENT à la RACINE du JSON — jamais imbriqué dans _import. Structure correcte : {"project":…,"_import":{…},"_audit":{…},"elements":[…]}. _import._audit est silencieusement ignoré par le scanner webapp → onglets vides.',
         '⛔ _import.import_report OBLIGATOIRE — pointer vers le fichier import-report-NNN.org produit (ex: "workspace/<C>/reports/import-report-001.org"). Si absent → onglet Imports vide dans la webapp.',
         '⛔ import-report-NNN.org DOIT contenir #+DATE: YYYY-MM-DD ET #+OUTPUT_JSON: workspace/<C>/project-import-<ID>.json — sans ces deux headers le scanner ne peut pas associer le rapport au projet → onglet Imports vide.',
+        '⛔ import-report-NNN.org — #+SOURCE: DOIT être un chemin de fichier valide (ex: workspace/<C>/sources/<fichier>-text.md), jamais une description libre ("fusion N fichiers", etc.). En mode Merge/Fusion : utiliser le PREMIER fichier source de la liste. Un #+SOURCE: non-chemin donne sourceBasename invalide → thésaurus filtré → onglet Thésaurus vide.',
+        '⛔ _import.source (ou _import.source_file) DOIT être renseigné même en mode Merge — mettre le premier fichier source de la liste. Si absent, le scanner ne peut pas calculer sourceBasename → thésaurus invisible.',
       ],
     };
 
