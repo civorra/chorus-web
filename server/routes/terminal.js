@@ -351,6 +351,9 @@ router.post('/sandboxes/:sbId/terminal', (req, res) => {
         '⛔ Ne jamais promouvoir un ⚠️ Pending vers ✅ Aliases automatiquement (sauf si déjà ✅ dans le thésaurus existant).',
         '⛔ KB gap ≠ _a_confirmer : si le type_element est reconnu mais absent de la KB (ex. Argon2id) → classer dans gaps (_import.gaps) UNIQUEMENT, jamais _a_confirmer. _a_confirmer = interprétations KB concurrentes. gap = KB ne couvre pas encore cet algorithme.',
         '⛔ Post-import audit obligatoire : après chorus-audit-import, écrire le bloc _audit dans le JSON produit (run, date, report, gaps_comblables, gaps_partiels, gaps_absents, gaps_mapping, frames_manquantes, patch_applied). Ne JAMAIS se contenter d\'écrire uniquement le rapport .md sans patcher le JSON.',
+        '⛔ _audit OBLIGATOIREMENT à la RACINE du JSON — jamais imbriqué dans _import. Structure correcte : {"project":…,"_import":{…},"_audit":{…},"elements":[…]}. _import._audit est silencieusement ignoré par le scanner webapp → onglets vides.',
+        '⛔ _import.import_report OBLIGATOIRE — pointer vers le fichier import-report-NNN.org produit (ex: "workspace/<C>/reports/import-report-001.org"). Si absent → onglet Imports vide dans la webapp.',
+        '⛔ import-report-NNN.org DOIT contenir #+DATE: YYYY-MM-DD ET #+OUTPUT_JSON: workspace/<C>/project-import-<ID>.json — sans ces deux headers le scanner ne peut pas associer le rapport au projet → onglet Imports vide.',
       ],
     };
 
