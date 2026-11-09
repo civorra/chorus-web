@@ -277,8 +277,9 @@ router.post('/sandboxes/:sbId/terminal', (req, res) => {
     // ⛔ eca__skill() est interdit pour les skills Chorus (non enregistrés dans
     // eca-config.json — toujours KO) — utiliser eca__read_file() uniquement.
     const CHORUS_SKILL_MAP = {
-      strengthen:       'chorus-strengthen',
-      fix:              'chorus-fix',
+      strengthen:            'chorus-strengthen',
+      fix:                   'chorus-fix',
+      'thesaurus-assistant': 'thesaurus-assistant', // court-circuite la détection regex
       // les autres kinds n'ont pas de skill dédié ou sont gérés par le message lui-même
     };
     // Pour tout message contenant un déclencheur Chorus connu, forcer eca__read_file
@@ -327,6 +328,15 @@ router.post('/sandboxes/:sbId/terminal', (req, res) => {
       ],
       'chorus-feed': [
         '✅ § 0-bis : appeler eca__task(op="plan",...) pour le taskboard au démarrage.',
+      ],
+      'thesaurus-assistant': [
+        '✅ INTERACTIVE MODE — eca__ask_user EST DISPONIBLE et OBLIGATOIRE pour chaque terme Pending.',
+        '✅ Pour chaque terme : analyser → formuler une recommandation avec justification → appeler eca__ask_user avec les options [✅ Confirmer] [❌ Rejeter] [⬜ Hors périmètre].',
+        '✅ Après chaque décision utilisateur : mettre à jour immédiatement thesaurus.org via eca__edit_file.',
+        '✅ Ne passer au terme suivant qu\'après confirmation de l\'écriture.',
+        '⛔ Ne jamais traiter les termes en batch silencieux — chaque terme requiert une décision utilisateur explicite.',
+        '⛔ Ne jamais appeler chorus-import-project avant que toutes les décisions soient prises.',
+        '⛔ Ne pas promouvoir à l\'entity (🏢) sauf demande explicite de l\'utilisateur.',
       ],
       'chorus-import-project': [
         '✅ Appeler eca__task(op="plan",...) en Phase 0 pour afficher la progression des phases dans le bandeau.',
