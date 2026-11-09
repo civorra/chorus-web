@@ -705,41 +705,80 @@ function unconfirmThesaurusAlias(sbId, shard, term, sourceImport, opts = {}) {
         if (!/validated via chorus-web/i.test(conf || '')) {
           throw new Error(`Alias résolu à l'import — annulation refusée (confidence="${conf}")`);
         }
+        // §2 — Refuser explicitement les alias promus à l'entity.
+        // La promotion écrit dans le .org Niveau Entity et n'est jamais
+        // stockée dans le JSON Niveau Projet, mais ce guard protège contre
+        // toute évolution future et rend le refus symétrique avec la branche
+        // Niveau Entity ci-dessous.
+        if (/entity-promoted/i.test(conf || '')) {
+          throw new Error(
+            `Alias promu à l'entity (entity-promoted) — annulation non autorisée depuis la webapp ` +
+            `(confidence="${conf}"). Cette promotion ne peut être révisée que via un ré-import.`
+          );
+        }
 
         const typeElement = teIdx >= 0 ? teArr[teIdx].type_element : null;
         const slot        = svIdx >= 0 ? svArr[svIdx].slot          : null;
         const value       = svIdx >= 0 ? svArr[svIdx].value         : null;
 
-        // Supprimer du JSON Niveau 2
+        // §1 — Vérifier l'existence du .org ET de la section Pending AVANT
+        // toute modification. Sans cette vérification préalable, le JSON projet
+        // pourrait être vidé de son alias sans qu'aucune réinsertion Pending
+        // ne soit possible (perte silencieuse). Symétrie avec le Niveau Entity
+        // qui lève une erreur dans les mêmes cas.
+        const orgPath    = _thesaurusReadPathForShard(sbPath, shard);
+        const orgContent = readFileSafe(orgPath);
+        if (!orgContent) {
+          throw new Error(
+            `Thésaurus entity introuvable (shard="${shard}") — ` +
+            `annulation impossible sans réinsertion Pending garantie.`
+          );
+        }
+        const orgLines = orgContent.split('\n');
+        const pBounds  = _findOrgSectionBounds(orgLines, /^\*\s+Pending/i);
+        if (!pBounds) {
+          throw new Error(
+            `Section "Pending" introuvable dans ${shard} — ` +
+            `annulation impossible sans réinsertion garantie.`
+          );
+        }
+
+        // §1 — Backup du JSON projet avant toute écriture (symétrie avec le
+        // backup .org du Niveau Entity — même convention agent/.backups/).
+        const backupDir = path.join(sbPath, 'agent', '.backups');
+        fs.mkdirSync(backupDir, { recursive: true });
+        const ts = new Date().toISOString().replace(/[-:]/g, '').replace('T', '-').slice(0, 15);
+        if (lv2Raw) {
+          fs.writeFileSync(
+            path.join(backupDir, `${opts.projectId}.thesaurus.json.bak-${ts}`),
+            lv2Raw, 'utf8'
+          );
+        }
+
+        // §1 — Écrire le .org EN PREMIER (réinsertion Pending), puis le JSON.
+        // Si l'écriture .org échoue (erreur FS), le JSON reste intact →
+        // état cohérent. L'ordre inverse était la source du bug original.
+        const proposed   = typeElement
+          ? `type_element: ${typeElement} ?`
+          : (slot ? `${slot}: ${value} ?` : '');
+        const pendingRow = _makeOrgRow([term, proposed, '⚠️ _a_confirmer', sourceImport, shard]);
+        const ins = _findTableInsertionPoint(orgLines, pBounds.start, pBounds.end);
+        if (ins) orgLines.splice(ins.lastRowIdx + 1, 0, pendingRow);
+        else     orgLines.splice(pBounds.end, 0, pendingRow);
+        fs.writeFileSync(_thesaurusWritePathForShard(sbPath, shard), orgLines.join('\n'), 'utf8');
+
+        // Supprimer du JSON Niveau Projet (après écriture .org réussie).
         if (teIdx >= 0) teArr.splice(teIdx, 1);
         if (svIdx >= 0) svArr.splice(svIdx, 1);
         if (!lv2Data._meta) lv2Data._meta = {};
         lv2Data._meta.updated = new Date().toISOString().slice(0, 10);
         fs.writeFileSync(lv2Path, JSON.stringify(lv2Data, null, 2), 'utf8');
 
-        // Re-ajouter en Pending dans le thésaurus entity (thesaurus.org Niveau 3)
-        const orgPath    = _thesaurusReadPathForShard(sbPath, shard);
-        const orgContent = readFileSafe(orgPath);
-        if (orgContent) {
-          const orgLines   = orgContent.split('\n');
-          const proposed   = typeElement
-            ? `type_element: ${typeElement} ?`
-            : (slot ? `${slot}: ${value} ?` : '');
-          const pendingRow = _makeOrgRow([term, proposed, '⚠️ _a_confirmer', sourceImport, shard]);
-          const pBounds    = _findOrgSectionBounds(orgLines, /^\*\s+Pending/i);
-          if (pBounds) {
-            const ins = _findTableInsertionPoint(orgLines, pBounds.start, pBounds.end);
-            if (ins) orgLines.splice(ins.lastRowIdx + 1, 0, pendingRow);
-            else     orgLines.splice(pBounds.end, 0, pendingRow);
-            fs.writeFileSync(_thesaurusWritePathForShard(sbPath, shard), orgLines.join('\n'), 'utf8');
-          }
-        }
-
         // Journal (best-effort)
         try {
           _appendThesaurusLog(sbPath, opts.entityId, opts.projectId, opts.projectName, {
             date: new Date().toISOString().slice(0, 10),
-            term, action: '↩️ Annulé Niv.2 (retour en Pending)',
+            term, action: '↩️ Annulé Projet (retour en Pending)',
             typeElement, slot, value, shard, sourceImport,
           });
         } catch { /* non-bloquant */ }
@@ -794,6 +833,16 @@ function unconfirmThesaurusAlias(sbId, shard, term, sourceImport, opts = {}) {
       `Cet alias a été résolu à l'import (chorus-import-project), pas via chorus-web — ` +
       `annulation refusée (confidence="${confidenceCol}"). Seules les confirmations ` +
       `manuelles peuvent être annulées depuis la webapp.`
+    );
+  }
+  // §2 — Refuser explicitement les promotions entity-promoted.
+  // La confidence "entity-promoted (validated via chorus-web DATE)" satisfait
+  // le regex précédent — sans ce guard supplémentaire, l'API accepterait de
+  // défaire une promotion via un appel direct, contournant le masquage UI.
+  if (/entity-promoted/i.test(confidenceCol || '')) {
+    throw new Error(
+      `Alias promu à l'entity (entity-promoted) — annulation non autorisée depuis la webapp ` +
+      `(confidence="${confidenceCol}"). Cette promotion ne peut être révisée que via un ré-import.`
     );
   }
 
