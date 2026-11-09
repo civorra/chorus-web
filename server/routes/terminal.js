@@ -335,6 +335,8 @@ router.post('/sandboxes/:sbId/terminal', (req, res) => {
         '✅ Après chaque décision utilisateur : mettre à jour immédiatement thesaurus.org via eca__edit_file.',
         '✅ Ne passer au terme suivant qu\'après confirmation de l\'écriture.',
         '⛔ Ne jamais traiter les termes en batch silencieux — chaque terme requiert une décision utilisateur explicite.',
+        '⛔ Après écriture dans * Aliases : OBLIGATOIRE supprimer la ligne correspondante dans * Pending dans le MÊME appel eca__edit_file (ou dans un 2e appel immédiat). Ne jamais laisser la même entrée dans les deux sections — incohérence silencieuse dans la webapp.',
+        '⛔ confidence dans * Aliases DOIT être "✅ confirmed (validated via chorus-web YYYY-MM-DD)" — jamais "confirmed (conservative)" ni autre variante libre. Format exact requis pour affichage ✍️ Manuel dans la webapp.',
         '⛔ Ne jamais appeler chorus-import-project avant que toutes les décisions soient prises.',
         '⛔ Ne pas promouvoir à l\'entity (🏢) sauf demande explicite de l\'utilisateur.',
       ],
