@@ -9,6 +9,7 @@
  */
 'use strict';
 
+const fs   = require('fs');
 const path = require('path');
 const { Router } = require('express');
 const chorus = require('../../chorus');
@@ -223,6 +224,31 @@ router.post('/sandboxes/:sbId/terminal', (req, res) => {
 
         contextBlock += extra;
       }
+      // ── Enrichissement thesaurus-assistant ─────────────────────────────
+      // Injecte le contenu actuel du thésaurus entity + les entrées _a_confirmer
+      // du JSON projet, afin que le LLM ait le contexte complet sans avoir à lire
+      // les fichiers lui-même avant le premier eca__ask_user.
+      if (kind === 'thesaurus-assistant' && entityId && projId) {
+        try {
+          const sbPath   = path.join(chorus.SANDBOXES_DIR(), sbId);
+          const thesFile = path.join(sbPath, 'workspace', entityId, 'thesaurus.org');
+          const thesContent = fs.readFileSync(thesFile, 'utf8');
+          // Limiter à 3 000 chars pour ne pas saturer le contexte
+          contextBlock += `\n\nContenu actuel du thésaurus (${thesFile}) :\n${thesContent.slice(0, 3000)}`;
+        } catch { /* thésaurus absent — le LLM le détectera */ }
+
+        try {
+          const sbPath  = path.join(chorus.SANDBOXES_DIR(), sbId);
+          const projFile = path.join(sbPath, 'workspace', entityId, `${projId}.json`);
+          const projData = JSON.parse(fs.readFileSync(projFile, 'utf8'));
+          const aConf = projData._import?.a_confirmer || [];
+          if (aConf.length) {
+            contextBlock += `\n\nÉléments _a_confirmer dans ${projId}.json (${aConf.length}) :\n` +
+              aConf.map(a => `  • ${a.slice(0, 150)}`).join('\n');
+          }
+        } catch { /* JSON absent ou invalide */ }
+      }
+
     } catch (e) { contextBlock = `(contexte indisponible : ${e.message})`; }
 
     // ── chatId isolé par sessionId ─────────────────────────────────────

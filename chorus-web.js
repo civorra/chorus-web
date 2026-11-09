@@ -831,15 +831,18 @@ async function renderPvThesaurusTab() {
     const target = proj.sourceBasename; // ex: "project-simul-01" — null si _import absent/illisible
     const hasFilter = !!target;
 
-    // WEB-027 — isolation par entity : ne consulter que le shard de l'entity
-    // courante (workspace/<entity>/thesaurus.org). Pas de croisement cross-entity.
-    // Fallback : si aucun shard ne correspond (sandbox pré-WEB-027 non encore
-    // migré), utiliser tous les shards disponibles (compat descendante silencieuse).
+    // WEB-027 — isolation par entity : ne consulter que les shards de l'entity
+    // courante (workspace/<entity>/thesaurus.org + JSON Niveau Projet).
+    // §4 — Plus de repli cross-entity : si entityId est connu et qu'aucun shard
+    // ne correspond (sandbox sans thésaurus pour cette entity), on utilise un
+    // tableau vide → thésaurus vide affiché explicitement. L'ancien repli sur
+    // la totalité des shards exposait et rendait actionnables les alias d'autres
+    // entities depuis le projet courant.
     const entityId = proj.entity || null;
     const entityShards = entityId
       ? thesaurus.filter(s => (s.entity || s.shard) === entityId)
       : thesaurus;
-    const shardsToUse = entityShards.length > 0 ? entityShards : thesaurus;
+    const shardsToUse = entityId ? entityShards : thesaurus;
 
     const allTypeElement = shardsToUse.flatMap(s => s.aliasesTypeElement.map(a => ({ ...a, shard: s.shard })));
     const allSlotValues  = shardsToUse.flatMap(s => s.aliasesSlotValues.map(a => ({ ...a, shard: s.shard })));
@@ -878,7 +881,7 @@ async function renderPvThesaurusTab() {
       hasFilter,
       hasAnyThesaurus: thesaurus.length > 0,
       entityId,
-      entityIsolated: entityShards.length > 0, // false = compat descendante (tous shards)
+      entityIsolated: true, // §4 : toujours isolé quand entityId est défini
       resolvedTypeElement: hasFilter ? allTypeElement.filter(matches) : allTypeElement,
       resolvedSlotValues:  hasFilter ? allSlotValues.filter(matches)  : allSlotValues,
       pending:             hasFilter ? allPending.filter(matches)     : allPending,
@@ -893,11 +896,18 @@ async function renderPvThesaurusTab() {
     return;
   }
 
-  // Dédoublonnage Pending/Resolved : masquer les Pending pour lesquels le terme
-  // est déjà résolu en Niveau 2 (thesaurus.json project-scoped). Sans ce filtre,
-  // un terme certaine en N2 + encore en Pending N3 apparaîtrait dans les 2 sections.
-  const resolvedTerms = new Set(resolvedTypeElement.map(a => a.term));
-  const filteredPending = pending.filter(p => !resolvedTerms.has(p.term));
+  // Dédoublonnage Pending/Resolved : masquer les Pending dont l'exacte paire
+  // (terme + source) est déjà confirmée en Niveau Projet (thesaurus.json
+  // project-scoped). Sans ce filtre, un terme confirmé en Projet + encore
+  // en Pending Entity apparaîtrait dans les 2 sections.
+  // §3 — Filtre sur (term, sourceImport) et non sur term seul : un même terme
+  // provenant de deux imports distincts ne doit pas être masqué globalement —
+  // seule la paire exacte confirmée est exclue.
+  const resolvedKeys = new Set([
+    ...resolvedTypeElement.map(a => `${a.term}\u0000${a.sourceImport || ''}`),
+    ...resolvedSlotValues.map(a => `${a.term}\u0000${a.sourceImport || ''}`),
+  ]);
+  const filteredPending = pending.filter(p => !resolvedKeys.has(`${p.term}\u0000${p.sourceImport || ''}`));
 
   const nResolved = resolvedTypeElement.length + resolvedSlotValues.length;
   const nPending  = filteredPending.length;
@@ -981,7 +991,10 @@ async function renderPvThesaurusTab() {
   _pvPendingRows = filteredPending;
 
   html += `<div style="margin-bottom:16px">
-    <div style="font-size:11px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px">⚠️ En attente de confirmation (${nPending})</div>`;
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
+      <span style="font-size:11px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:.06em">⚠️ En attente de confirmation (${nPending})</span>
+      ${nPending ? `<button class="btn btn-ghost" style="font-size:11px;padding:2px 10px;color:var(--accent);border-color:var(--accent);border-radius:4px" onclick="startThesaurusAssistant()" title="Lancer un assistant ECA interactif pour résoudre les mappings en attente (eca__ask_user)">🤖 Assistant</button>` : ''}
+    </div>`;
   if (nPending) {
     html += `<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:12px">
       <thead><tr style="border-bottom:1px solid var(--border)">
@@ -1243,6 +1256,77 @@ function pvTerminal() {
     sbId: currentSandbox.id, entityId: currentProject.entity,
     projId: currentProject.id, projName: currentProject.name,
   });
+}
+
+// ── Thesaurus assistant — terminal ECA pré-contextualisé pour résoudre ──────
+// les entrées Pending du thésaurus entity de manière semi-automatique.
+// Le LLM utilise eca__ask_user pour proposer chaque décision (Confirmer /
+// Rejeter / Hors périmètre), met à jour thesaurus.org via eca__edit_file,
+// puis indique les étapes suivantes (re-import, audit-import, etc.).
+function startThesaurusAssistant() {
+  const proj = currentProject, sb = currentSandbox;
+  if (!proj || !sb) return;
+
+  // Récupérer les Pending depuis le cache thésaurus
+  const cacheKey = `${sb.id}/${proj.entity}/${proj.id}`;
+  const cached = _pvThesaurusCache[cacheKey];
+  const pending = cached?.pending || [];
+
+  if (!pending.length) {
+    alert('Aucun terme en attente de confirmation pour ce projet.');
+    return;
+  }
+
+  const thesPath    = `workspace/${proj.entity}/thesaurus.org`;
+  const projRelPath = `workspace/${proj.entity}/${proj.id}.json`;
+
+  // Sérialiser les entrées Pending pour le prompt ECA
+  const pendingList = pending.map((p, i) =>
+    `${i + 1}. Terme     : "${p.term}"\n` +
+    `   Mapping   : ${p.proposed || '—'}\n` +
+    `   Flag      : ${p.flag     || '—'}\n` +
+    `   Source    : ${p.sourceImport || '—'}`
+  ).join('\n\n');
+
+  const autoCmd = [
+    `# Assistant thésaurus — ${pending.length} terme(s) en attente — ${proj.entity}`,
+    `# Thésaurus  : ${thesPath}`,
+    `# Projet JSON: ${projRelPath}`,
+    ``,
+    `Tu es l'assistant de résolution du thésaurus pour le projet "${proj.name}"`,
+    `(entity : ${proj.entity}, sandbox : ${sb.id}).`,
+    ``,
+    `${pending.length} terme(s) en attente de confirmation :`,
+    ``,
+    pendingList,
+    ``,
+    `Protocole :`,
+    `1. Lis d'abord le thésaurus via eca__read_file("${thesPath}") pour connaître son état exact.`,
+    `2. Pour chaque terme, analyse le contexte KB si nécessaire (agent org), puis utilise`,
+    `   eca__ask_user pour présenter ta recommandation avec justification et proposer :`,
+    `   - ✅ Confirmer → déplacer vers * Aliases (slot values ou type_element selon le type)`,
+    `   - ❌ Rejeter   → supprimer la ligne Pending (sans l'ajouter ailleurs)`,
+    `   - ⬜ Hors périmètre → déplacer vers * Out-of-scope avec une explication courte`,
+    `3. Après chaque décision, mets à jour immédiatement thesaurus.org via eca__edit_file.`,
+    `   Respecte scrupuleusement le format des tables org-mode existantes.`,
+    `4. Une fois tous les termes traités, indique les étapes suivantes :`,
+    `   - Si des aliases ont été confirmés → proposer un re-import`,
+    `     (chorus-import-project ${sb.id} <source> --context ${proj.entity} --out ${projRelPath} --keep-patches)`,
+    `   - Puis chorus-audit-import ${sb.id} ${projRelPath}`,
+    `   - Si tout est rejeté/hors-périmètre → aucune action nécessaire.`,
+    ``,
+    `⛔ Ne jamais modifier le fichier JSON du projet directement.`,
+    `⛔ Ne promouvoir à l'entity (🏢) que si l'utilisateur le demande explicitement.`,
+    `⛔ Ne pas appeler chorus-import-project avant que toutes les décisions soient prises.`,
+  ].join('\n');
+
+  openLevelTerminal('project', {
+    sbId:     sb.id,
+    entityId: proj.entity,
+    projId:   proj.id,
+    projName: proj.name,
+    kind:     'thesaurus-assistant',
+  }, autoCmd);
 }
 
 // ── Breadcrumb navigation ────────────────────────────────────
