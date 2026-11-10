@@ -489,14 +489,39 @@ function pvReportButtons(r, proj, sbId) {
 
 // Generates the HTML for a full report row with the same buttons as the history modal.
 function pvReportRow(r, proj, sbId) {
+  // Date with minute precision when available (dateTime = ISO8601 or "YYYY-MM-DDTHH:MM:SS")
+  const displayDate = r.dateTime
+    ? r.dateTime.slice(0, 16).replace('T', ' ')
+    : (r.date || '');
+
+  // For run reports: show verdict + score (%), drop the "· N/N CONFORMES" line
+  let descHtml = r.desc || '';
+  if (r.kind === 'run') {
+    const scoreMatch = (r.desc || '').match(/(\d+)\/(\d+)\s+CONFORMES/i);
+    const verdictWord = (r.desc || '').startsWith('SOLVED') ? 'SOLVED'
+      : (r.desc || '').startsWith('FAILED') ? 'FAILED' : (r.desc || '').split('·')[0].trim();
+    const verdictColor = verdictWord === 'SOLVED' ? 'var(--success)'
+      : verdictWord === 'FAILED' ? 'var(--error)' : 'inherit';
+    let scoreHtml = '';
+    if (scoreMatch) {
+      const n = parseInt(scoreMatch[1]);
+      const total = parseInt(scoreMatch[2]);
+      const pct = Math.round(n / Math.max(total, 1) * 100);
+      const pctColor = pct >= 80 ? 'var(--success)' : pct >= 50 ? 'var(--warn)' : 'var(--error)';
+      scoreHtml = `&nbsp;<strong style="color:${pctColor}">${pct}%</strong>`
+        + `&nbsp;<span style="color:var(--text-muted);font-size:10px">(${n}/${total})</span>`;
+    }
+    descHtml = `<span style="color:${verdictColor};font-weight:600">${verdictWord}</span>${scoreHtml}`;
+  }
+
   return `
     <div class="pv-report-row">
       <span class="pv-report-icon">${r.icon || '📋'}</span>
       <div class="pv-report-info">
         <div class="pv-report-name">${r.label}</div>
-        <div class="pv-report-desc">${r.desc || ''}</div>
+        <div class="pv-report-desc">${descHtml}</div>
       </div>
-      <span class="pv-report-date">${r.date || ''}</span>
+      <span class="pv-report-date">${displayDate}</span>
       <div style="display:flex;gap:2px;flex-shrink:0">${pvReportButtons(r, proj, sbId)}</div>
     </div>`;
 }
@@ -764,6 +789,8 @@ function renderProjectPage(proj, entLabel) {
 // opens the full sandbox thesaurus (unfiltered) for cases where per-project
 // filtering is not sufficient.
 let _pvThesaurusCache = {}; // "sbId/entity/projId" → { matched, hasFilter }
+let _pendingThesaurusRestart  = null; // WEB-025d: { ctx, remaining } → auto-restart
+let _pendingThesaurusComplete = null; // WEB-025d: { ctx } → lance le re-import après done
 
 function _basenameNoExt(p) {
   if (!p) return null;
@@ -1263,9 +1290,54 @@ function pvTerminal() {
 // Le LLM utilise eca__ask_user pour proposer chaque décision (Confirmer /
 // Rejeter / Hors périmètre), met à jour thesaurus.org via eca__edit_file,
 // puis indique les étapes suivantes (re-import, audit-import, etc.).
-function startThesaurusAssistant() {
+// WEB-025d — Rafraîchit le cache thésaurus depuis le serveur pour un projet donné.
+// Appelé avant startThesaurusAssistant(true) lors d'un auto-restart multi-termes.
+async function _refreshThesaurusCache(sb, proj) {
+  const cacheKey = `${sb.id}/${proj.entity}/${proj.id}`;
+  delete _pvThesaurusCache[cacheKey]; // invalider
+  let thesaurus = [];
+  try {
+    const r = await fetch(`${API}/api/sandboxes/${sb.id}/corpus`);
+    if (r.ok) thesaurus = (await r.json()).corpus?.thesaurus || [];
+  } catch {}
+  const entityId = proj.entity || null;
+  const entityShards = entityId
+    ? thesaurus.filter(s => (s.entity || s.shard) === entityId)
+    : thesaurus;
+  const globalShard = entityId
+    ? thesaurus.find(s => (s.entity || s.shard) === 'global')
+    : null;
+  const globalPending = (globalShard && entityId)
+    ? globalShard.pending
+        .filter(p => !p.scope || p.scope === 'global' || p.scope === entityId)
+        .map(p => ({ ...p, shard: globalShard.shard }))
+    : [];
+  const allPending = [
+    ...entityShards.flatMap(s => s.pending.map(a => ({ ...a, shard: s.shard }))),
+    ...globalPending.filter(gp =>
+      !entityShards.some(s => s.pending.some(p => p.term === gp.term && p.sourceImport === gp.sourceImport))
+    ),
+  ];
+  const target = proj.sourceBasename;
+  const hasFilter = !!target;
+  const matches = (row) => hasFilter &&
+    (row.sourceBasename ? row.sourceBasename === target : _basenameNoExt(row.sourceImport) === target);
+  _pvThesaurusCache[cacheKey] = {
+    hasFilter,
+    hasAnyThesaurus: thesaurus.length > 0,
+    entityId, entityIsolated: true,
+    resolvedTypeElement: [],
+    resolvedSlotValues: [],
+    pending: hasFilter ? allPending.filter(matches) : allPending,
+  };
+}
+
+async function startThesaurusAssistant(forceRefresh = false) {
   const proj = currentProject, sb = currentSandbox;
   if (!proj || !sb) return;
+
+  // WEB-025d: invalider le cache avant le restart pour relire les termes restants
+  if (forceRefresh) await _refreshThesaurusCache(sb, proj);
 
   // Récupérer les Pending depuis le cache thésaurus
   const cacheKey = `${sb.id}/${proj.entity}/${proj.id}`;
@@ -1273,7 +1345,8 @@ function startThesaurusAssistant() {
   const pending = cached?.pending || [];
 
   if (!pending.length) {
-    alert('Aucun terme en attente de confirmation pour ce projet.');
+    // Tous les termes traités — aucune action requise
+    lvlTermAppend('✅ Tous les termes du thésaurus ont été traités.', 'ok');
     return;
   }
 
@@ -1327,6 +1400,35 @@ function startThesaurusAssistant() {
     projName: proj.name,
     kind:     'thesaurus-assistant',
   }, autoCmd);
+}
+
+// ── Post-confirmation thésaurus : re-import automatique ──────────────────
+// Lancé automatiquement après que tous les termes Pending ont été confirmés
+// via le terminal assistant thésaurus (WEB-025d). Lance chorus-import-project
+// avec --keep-patches pour appliquer les décisions thésaurus au projet JSON.
+function startThesaurusPostImport(sbId, entityId, projId) {
+  const proj = currentProject;
+  // sourceFile est exposé directement par le scanner (scanner.js §sourceFile)
+  // — pas dans _import. Fallbacks dans l'ordre : sourceFile (chemin complet),
+  // sourcePath (répertoire sources), puis les champs _import legacy.
+  const sourceFile = proj?.sourceFile
+    || proj?.sourcePath
+    || proj?._import?.source
+    || proj?._import?.source_file;
+  // chorus-audit-import --patch ne nécessite pas la source — on continue même sans.
+  const projOut = `workspace/${entityId}/${projId}.json`;
+  // chorus-import-project est le seul outil qui consulte le thésaurus pour
+  // résoudre les gaps "mapping à confirmer" — chorus-audit-import --patch ne
+  // lit pas le thésaurus et ne peut pas résoudre ces ambiguïtés d'interprétation.
+  const cmd = [
+    `# ✅ Thésaurus validé — re-import pour appliquer les décisions thésaurus`,
+    `chorus-import-project ${sbId} ${sourceFile || `workspace/${entityId}/sources/<source>`} --context ${entityId} --out ${projOut} --keep-patches`,
+  ].join('\n');
+  openLevelTerminal('project', {
+    sbId, entityId, projId,
+    projName: proj?.name || projId,
+    kind: null,
+  }, cmd);
 }
 
 // ── Breadcrumb navigation ────────────────────────────────────
@@ -5958,6 +6060,35 @@ async function levelTerminalExec(cmd) {
             replyLine = null; // nouvelle réponse après la question
             lvlTermAskUser(ctx, data.question || '', data.toolId, data.isApproval, data.options, data.autoSelectAfterSeconds || null);
 
+          } else if (evt === 'thesaurus-restart') {
+            // WEB-025d — Thésaurus multi-termes : terme traité, N restants.
+            // ECA bloque systématiquement après le 1er edit_file dans le
+            // contexte d'une réponse ask_user (bug ECA côté continuation LLM).
+            // Solution : fermer la session courante et relancer l'assistant
+            // automatiquement pour les termes suivants.
+            ensureThinkingRemoved();
+            const nLeft = data.remaining || 0;
+            lvlTermAppend(
+              `♻️ Terme traité — ${nLeft} terme(s) restant(s), relance automatique…`,
+              'info'
+            );
+            _pendingThesaurusRestart = { ctx, remaining: nLeft };
+
+          } else if (evt === 'thesaurus-status') {
+            // WEB-025d — Tous les termes traités (Pending vide).
+            // Lancer le re-import uniquement si au moins un alias a été confirmé
+            // manuellement (hasConfirmedAliases). Si tout a été rejeté/hors-périmètre,
+            // aucun re-import n'est nécessaire (thésaurus inchangé côté Aliases).
+            if (data.complete && ctx.projId && ctx.entityId && ctx.sbId) {
+              ensureThinkingRemoved();
+              if (data.hasConfirmedAliases) {
+                lvlTermAppend('✅ Thésaurus validé — lancement du re-import…', 'ok');
+                _pendingThesaurusComplete = { ctx };
+              } else {
+                lvlTermAppend('✅ Termes traités (aucun alias confirmé — re-import non nécessaire).', 'ok');
+              }
+            }
+
           } else if (evt === 'refresh') {
             // Live refresh de l'onglet Tests (WEB-021) — déclenché par
             // server/routes/terminal.js quand ECA écrit un fichier clé
@@ -6029,6 +6160,17 @@ async function levelTerminalExec(cmd) {
             // depuis ce terminal.
             if (ctx.level === 'sandbox' || ctx.level === 'project' || ctx.level === 'report') {
               refreshSandboxReports(ctx.sbId);
+            }
+            // WEB-025d — Thésaurus multi-termes : auto-restart pour les termes restants.
+            if (_pendingThesaurusRestart) {
+              _pendingThesaurusRestart = null;
+              setTimeout(() => startThesaurusAssistant(true), 600);
+            }
+            // WEB-025d — Thésaurus complet : lancer le re-import automatiquement.
+            if (_pendingThesaurusComplete) {
+              const { ctx: _c } = _pendingThesaurusComplete;
+              _pendingThesaurusComplete = null;
+              setTimeout(() => startThesaurusPostImport(_c.sbId, _c.entityId, _c.projId), 800);
             }
             break outer;
           }

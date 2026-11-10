@@ -762,9 +762,22 @@ function unconfirmThesaurusAlias(sbId, shard, term, sourceImport, opts = {}) {
           ? `type_element: ${typeElement} ?`
           : (slot ? `${slot}: ${value} ?` : '');
         const pendingRow = _makeOrgRow([term, proposed, '⚠️ _a_confirmer', sourceImport, shard]);
-        const ins = _findTableInsertionPoint(orgLines, pBounds.start, pBounds.end);
-        if (ins) orgLines.splice(ins.lastRowIdx + 1, 0, pendingRow);
-        else     orgLines.splice(pBounds.end, 0, pendingRow);
+        // Guard WEB-032 — déduplication Pending (Niveau 2).
+        // Si une entrée Pending pour le même terme+slot existe déjà (l'entrée
+        // originale de l'import n'a pas été retirée par ECA lors de la
+        // validation dans Aliases), on ne réinsère pas pour éviter le doublon.
+        const _slotPfx2 = proposed ? proposed.split(':')[0].trim() : '';
+        const _dupExists2 = orgLines.slice(pBounds.start, pBounds.end).some(l => {
+          const t = l.trim();
+          if (!t.startsWith('|') || /^\|[-+]+\|?$/.test(t)) return false;
+          const c = t.split('|').slice(1, -1).map(s => s.trim());
+          return c[0] === term && c[1] && c[1].split(':')[0].trim() === _slotPfx2;
+        });
+        if (!_dupExists2) {
+          const ins = _findTableInsertionPoint(orgLines, pBounds.start, pBounds.end);
+          if (ins) orgLines.splice(ins.lastRowIdx + 1, 0, pendingRow);
+          else     orgLines.splice(pBounds.end, 0, pendingRow);
+        }
         fs.writeFileSync(_thesaurusWritePathForShard(sbPath, shard), orgLines.join('\n'), 'utf8');
 
         // Supprimer du JSON Niveau Projet (après écriture .org réussie).
@@ -866,11 +879,24 @@ function unconfirmThesaurusAlias(sbId, shard, term, sourceImport, opts = {}) {
 
   const pendingBounds = _findOrgSectionBounds(lines, /^\*\s+Pending/i);
   if (!pendingBounds) throw new Error(`Section "Pending" introuvable dans ${shard}`);
+  // Guard WEB-032 — déduplication Pending (Niveau 3).
+  // Si une entrée Pending pour le même terme+slot existe déjà (l'entrée
+  // originale de l'import n'a pas été retirée par ECA lors de la validation
+  // dans Aliases), on ne réinsère pas pour éviter le doublon.
+  const _slotPfx3 = proposed ? proposed.split(':')[0].trim() : '';
+  const _dupExists3 = lines.slice(pendingBounds.start, pendingBounds.end).some(l => {
+    const t = l.trim();
+    if (!t.startsWith('|') || /^\|[-+]+\|?$/.test(t)) return false;
+    const c = t.split('|').slice(1, -1).map(s => s.trim());
+    return c[0] === term && c[1] && c[1].split(':')[0].trim() === _slotPfx3;
+  });
   const pendingInsertion = _findTableInsertionPoint(lines, pendingBounds.start, pendingBounds.end);
-  if (pendingInsertion) {
-    lines.splice(pendingInsertion.lastRowIdx + 1, 0, pendingRow);
-  } else {
-    lines.splice(pendingBounds.end, 0, pendingRow);
+  if (!_dupExists3) {
+    if (pendingInsertion) {
+      lines.splice(pendingInsertion.lastRowIdx + 1, 0, pendingRow);
+    } else {
+      lines.splice(pendingBounds.end, 0, pendingRow);
+    }
   }
   fs.writeFileSync(shardPath, lines.join('\n'), 'utf8');
 

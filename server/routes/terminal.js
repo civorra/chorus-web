@@ -382,10 +382,27 @@ router.post('/sandboxes/:sbId/terminal', (req, res) => {
         })()
       : '';
 
-    const DONE_INSTRUCTION =
-      '\n\n[TERMINAL PROTOCOL — OBLIGATOIRE] ' +
-      'Quand ta réponse est entièrement terminée — skill accompli, fichiers écrits, question répondue — ' +
-      'tu dois écrire en toute dernière ligne, seule sur sa ligne, le mot exactement : DONE';
+    // WEB-025b — Fix A : DONE_INSTRUCTION adaptée au kind interactif.
+    // Pour thesaurus-assistant (multi-tours eca__ask_user), interdire
+    // explicitement d'écrire DONE entre deux ask_user individuels.
+    // C'est la cause racine identifiée (2026-11) : ECA interprétait
+    // "question répondue" comme une condition de fin globale et écrivait
+    // DONE après chaque terme, ce qui fermait la session prématurément.
+    const DONE_INSTRUCTION = kind === 'thesaurus-assistant'
+      ? '\n\n[TERMINAL PROTOCOL — SESSION INTERACTIVE THÉSAURUS — STRICT]\n' +
+        'Après chaque décision utilisateur via eca__ask_user :\n' +
+        '  1. Appelle eca__edit_file — UN SEUL appel qui fait LES DEUX simultanément :\n' +
+        '     • ajoute le terme dans * Aliases — slot values\n' +
+        '     • supprime le terme de * Pending (même appel, même original_content/new_content)\n' +
+        '  2. IMMÉDIATEMENT après le résultat de eca__edit_file, dans le MÊME tour de génération :\n' +
+        '     • si tu avais d\'autres termes Pending à traiter → appelle eca__ask_user pour le suivant\n' +
+        '     • si c\'était le dernier terme → écris uniquement "DONE" sur la dernière ligne et arrête-toi\n' +
+        '⛔ NE PAS appeler eca__read_file après eca__edit_file — tu sais combien de termes restent.\n' +
+        '⛔ NE PAS générer de texte entre les étapes.\n' +
+        '⛔ NE PAS faire deux appels eca__edit_file séparés (un pour Aliases, un pour Pending).'
+      : '\n\n[TERMINAL PROTOCOL — OBLIGATOIRE] ' +
+        'Quand ta réponse est entièrement terminée — skill accompli, fichiers écrits, question répondue — ' +
+        'tu dois écrire en toute dernière ligne, seule sur sa ligne, le mot exactement : DONE';
 
     const fullMessage =
       `${agentsPrefix}[Contexte ECA — niveau ${level}]\n${contextBlock}\n\nQuestion : ${message}` +
@@ -403,7 +420,25 @@ router.post('/sandboxes/:sbId/terminal', (req, res) => {
     let waitingForUserInput = false;
     let pendingTimeoutRestart = null; // stores remaining ms to restart timeout after respond
     let gracePeriodHandle    = null;  // grace period 3s après réponse utilisateur
+    // WEB-025b — Fix B : deferred close post-ask_user response.
+    // Après que l'utilisateur a répondu à un ask_user, ECA reprend et peut
+    // terminer son tour (écrire DONE, aller idle) AVANT d'appeler le prochain
+    // ask_user (s'il en reste). clearAskGuard() lève waitingForUserInput dès
+    // le premier chunk — sans protection, l'idle de fin de tour ferme la session.
+    //
+    // Design corrigé (v2) : le timer de 8s démarre depuis onDone (quand ECA
+    // passe réellement à idle), PAS depuis clearAskWait (quand l'utilisateur
+    // répond). Si ECA met 30s à écrire dans le thésaurus avant d'appeler le
+    // prochain ask_user, le timer ne démarre qu'une fois cet idle reçu.
+    //
+    // postRespondPending = true  : l'utilisateur a répondu à un ask_user ;
+    //                              le prochain idle dans onDone arme le timer.
+    // deferredDoneHandle         : setTimeout(8s) armé depuis onDone ;
+    //                              annulé par onAsk si un autre ask_user arrive.
+    let postRespondPending   = false; // WEB-025b: en attente d'un idle post-réponse
+    let deferredDoneHandle   = null;  // WEB-025b: close différé 8s depuis idle
     // Helper : ECA a repris (chunk ou toolLog) → lever le guard immédiatement
+    const _dbg = (...a) => console.log(`[WEB-025][${sessionId}]`, ...a);
     const clearAskGuard = () => {
       if (gracePeriodHandle) { clearTimeout(gracePeriodHandle); gracePeriodHandle = null; }
       waitingForUserInput = false;
@@ -420,6 +455,7 @@ router.post('/sandboxes/:sbId/terminal', (req, res) => {
       clearInterval(heartbeat);
       if (pendingTimeoutRestart) { clearTimeout(pendingTimeoutRestart); pendingTimeoutRestart = null; }
       if (gracePeriodHandle)    { clearTimeout(gracePeriodHandle);    gracePeriodHandle    = null; }
+      if (deferredDoneHandle)   { clearTimeout(deferredDoneHandle);   deferredDoneHandle   = null; }
       if (subReq) { try { subReq.destroy(); } catch {} }
       if (errMsg) sseError(res, errMsg);
       else sseDone(res, {});
@@ -448,6 +484,8 @@ router.post('/sandboxes/:sbId/terminal', (req, res) => {
       },
       onAsk:     (payload)  => {
         if (!finished) {
+          postRespondPending = false;
+          if (deferredDoneHandle) { clearTimeout(deferredDoneHandle); deferredDoneHandle = null; }
           waitingForUserInput = true;
           sseSend(res, 'ask', payload);
         }
@@ -456,6 +494,84 @@ router.post('/sandboxes/:sbId/terminal', (req, res) => {
         clearAskGuard(); // ECA a repris — lever le guard immédiatement
         if (finished) return;
         sseSend(res, 'tool', toolInfo);
+
+        // WEB-025d — Thesaurus-assistant proactive close.
+        // ECA a un bug systématique : après toolCalled(edit_file) dans le
+        // contexte d'une réponse ask_user, le second appel LLM (continuation)
+        // ne démarre jamais → session bloquée indéfiniment. Workaround :
+        // si l'edit_file sur thesaurus.org a réussi ET que * Pending est
+        // désormais vide, fermer la session proactivement côté webapp
+        // sans attendre le chat:status-changed:idle d'ECA.
+        if (kind === 'thesaurus-assistant'
+            && toolInfo.name === 'edit_file'
+            && toolInfo.path && toolInfo.path.includes('thesaurus.org')
+            && postRespondPending) {
+          try {
+            const thesContent = fs.readFileSync(toolInfo.path, 'utf8');
+            const lines = thesContent.split('\n');
+            // Trouver la section * Pending
+            let inPending = false, hasDataRows = false;
+            for (const line of lines) {
+              if (/^\*\s+Pending/i.test(line.trim()))  { inPending = true; continue; }
+              if (/^\*\s+/.test(line.trim()) && inPending) break; // section suivante
+              if (!inPending) continue;
+              const t = line.trim();
+              if (!t.startsWith('|')) continue;
+              if (/^\|[-+\s|]+\|?$/.test(t)) continue; // ligne séparatrice
+              const cols = t.split('|').slice(1, -1).map(c => c.trim());
+              if (cols[0] === 'Project term') continue; // header
+              if (cols[0]) { hasDataRows = true; break; }
+            }
+            // Compter les termes restants dans Pending
+            let remainingPending = 0;
+            { let _ip = false;
+              for (const _l of lines) {
+                const _t = _l.trim();
+                if (/^\*\s+Pending/i.test(_t))  { _ip = true; continue; }
+                if (/^\*\s+/.test(_t) && _ip) break;
+                if (!_ip || !_t.startsWith('|')) continue;
+                if (/^\|[-+\s|]+\|?$/.test(_t)) continue;
+                const _c = _t.split('|').slice(1,-1).map(s=>s.trim());
+                if (_c[0] && _c[0] !== 'Project term') remainingPending++;
+              }
+            }
+
+            if (!hasDataRows) {
+              // Pending vide → vérifier si au moins un alias a été confirmé
+              // manuellement ("validated via chorus-web") — si oui, re-import
+              // nécessaire ; si non (tout rejeté/hors-périmètre), pas de re-import.
+              let hasConfirmedAliases = false;
+              { let _ia = false;
+                for (const _l of lines) {
+                  const _t = _l.trim();
+                  if (/^\*\s+Aliases/i.test(_t))   { _ia = true; continue; }
+                  if (/^\*\s+/.test(_t) && _ia)    { _ia = false; continue; }
+                  if (!_ia || !_t.startsWith('|')) continue;
+                  if (/^\|[-+\s|]+\|?$/.test(_t))  continue;
+                  if (/validated via chorus-web/i.test(_t)) { hasConfirmedAliases = true; break; }
+                }
+              }
+              _dbg(`WEB-025d: Pending vide, hasConfirmedAliases=${hasConfirmedAliases} → close in 3s`);
+              sseSend(res, 'thesaurus-status', { complete: true, remaining: 0, hasConfirmedAliases });
+              postRespondPending = false;
+              if (deferredDoneHandle) clearTimeout(deferredDoneHandle);
+              deferredDoneHandle = setTimeout(() => {
+                deferredDoneHandle = null;
+                if (!finished && !waitingForUserInput) { clearTimeout(timeoutHandle); finish(); }
+              }, 3000);
+            } else {
+              // Termes restants → signaler le restart au frontend, fermer dans 2s
+              _dbg(`WEB-025d: ${remainingPending} Pending restant(s) → thesaurus-restart`);
+              sseSend(res, 'thesaurus-restart', { remaining: remainingPending });
+              postRespondPending = false;
+              if (deferredDoneHandle) clearTimeout(deferredDoneHandle);
+              deferredDoneHandle = setTimeout(() => {
+                deferredDoneHandle = null;
+                if (!finished) { clearTimeout(timeoutHandle); finish(); }
+              }, 2000);
+            }
+          } catch (e) { _dbg('WEB-025d: erreur lecture thésaurus', e.message); }
+        }
         // Bandeau "Skill actif" (Engine/TODO.org [#J] Axe 3) — détecte un
         // appel à l'outil natif ECA "skill" (chargement d'un skill Chorus)
         // et maintient un historique court côté session pour permettre au
@@ -509,10 +625,29 @@ router.post('/sandboxes/:sbId/terminal', (req, res) => {
         }
       },
       onDone:    ()         => {
-        // Guard: if eca__ask_user is pending, the 'idle' event is transient
-        // (ECA waiting for user input) — do NOT finish here. The session will
-        // naturally complete after the user responds and ECA reaches idle again.
+        // Guard WEB-025: if eca__ask_user is pending, the 'idle' event is transient
+        // (ECA waiting for user input) — do NOT finish here.
         if (waitingForUserInput) return;
+        // Guard WEB-025b: user just responded to an ask_user and ECA went idle.
+        // This idle might be the inter-ask_user pause (ECA about to call another
+        // ask_user) OR the genuine end. We can't tell yet — arm an 8s deferred
+        // close: if another ask_user arrives, onAsk cancels it; otherwise the
+        // timer fires and finish() is called. The timer starts HERE (from idle),
+        // NOT from clearAskWait, so ECA can take as long as it needs to process
+        // before going idle (edit_file, generate text, etc.) — the 8s window
+        // only opens once ECA is actually idle.
+        if (postRespondPending) {
+          postRespondPending = false; // consume the flag — one idle, one timer
+          if (deferredDoneHandle) clearTimeout(deferredDoneHandle);
+          deferredDoneHandle = setTimeout(() => {
+            deferredDoneHandle = null;
+            if (!finished && !waitingForUserInput) { clearTimeout(timeoutHandle); finish(); }
+          }, 8000);
+          return;
+        }
+        // deferredDoneHandle still running (a previous idle armed it but onAsk
+        // hasn't fired yet) — another idle arrived, don't double-close.
+        if (deferredDoneHandle) return;
         clearTimeout(timeoutHandle);
         finish();
       },
@@ -559,6 +694,12 @@ router.post('/sandboxes/:sbId/terminal', (req, res) => {
           gracePeriodHandle = null;
           waitingForUserInput = false;
         }, 3000);
+        // WEB-025b — Fix B : entrer en mode post-respond.
+        // Le timer de close différé (8s) sera armé depuis onDone, quand ECA
+        // passera effectivement à idle — PAS ici. Cela permet à ECA de prendre
+        // le temps nécessaire (edit_file, génération de texte…) sans risque
+        // de timeout prématuré.
+        postRespondPending = true;
         // Restart du timeout — ECA a le temps plein pour finir après la réponse.
         clearTimeout(timeoutHandle);
         if (pendingTimeoutRestart) { clearTimeout(pendingTimeoutRestart); pendingTimeoutRestart = null; }
@@ -634,15 +775,15 @@ router.post('/sandboxes/:sbId/terminal/respond', async (req, res) => {
   const chatId = `eca-term-${sbId}-${sessionId}`;
   const t = activeTerminals.get(sessionId);
   if (t?.clearAskWait) t.clearAskWait();
-  // isAskUserResponse:true + toolId : route vers le tool call ask_user actif
-  // plutôt que de démarrer un nouveau tour de conversation.
-  // toolId null : chat:ask-question n'a pas fourni requestId/id — on envoie
-  // quand même isAskUserResponse:true (ECA route vers le seul pending ask_user).
-  if (!toolId) {
-    console.warn(`[terminal /respond] toolId absent — réponse routée sans toolId (sbId=${sbId})`);
-  }
-  const payload = { message: ecaAnswer, answer: ecaAnswer, isAskUserResponse: true,
-                    ...(toolId ? { toolId } : {}) };
+  // WEB-025c — Simplification du payload ask_user response.
+  // isAskUserResponse:true + answer + toolId causaient un état ambigu côté
+  // ECA : après le premier toolCalled (edit_file), ECA se bloquait
+  // systématiquement sans continuer la génération.
+  // Confirmé empiriquement (2026-11) : ECA interprète correctement une
+  // réponse utilisateur via POST /prompt { message } seul (même mécanique
+  // que sendLoginStep dans le flow de login) — ECA matche automatiquement
+  // le message au tool call ask_user pending sans champs spéciaux.
+  const payload = { message: ecaAnswer };
   try {
     await eca.ecaRequest(`/api/v1/chats/${encodeURIComponent(chatId)}/prompt`, 'POST', payload);
     res.json({ ok: true });
