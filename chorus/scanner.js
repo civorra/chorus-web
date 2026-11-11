@@ -614,16 +614,28 @@ function readLastStrengthenReport(sbPath) {
   const stale = !!(currentKbHash && data.kb_hash &&
     normalizeHash(currentKbHash) !== normalizeHash(data.kb_hash));
 
+  // ⚠️ Lecture défensive (ENG-037-bis) : accepter snake_case ET camelCase pour chaque champ.
+  // chorus-strengthen.md Phase 4.5 impose snake_case, mais un LLM peut dériver vers camelCase.
+  // La source de vérité reste le schéma dans chorus-strengthen.md — le fallback ici est
+  // un filet de sécurité, pas une invitation à générer du camelCase.
+  const totalGaps     = data.total_gaps     ?? data.totalGaps     ?? 0;
+  const projectBugsRaw= data.project_bugs   ?? data.projectBugs   ?? [];
+  const summaryRaw    = data.summary        ?? {};
+
   return {
     timestamp:  data.timestamp  || null,
     kbHash:     data.kb_hash    || null,
     sandbox:    data.sandbox    || null,
-    totalGaps:   data.total_gaps ?? 0,
-    summary:     data.summary    || { bucket_b: 0, bucket_c: 0, bucket_a: 0 },
-    gaps:        Array.isArray(data.gaps)         ? data.gaps         : [],
+    totalGaps,
+    summary: {
+      bucket_b: summaryRaw.bucket_b ?? summaryRaw.bucketB ?? 0,
+      bucket_c: summaryRaw.bucket_c ?? summaryRaw.bucketC ?? 0,
+      bucket_a: summaryRaw.bucket_a ?? summaryRaw.bucketA ?? 0,
+    },
+    gaps:        Array.isArray(data.gaps)      ? data.gaps      : [],
     // project_bugs: éléments exclus de la classification KB (bugs C2–C5 dans le JSON projet)
     // Produit par chorus-strengthen Phase 2.0-bis. Absent = [] (aucun bug fichier détecté).
-    projectBugs: Array.isArray(data.project_bugs) ? data.project_bugs : [],
+    projectBugs: Array.isArray(projectBugsRaw) ? projectBugsRaw : [],
     stale,
   };
 }
