@@ -219,7 +219,18 @@ function scanFlatProject(entityPath, slug, jsonFile, runReportIndex) {
   const runEntries = (runReportIndex && runReportIndex.get(`${slug}.json`)) || [];
 
   for (const entry of runEntries) {
-    const ts = (entry.file || '').match(/run-report-(\d{8}-\d{6})\.json/)?.[1];
+    // Extract YYYYMMDD-HHMMSS timestamp from the run-report filename.
+    // Two formats coexist (ENG-039):
+    //   New (post-fix) : run-report-YYYYMMDD-HHMMSS.json  → matched directly
+    //   Legacy         : run-report-YYYYMMDDHHMMSS.json   → compact, no hyphen
+    // Both are normalised to YYYYMMDD-HHMMSS for the f.includes(ts) lookup
+    // against explain-*-YYYYMMDD-HHMMSS.md / synthese-*-YYYYMMDD-HHMMSS.md.
+    const fname = entry.file || '';
+    let ts = fname.match(/run-report-(\d{8}-\d{6})\.json/)?.[1] ?? null;
+    if (!ts) {
+      const compact = fname.match(/run-report-(\d{14})\.json/)?.[1];
+      if (compact) ts = compact.slice(0, 8) + '-' + compact.slice(8);
+    }
     entry.explain_file  = ts ? (checkReports.find(f => f.startsWith('explain-')  && f.includes(ts)) ?? null) : null;
     entry.synthese_file = ts ? (checkReports.find(f => f.startsWith('synthese-') && f.includes(ts)) ?? null) : null;
   }
