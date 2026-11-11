@@ -586,11 +586,12 @@ function readLastCheckResults(sbPath) {
   }
 
   return {
-    timestamp:  data.timestamp || null,
-    kbHash:     data.kb_hash || null,
-    converged:  !!data.converged,
+    timestamp:      data.timestamp || null,
+    kbHash:         data.kb_hash || null,
+    converged:      !!data.converged,
     stale,
     byFile,
+    ruleTraceGaps:  data.rule_trace_gaps ?? null,  // null = not yet computed (chorus-check --all pre-ENG-037)
   };
 }
 
@@ -691,7 +692,8 @@ function readFeedStatus(sbPath) {
       // otherwise leave the Feed button permanently disabled/stuck on
       // "⏳ Feed en cours…" with no way to recover short of manually editing
       // the JSON file. See chorus-web.js § FEED_RUNNING_STALE_MS.
-      lastUpdate:  d.last_update                       || null,
+      lastUpdate:    d.last_update                       || null,
+      ruleTraceGaps: d.rule_trace_gaps ?? null,  // null = unattended pre-ENG-037 or still running
     };
   } catch { return null; }
 }
@@ -839,7 +841,13 @@ function scanSandbox(sbId) {
   const fixHistory       = readLastFixHistory(sbPath);
   const feedStatus       = readFeedStatus(sbPath);
 
-  return { id: sbId, name, norm, standard, desc, path: sbPath, entities, testing, kbModeled, hasScoping, hasCorpusDirectives, strengthenReport, fixHistory, feedStatus };
+  // Merge rule_trace_gaps from the two possible sources:
+  // 1. .last-check-results.json (chorus-check --all Phase 6-all.6)
+  // 2. .chorus-unattended-state.json (chorus-feed-unattended Step 5.5)
+  // Prefer lastCheckResults (more authoritative); fall back to feedStatus.
+  const ruleTraceGaps = lastCheckResults?.ruleTraceGaps ?? feedStatus?.ruleTraceGaps ?? null;
+
+  return { id: sbId, name, norm, standard, desc, path: sbPath, entities, testing, kbModeled, hasScoping, hasCorpusDirectives, strengthenReport, fixHistory, feedStatus, ruleTraceGaps };
 }
 
 // ── scanAll ───────────────────────────────────────────────────────────────

@@ -791,6 +791,7 @@ function renderProjectPage(proj, entLabel) {
 let _pvThesaurusCache = {}; // "sbId/entity/projId" → { matched, hasFilter }
 let _pendingThesaurusRestart  = null; // WEB-025d: { ctx, remaining } → auto-restart
 let _pendingThesaurusComplete = null; // WEB-025d: { ctx } → lance le re-import après done
+let _thesaurusVerifyCtx       = null; // WEB-025d: vérification post-import { sbId, entityId, confirmedTerms }
 
 function _basenameNoExt(p) {
   if (!p) return null;
@@ -1417,9 +1418,22 @@ function startThesaurusPostImport(sbId, entityId, projId) {
     || proj?._import?.source_file;
   // chorus-audit-import --patch ne nécessite pas la source — on continue même sans.
   const projOut = `workspace/${entityId}/${projId}.json`;
-  // chorus-import-project est le seul outil qui consulte le thésaurus pour
-  // résoudre les gaps "mapping à confirmer" — chorus-audit-import --patch ne
-  // lit pas le thésaurus et ne peut pas résoudre ces ambiguïtés d'interprétation.
+  // Capturer les termes confirmés (validated via chorus-web) AVANT le re-import
+  // pour pouvoir vérifier qu'aucun n'a réapparu dans * Pending après.
+  _thesaurusVerifyCtx = { sbId, entityId, projId, confirmedTerms: [] };
+  fetch(`${API}/api/sandboxes/${sbId}/corpus`)
+    .then(r => r.ok ? r.json() : null)
+    .then(data => {
+      if (!data || !_thesaurusVerifyCtx) return;
+      const shards = (data.corpus?.thesaurus || [])
+        .filter(s => (s.entity || s.shard) === entityId);
+      _thesaurusVerifyCtx.confirmedTerms = shards
+        .flatMap(s => (s.aliasesSlotValues || []))
+        .filter(a => /validated via chorus-web/i.test(a.confidence || ''))
+        .map(a => a.term);
+    })
+    .catch(() => {});
+
   const cmd = [
     `# ✅ Thésaurus validé — re-import pour appliquer les décisions thésaurus`,
     `chorus-import-project ${sbId} ${sourceFile || `workspace/${entityId}/sources/<source>`} --context ${entityId} --out ${projOut} --keep-patches`,
@@ -1427,7 +1441,7 @@ function startThesaurusPostImport(sbId, entityId, projId) {
   openLevelTerminal('project', {
     sbId, entityId, projId,
     projName: proj?.name || projId,
-    kind: null,
+    kind: 'thesaurus-reimport',
   }, cmd);
 }
 
@@ -2708,6 +2722,14 @@ function renderKbConvergenceWorkflow(testing, strengthenReport, sbId, kbModeled)
   const anyStale     = slugs.some(k => testing[k].convergence?.stale);
   const checkTs      = slugs.map(k => testing[k].convergence?.timestamp).filter(Boolean).sort().pop();
   const checkDone    = slugs.some(k => testing[k].convergence);
+  // ENG-037 — _rule_trace gaps (from .last-check-results.json or .chorus-unattended-state.json)
+  const ruleTraceGaps = sb.ruleTraceGaps ?? null;
+  const ruleTraceBadge = (ruleTraceGaps !== null && ruleTraceGaps > 0)
+    ? `<span style="color:var(--warn);font-size:10px;margin-left:8px"
+           title="${ruleTraceGaps} règle(s) YAML ne publient pas _rule_trace — lancez chorus-feed --enrich pour compléter la traçabilité">⚠️ ${ruleTraceGaps} règle(s) sans traçabilité → enrich</span>`
+    : (ruleTraceGaps === 0)
+      ? `<span style="color:var(--success);font-size:10px;margin-left:8px" title="Toutes les règles publient _rule_trace">✅ traçabilité complète</span>`
+      : '';
 
   // Détection d'un chorus-check actif sur ce sandbox (kind='check-all')
   const checkRunning = !!(_activeTerminalsCache || [])
@@ -2719,21 +2741,21 @@ function renderKbConvergenceWorkflow(testing, strengthenReport, sbId, kbModeled)
   let step1State, step1Badge, step1Action = '';
   if (!checkDone) {
     step1State = 'pending';
-    step1Badge = `<span style="color:var(--text-muted)">○ jamais lancé</span>`;
+    step1Badge = `<span style="color:var(--text-muted)">○ jamais lancé</span>${ruleTraceBadge}`;
     step1Action = checkBtn('▶ Vérifier');
   } else if (anyStale) {
     step1State = 'stale';
-    step1Badge = `<span style="color:var(--warn)">⚠️ périmé — résultats obsolètes</span>`;
+    step1Badge = `<span style="color:var(--warn)">⚠️ périmé — résultats obsolètes</span>${ruleTraceBadge}`;
     step1Action = checkBtn('▶ Re-lancer');
   } else if (totalDisc === 0 && totalUnproc === 0) {
     step1State = 'ok';
     step1Badge = `<span style="color:var(--success)">✅ ${slugs.length} projet(s) convergés</span>
-      <span style="color:var(--text-muted);font-size:10px;margin-left:6px">${(checkTs||'').slice(0,16).replace('T',' ')}</span>`;
+      <span style="color:var(--text-muted);font-size:10px;margin-left:6px">${(checkTs||'').slice(0,16).replace('T',' ')}</span>${ruleTraceBadge}`;
     step1Action = checkBtn('▶ Re-vérifier');
   } else {
     step1State = 'disc';
     step1Badge = `<span style="color:var(--warn)">⚠️ ${totalDisc} discordance(s)</span>
-      <span style="color:var(--text-muted);font-size:10px;margin-left:6px">${(checkTs||'').slice(0,16).replace('T',' ')}</span>`;
+      <span style="color:var(--text-muted);font-size:10px;margin-left:6px">${(checkTs||'').slice(0,16).replace('T',' ')}</span>${ruleTraceBadge}`;
     step1Action = checkBtn('▶ Re-lancer');
   }
 
@@ -6076,17 +6098,16 @@ async function levelTerminalExec(cmd) {
 
           } else if (evt === 'thesaurus-status') {
             // WEB-025d — Tous les termes traités (Pending vide).
-            // Lancer le re-import uniquement si au moins un alias a été confirmé
-            // manuellement (hasConfirmedAliases). Si tout a été rejeté/hors-périmètre,
-            // aucun re-import n'est nécessaire (thésaurus inchangé côté Aliases).
+            // Afficher le statut + bouton re-import (toujours disponible).
             if (data.complete && ctx.projId && ctx.entityId && ctx.sbId) {
               ensureThinkingRemoved();
-              if (data.hasConfirmedAliases) {
-                lvlTermAppend('✅ Thésaurus validé — lancement du re-import…', 'ok');
-                _pendingThesaurusComplete = { ctx };
-              } else {
-                lvlTermAppend('✅ Termes traités (aucun alias confirmé — re-import non nécessaire).', 'ok');
-              }
+              const hasAliases = data.hasConfirmedAliases;
+              // Stocker le contexte — le bouton sera ajouté dans le handler 'done'
+              // directement sur la ligne doneLine (à côté du bouton Retry).
+              _pendingThesaurusComplete = {
+                ctx,
+                hasConfirmedAliases: hasAliases,
+              };
             }
 
           } else if (evt === 'refresh') {
@@ -6140,6 +6161,26 @@ async function levelTerminalExec(cmd) {
               retryBtn.onclick = () => levelTerminalExec(lastCmd);
               doneLine.appendChild(retryBtn);
             }
+            // WEB-025d — Bouton re-import thésaurus sur la ligne Terminé
+            if (_pendingThesaurusComplete && doneLine) {
+              const _tc = _pendingThesaurusComplete;
+              _pendingThesaurusComplete = null;
+              const reimportBtn = document.createElement('button');
+              reimportBtn.className = 'lvl-term-retry-btn';
+              reimportBtn.style.cssText = _tc.hasConfirmedAliases
+                ? 'color:var(--accent,#4A9EFF);border-color:var(--accent,#4A9EFF);margin-left:4px'
+                : 'opacity:.55;margin-left:4px';
+              reimportBtn.textContent = '🔄 Re-importer';
+              reimportBtn.title = _tc.hasConfirmedAliases
+                ? 'Appliquer les décisions thésaurus au projet JSON (chorus-import-project --keep-patches)'
+                : 'Aucun alias confirmé — re-import non nécessaire (cliquer pour forcer)';
+              reimportBtn.onclick = () => {
+                reimportBtn.disabled = true;
+                reimportBtn.textContent = '🔄 En cours…';
+                startThesaurusPostImport(_tc.ctx.sbId, _tc.ctx.entityId, _tc.ctx.projId);
+              };
+              doneLine.appendChild(reimportBtn);
+            }
             // Visual separator between exchanges
             const sep = document.createElement('hr');
             sep.className = 'lvl-term-sep';
@@ -6166,11 +6207,34 @@ async function levelTerminalExec(cmd) {
               _pendingThesaurusRestart = null;
               setTimeout(() => startThesaurusAssistant(true), 600);
             }
-            // WEB-025d — Thésaurus complet : lancer le re-import automatiquement.
-            if (_pendingThesaurusComplete) {
-              const { ctx: _c } = _pendingThesaurusComplete;
-              _pendingThesaurusComplete = null;
-              setTimeout(() => startThesaurusPostImport(_c.sbId, _c.entityId, _c.projId), 800);
+            // WEB-025d — Vérification thésaurus post-import.
+            if (ctx.kind === 'thesaurus-reimport' && _thesaurusVerifyCtx) {
+              const v = _thesaurusVerifyCtx;
+              _thesaurusVerifyCtx = null;
+              if (v.confirmedTerms?.length) {
+                fetch(`${API}/api/sandboxes/${v.sbId}/corpus`)
+                  .then(r => r.ok ? r.json() : null)
+                  .then(data => {
+                    if (!data) return;
+                    const shards = (data.corpus?.thesaurus || [])
+                      .filter(s => (s.entity || s.shard) === v.entityId);
+                    const newPending = shards.flatMap(s => (s.pending || []).map(p => p.term));
+                    const corrupted = v.confirmedTerms.filter(t => newPending.includes(t));
+                    if (corrupted.length > 0) {
+                      lvlTermAppend(
+                        `⚠️ Régression thésaurus : ${corrupted.length} terme(s) confirmé(s) réapparu(s) dans Pending après re-import.`,
+                        'warn'
+                      );
+                      corrupted.forEach(t => lvlTermAppend(`   → "${t}"`, 'warn'));
+                    } else {
+                      lvlTermAppend(
+                        `✅ Thésaurus vérifié — aucune régression, toutes les confirmations préservées.`,
+                        'ok'
+                      );
+                    }
+                  })
+                  .catch(() => {});
+              }
             }
             break outer;
           }
