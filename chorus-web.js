@@ -2710,7 +2710,7 @@ function confirmRunChorusFix(mode) {
 //  ② Diagnostiquer chorus-strengthen  ✅/⚠️ périmé/○
 //  ③ Corriger KB  chorus-fix          ✅/B:N C:N/○
 //  ④ Re-vérifier  chorus-check --all  ✅/○  (apparaît après ③ seulement)
-function renderKbConvergenceWorkflow(testing, strengthenReport, sbId, kbModeled) {
+function renderKbConvergenceWorkflow(testing, strengthenReport, sbId, kbModeled, ruleTraceGaps = null) {
   if (!kbModeled) return '';
 
   const slugs = Object.keys(testing).filter(s => testing[s]);
@@ -2723,7 +2723,7 @@ function renderKbConvergenceWorkflow(testing, strengthenReport, sbId, kbModeled)
   const checkTs      = slugs.map(k => testing[k].convergence?.timestamp).filter(Boolean).sort().pop();
   const checkDone    = slugs.some(k => testing[k].convergence);
   // ENG-037 — _rule_trace gaps (from .last-check-results.json or .chorus-unattended-state.json)
-  const ruleTraceGaps = sb.ruleTraceGaps ?? null;
+  // Passed as 5th parameter from renderTestingTab (sb.ruleTraceGaps).
   const ruleTraceBadge = (ruleTraceGaps !== null && ruleTraceGaps > 0)
     ? `<span style="color:var(--warn);font-size:10px;margin-left:8px"
            title="${ruleTraceGaps} règle(s) YAML ne publient pas _rule_trace — lancez chorus-feed --enrich pour compléter la traçabilité">⚠️ ${ruleTraceGaps} règle(s) sans traçabilité → enrich</span>`
@@ -2971,7 +2971,7 @@ function renderTestingTab() {
     </div>
 
     <!-- ══ ZONE 2 — Boucle de convergence KB ═════════════════════════════ -->
-    ${renderKbConvergenceWorkflow(testing, strengthenReport, sb.id, kbModeled)}
+    ${renderKbConvergenceWorkflow(testing, strengthenReport, sb.id, kbModeled, sb.ruleTraceGaps ?? null)}
 
     <!-- ══ ZONE 3 — Historique des corrections (chorus-fix) ══════════════ -->
     ${renderFixHistoryPanel(fixHistory)}
