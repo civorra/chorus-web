@@ -390,15 +390,24 @@ router.post('/sandboxes/:sbId/terminal', (req, res) => {
     // DONE après chaque terme, ce qui fermait la session prématurément.
     const DONE_INSTRUCTION = kind === 'thesaurus-assistant'
       ? '\n\n[TERMINAL PROTOCOL — SESSION INTERACTIVE THÉSAURUS — STRICT]\n' +
-        'Après chaque décision utilisateur via eca__ask_user :\n' +
+        'Après chaque décision utilisateur via eca__ask_user, DEUX CAS POSSIBLES :\n' +
+        '\n' +
+        'CAS A — l\'utilisateur a choisi ✅ Confirmer / ❌ Rejeter / ⬜ Hors périmètre :\n' +
         '  1. Appelle eca__edit_file — UN SEUL appel qui fait LES DEUX simultanément :\n' +
-        '     • ajoute le terme dans * Aliases — slot values\n' +
+        '     • ajoute le terme dans la section appropriée (* Aliases pour confirmer, * Out-of-scope pour hors périmètre)\n' +
         '     • supprime le terme de * Pending (même appel, même original_content/new_content)\n' +
+        '     • si rejeté sans reclassement : supprime simplement la ligne de * Pending\n' +
         '  2. IMMÉDIATEMENT après le résultat de eca__edit_file, dans le MÊME tour de génération :\n' +
         '     • si tu avais d\'autres termes Pending à traiter → appelle eca__ask_user pour le suivant\n' +
         '     • si c\'était le dernier terme → écris uniquement "DONE" sur la dernière ligne et arrête-toi\n' +
+        '\n' +
+        'CAS B — l\'utilisateur a choisi ⏭️ Passer (réponse littérale "passer") :\n' +
+        '  ⛔ N\'appelle AUCUN eca__edit_file pour ce terme — laisse-le inchangé dans * Pending.\n' +
+        '  IMMÉDIATEMENT, dans le MÊME tour de génération :\n' +
+        '     • si tu avais d\'autres termes Pending à traiter → appelle eca__ask_user pour le suivant\n' +
+        '     • si c\'était le dernier terme → écris uniquement "DONE" sur la dernière ligne et arrête-toi\n' +
         '⛔ NE PAS appeler eca__read_file après eca__edit_file — tu sais combien de termes restent.\n' +
-        '⛔ NE PAS générer de texte entre les étapes.\n' +
+        '⛔ NE PAS générer de texte entre les étapes, dans AUCUN des deux cas.\n' +
         '⛔ NE PAS faire deux appels eca__edit_file séparés (un pour Aliases, un pour Pending).'
       : '\n\n[TERMINAL PROTOCOL — OBLIGATOIRE] ' +
         'Quand ta réponse est entièrement terminée — skill accompli, fichiers écrits, question répondue — ' +
@@ -437,6 +446,14 @@ router.post('/sandboxes/:sbId/terminal', (req, res) => {
     //                              annulé par onAsk si un autre ask_user arrive.
     let postRespondPending   = false; // WEB-025b: en attente d'un idle post-réponse
     let deferredDoneHandle   = null;  // WEB-025b: close différé 8s depuis idle
+    // Fix (sur-déclenchement fermeture/relance) — compteur de Pending restants
+    // au dernier edit_file traité sur thesaurus.org. Évite qu'un ECA qui
+    // appellerait eca__edit_file plusieurs fois pour une même décision
+    // (relecture, édition en 2 temps, etc. — hors protocole strict demandé
+    // mais non garanti) ne déclenche plusieurs fermetures/relances de
+    // terminal pour un seul cycle de décision réellement abouti. null tant
+    // qu'aucun edit_file thésaurus n'a encore été vu dans cette session.
+    let lastKnownPendingCount = null;
     // Helper : ECA a repris (chunk ou toolLog) → lever le guard immédiatement
     const _dbg = (...a) => console.log(`[WEB-025][${sessionId}]`, ...a);
     const clearAskGuard = () => {
@@ -502,10 +519,26 @@ router.post('/sandboxes/:sbId/terminal', (req, res) => {
         // si l'edit_file sur thesaurus.org a réussi ET que * Pending est
         // désormais vide, fermer la session proactivement côté webapp
         // sans attendre le chat:status-changed:idle d'ECA.
+        //
+        // ⛔ Fix (race condition intermittente, constatée empiriquement :
+        // auto-restart fonctionne "à plusieurs reprises" puis se bloque sans
+        // raison apparente) — ce check dépendait de `postRespondPending`,
+        // un flag consommé par le tout premier `onDone` (idle) reçu après la
+        // réponse utilisateur (voir onDone plus bas). Or ECA peut émettre un
+        // idle TRANSITOIRE avant d'exécuter effectivement le edit_file (pause
+        // interne entre la réponse à ask_user et l'appel d'outil réel) — si
+        // cet idle arrive en premier, postRespondPending passe à false avant
+        // que l'edit_file n'arrive, et cette condition échouait silencieusement :
+        // plus aucun mécanisme ne fermait/relançait la session (le bug ECA
+        // documenté ci-dessus empêche toute continuation naturelle), d'où un
+        // blocage indéfini jusqu'au timeout global. Suppression du flag comme
+        // garde : ce check est déjà strictement scopé à kind==='thesaurus-
+        // assistant' + chemin thesaurus.org, et le protocole du skill garantit
+        // que ce fichier n'est édité qu'après une réponse ask_user — aucun
+        // risque de fermeture prématurée sur un edit_file non lié.
         if (kind === 'thesaurus-assistant'
             && toolInfo.name === 'edit_file'
-            && toolInfo.path && toolInfo.path.includes('thesaurus.org')
-            && postRespondPending) {
+            && toolInfo.path && toolInfo.path.includes('thesaurus.org')) {
           try {
             const thesContent = fs.readFileSync(toolInfo.path, 'utf8');
             const lines = thesContent.split('\n');
@@ -536,7 +569,25 @@ router.post('/sandboxes/:sbId/terminal', (req, res) => {
               }
             }
 
-            if (!hasDataRows) {
+            // Fix (sur-déclenchement fermeture/relance) — ne traiter ce
+            // edit_file comme "fin de cycle de décision" que si le nombre de
+            // Pending a réellement diminué depuis le dernier edit_file vu
+            // dans cette session. Sans cette garde, un ECA qui appellerait
+            // eca__edit_file plusieurs fois pour la même décision (relecture,
+            // édition en 2 étapes — hors protocole strict demandé mais non
+            // garanti côté LLM) déclenchait une fermeture/relance de terminal
+            // par appel, créant plusieurs terminaux pour un seul terme réellement
+            // traité (constaté empiriquement : nombre de terminaux > nombre de
+            // termes Pending initiaux). lastKnownPendingCount reste à null tant
+            // qu'aucun edit_file n'a encore été vu — le tout premier passe
+            // toujours (pas de base de comparaison).
+            const isGenuineProgress = lastKnownPendingCount === null
+              || remainingPending < lastKnownPendingCount;
+            lastKnownPendingCount = remainingPending;
+
+            if (!isGenuineProgress) {
+              _dbg(`WEB-025d: edit_file sans diminution de Pending (${remainingPending}) — ignoré (pas de fermeture/relance)`);
+            } else if (!hasDataRows) {
               // Pending vide → vérifier si au moins un alias a été confirmé
               // manuellement ("validated via chorus-web") — si oui, re-import
               // nécessaire ; si non (tout rejeté/hors-périmètre), pas de re-import.

@@ -905,6 +905,21 @@ async function renderPvThesaurusTab() {
     const matches = (row) => hasFilter &&
       (row.sourceBasename ? row.sourceBasename === target : _basenameNoExt(row.sourceImport) === target);
 
+    // Fix (visibilité thésaurus Pending) — ne plus faire disparaître
+    // silencieusement les Pending entity dont le sourceBasename ne matche
+    // pas le projet courant : un terme `* Pending` reste par construction
+    // "à confirmer", donc il doit rester actionnable depuis AU MOINS un
+    // projet de l'entity, sinon il ne peut jamais être tranché (incident :
+    // sandbox 08-ANSSI-PG-083-CENTRIC, entity eviden, 5 termes Hybrid
+    // KEM/CKM_RSA_AES_KEY_WRAP invisibles dans l'onglet Thésaurus du projet
+    // bien que `sourceBasename` résolve correctement — le vrai risque est
+    // qu'un futur mismatch de résolution les rende invisibles PARTOUT sans
+    // aucun signal). On calcule donc, en plus des Pending filtrés par
+    // pertinence projet, le reliquat non matché de l'entity et on l'affiche
+    // dans une section distincte, repliée, plutôt que de le faire disparaître.
+    const matchedPending  = hasFilter ? allPending.filter(matches) : allPending;
+    const otherPending    = hasFilter ? allPending.filter(p => !matches(p)) : [];
+
     cached = {
       hasFilter,
       hasAnyThesaurus: thesaurus.length > 0,
@@ -912,12 +927,13 @@ async function renderPvThesaurusTab() {
       entityIsolated: true, // §4 : toujours isolé quand entityId est défini
       resolvedTypeElement: hasFilter ? allTypeElement.filter(matches) : allTypeElement,
       resolvedSlotValues:  hasFilter ? allSlotValues.filter(matches)  : allSlotValues,
-      pending:             hasFilter ? allPending.filter(matches)     : allPending,
+      pending:             matchedPending,
+      otherPending,
     };
     _pvThesaurusCache[cacheKey] = cached;
   }
 
-  const { hasFilter, hasAnyThesaurus, entityId, entityIsolated, resolvedTypeElement, resolvedSlotValues, pending } = cached;
+  const { hasFilter, hasAnyThesaurus, entityId, entityIsolated, resolvedTypeElement, resolvedSlotValues, pending, otherPending } = cached;
 
   if (!hasAnyThesaurus) {
     panel.innerHTML = '<div class="pv-empty">Aucun thesaurus trouvé pour ce sandbox — aucun import avec alignement terminologique n\'a encore été effectué.</div>';
@@ -937,8 +953,20 @@ async function renderPvThesaurusTab() {
   ]);
   const filteredPending = pending.filter(p => !resolvedKeys.has(`${p.term}\u0000${p.sourceImport || ''}`));
 
+  // Déplacé en amont (était calculé plus bas, près de la section Pending) pour
+  // pouvoir afficher un compteur/lien d'ancrage juste après le badge Entity,
+  // avant la (potentiellement longue) table "Resolved alignments" — fix
+  // lisibilité : sans ce signal précoce, des Pending bien présents dans le
+  // DOM restent "invisibles" en pratique car noyés en bas d'une page pouvant
+  // compter des dizaines/centaines de lignes Resolved (cf. incident sandbox
+  // 08-ANSSI-PG-083-CENTRIC, entity eviden : 5 Pending présents mais jamais
+  // remarqués sous 73 lignes Resolved, sans aucun repère de scroll).
+  const otherPendingDeduped = (otherPending || []).filter(op =>
+    !resolvedKeys.has(`${op.term}\u0000${op.sourceImport || ''}`));
+
   const nResolved = resolvedTypeElement.length + resolvedSlotValues.length;
   const nPending  = filteredPending.length;
+  const nPendingTotal = nPending + otherPendingDeduped.length;
   const nManual   = [...resolvedTypeElement, ...resolvedSlotValues]
     .filter(a => _pvThesOrigin(a.confidence).kind === 'manual').length;
   const nImport   = nResolved - nManual;
@@ -959,6 +987,22 @@ async function renderPvThesaurusTab() {
       <span style="color:var(--text-muted);font-size:10px;margin-left:4px">
         — données isolées, aucun partage cross-entity (WEB-027)
       </span>
+    </div>`;
+  }
+
+  // Fix (lisibilité thésaurus Pending) — badge/lien d'ancrage affiché AVANT
+  // la table "Resolved alignments" (potentiellement très longue — 73 lignes
+  // dans l'incident constaté, sandbox 08-ANSSI-PG-083-CENTRIC/eviden), pour
+  // signaler immédiatement l'existence de termes à confirmer sans dépendre
+  // du scroll ni d'un Ctrl+F manuel. Cible l'ancre #pv-thes-pending-section
+  // posée sur le conteneur de la section Pending plus bas.
+  if (nPendingTotal > 0) {
+    html += `<div style="margin-bottom:12px">
+      <a href="#pv-thes-pending-section" style="display:inline-flex;align-items:center;gap:6px;
+          padding:5px 12px;background:var(--warn,#FEBC2E);color:#1c1c1e;font-weight:600;
+          font-size:12px;border-radius:6px;text-decoration:none">
+        ⚠️ ${nPendingTotal} terme${nPendingTotal > 1 ? 's' : ''} en attente de confirmation — aller à la section
+      </a>
     </div>`;
   }
 
@@ -1016,9 +1060,19 @@ async function renderPvThesaurusTab() {
   // _pvPendingRows stores rows in render order so that handlers
   // (called by index, cf. inline onclick) can retrieve shard/term/
   // sourceImport without re-escaping these values in the HTML.
-  _pvPendingRows = filteredPending;
+  //
+  // Fix (visibilité thésaurus Pending) — les Pending de l'entity qui ne
+  // matchent pas le sourceBasename du projet courant (`otherPending`) ne
+  // doivent plus disparaître silencieusement : ils restent "à confirmer"
+  // par construction, donc actionnables, mais affichés dans une section
+  // distincte repliée (§ plus bas) pour ne pas polluer la vue filtrée.
+  // Les deux tableaux partagent le même tableau d'indices _pvPendingRows
+  // (otherPending à la suite) pour que les handlers onclick(i) restent
+  // cohérents entre les deux sections. (otherPendingDeduped calculé plus
+  // haut, avec nPendingTotal, pour le badge d'ancrage précoce.)
+  _pvPendingRows = [...filteredPending, ...otherPendingDeduped];
 
-  html += `<div style="margin-bottom:16px">
+  html += `<div id="pv-thes-pending-section" style="margin-bottom:16px;scroll-margin-top:16px">
     <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
       <span style="font-size:11px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:.06em">⚠️ En attente de confirmation (${nPending})</span>
       ${nPending ? `<button class="btn btn-ghost" style="font-size:11px;padding:2px 10px;color:var(--accent);border-color:var(--accent);border-radius:4px" onclick="startThesaurusAssistant()" title="Lancer un assistant ECA interactif pour résoudre les mappings en attente (eca__ask_user)">🤖 Assistant</button>` : ''}
@@ -1028,12 +1082,14 @@ async function renderPvThesaurusTab() {
       <thead><tr style="border-bottom:1px solid var(--border)">
         <th style="text-align:left;padding:4px 8px;color:var(--text-muted);font-weight:600">Terme projet</th>
         <th style="text-align:left;padding:4px 8px;color:var(--text-muted);font-weight:600">Mapping proposé</th>
+        <th style="text-align:left;padding:4px 8px;color:var(--text-muted);font-weight:600">Origine</th>
         <th style="text-align:left;padding:4px 8px;color:var(--text-muted);font-weight:600">Action</th>
       </tr></thead>
       <tbody>${filteredPending.map((p, i) => `
         <tr style="border-bottom:1px solid var(--border-light)">
           <td style="padding:4px 8px;color:var(--text-secondary)">${p.term}</td>
           <td style="padding:4px 8px;color:var(--warn);font-family:'JetBrains Mono',monospace;font-size:11px">${p.proposed || ''}</td>
+          <td style="padding:4px 8px;font-size:11px" title="Défini au niveau Entity — workspace/${escapeHtml(p.shard||entityId||'')}/thesaurus.org — s'applique à tous les projets de cette entity une fois confirmé/promu">🏢 Entity <code style="color:var(--text-muted)">${escapeHtml(p.shard||entityId||'')}</code></td>
           <td style="padding:4px 8px;white-space:nowrap">
             <button class="btn btn-ghost" style="font-size:11px;padding:2px 8px;color:var(--success)" onclick="pvThesToggleConfirm(${i})" id="pv-thes-confirm-btn-${i}">✅ Confirmer</button>
             <button class="btn btn-ghost" style="font-size:11px;padding:2px 8px;color:var(--error)" onclick="pvThesReject(${i})">❌ Rejeter</button>
@@ -1041,7 +1097,7 @@ async function renderPvThesaurusTab() {
           </td>
         </tr>
         <tr id="pv-thes-confirm-row-${i}" hidden style="border-bottom:1px solid var(--border-light)">
-          <td colspan="3" style="padding:8px;background:var(--bg-elevated)">
+          <td colspan="4" style="padding:8px;background:var(--bg-elevated)">
             <div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap">
               <div>
                 <label style="display:block;font-size:10px;color:var(--text-muted);margin-bottom:2px">type_element *</label>
@@ -1067,6 +1123,76 @@ async function renderPvThesaurusTab() {
     html += `<div class="pv-empty">Aucun terme en attente de confirmation pour ce projet.</div>`;
   }
   html += `</div>`;
+
+  // ── Fix (visibilité thésaurus Pending) — autres Pending de l'entity ────
+  // Section repliée, visible même quand elle ne concerne pas le fichier
+  // source du projet courant : un terme `* Pending` reste par construction
+  // "à confirmer" ; le faire disparaître silencieusement du seul fait qu'il
+  // n'a pas pu être rattaché au projet courant (sourceBasename différent,
+  // résolution #+SOURCE: cassée, etc.) crée une dette thésaurus invisible
+  // qui ne peut jamais être tranchée — incident constaté : sandbox
+  // 08-ANSSI-PG-083-CENTRIC, entity eviden, 5 termes (CKM_RSA_AES_KEY_WRAP +
+  // 4 Hybrid KEM) absents de l'onglet Thésaurus du projet bien que
+  // `sourceBasename` résolve correctement par ailleurs. Les actions
+  // Confirmer/Rejeter restent disponibles (mêmes handlers, index décalé —
+  // cf. _pvPendingRows = [...filteredPending, ...otherPendingDeduped]).
+  if (hasFilter && otherPendingDeduped.length) {
+    const offset = filteredPending.length;
+    html += `<details style="margin-bottom:16px;border:1px solid var(--border);border-radius:6px;padding:6px 10px">
+      <summary style="cursor:pointer;font-size:11px;font-weight:600;color:var(--warn);text-transform:uppercase;letter-spacing:.06em">
+        ⚠️ Autres termes en attente dans l'entity <code>${escapeHtml(entityId||'')}</code> (${otherPendingDeduped.length}) — non rattachés à ce projet
+      </summary>
+      <div style="font-size:11px;color:var(--text-muted);margin:6px 0 10px">
+        Ces termes figurent dans <code>workspace/${escapeHtml(entityId||'')}/thesaurus.org</code> mais leur
+        <code>Source import</code> n'a pas pu être rattaché au fichier source de ce projet
+        (<code>${escapeHtml(proj.sourceBasename||'?')}</code>). Ils restent à confirmer/rejeter — ne pas les ignorer.
+      </div>
+      <div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:12px">
+        <thead><tr style="border-bottom:1px solid var(--border)">
+          <th style="text-align:left;padding:4px 8px;color:var(--text-muted);font-weight:600">Terme projet</th>
+          <th style="text-align:left;padding:4px 8px;color:var(--text-muted);font-weight:600">Mapping proposé</th>
+          <th style="text-align:left;padding:4px 8px;color:var(--text-muted);font-weight:600">Source import</th>
+          <th style="text-align:left;padding:4px 8px;color:var(--text-muted);font-weight:600">Action</th>
+        </tr></thead>
+        <tbody>${otherPendingDeduped.map((p, j) => {
+          const i = offset + j;
+          return `
+        <tr style="border-bottom:1px solid var(--border-light)">
+          <td style="padding:4px 8px;color:var(--text-secondary)">${p.term}</td>
+          <td style="padding:4px 8px;color:var(--warn);font-family:'JetBrains Mono',monospace;font-size:11px">${p.proposed || ''}</td>
+          <td style="padding:4px 8px;color:var(--text-muted);font-size:11px">${p.sourceImport || '—'}</td>
+          <td style="padding:4px 8px;white-space:nowrap">
+            <button class="btn btn-ghost" style="font-size:11px;padding:2px 8px;color:var(--success)" onclick="pvThesToggleConfirm(${i})" id="pv-thes-confirm-btn-${i}">✅ Confirmer</button>
+            <button class="btn btn-ghost" style="font-size:11px;padding:2px 8px;color:var(--error)" onclick="pvThesReject(${i})">❌ Rejeter</button>
+            ${p.sourceImport ? `<button class="btn btn-ghost" style="font-size:11px;padding:2px 8px;color:var(--text-muted)" onclick="pvThesOpenImportReport('${p.sourceImport}','${escapeHtml(p.shard||'')}','${escapeHtml(p.term)}')" title="Voir la section _a_confirmer dans ${p.sourceImport}.org">📄 voir détail</button>` : ''}
+          </td>
+        </tr>
+        <tr id="pv-thes-confirm-row-${i}" hidden style="border-bottom:1px solid var(--border-light)">
+          <td colspan="4" style="padding:8px;background:var(--bg-elevated)">
+            <div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap">
+              <div>
+                <label style="display:block;font-size:10px;color:var(--text-muted);margin-bottom:2px">type_element *</label>
+                <input class="form-input" style="font-size:12px;padding:4px 8px;width:220px" id="pv-thes-te-${i}" value="${_pvGuessTypeElement(p.proposed)}">
+              </div>
+              <div>
+                <label style="display:block;font-size:10px;color:var(--text-muted);margin-bottom:2px">slot (optionnel)</label>
+                <input class="form-input" style="font-size:12px;padding:4px 8px;width:160px" id="pv-thes-slot-${i}" value="${_pvGuessSlotHint(p.proposed).slot}">
+              </div>
+              <div>
+                <label style="display:block;font-size:10px;color:var(--text-muted);margin-bottom:2px">value (optionnel)</label>
+                <input class="form-input" style="font-size:12px;padding:4px 8px;width:160px" id="pv-thes-val-${i}" value="${_pvGuessSlotHint(p.proposed).value}">
+              </div>
+              <button class="btn btn-primary" style="font-size:11px;padding:4px 10px" onclick="pvThesConfirm(${i})" title="Confirmer pour ce projet uniquement — enregistré en Niveau 2 (project-scoped, workspace/${escapeHtml(currentProject?.entity||'entity')}/${escapeHtml(currentProject?.id||'projId')}.thesaurus.json)">🔑 Valider (projet)</button>
+              <button class="btn btn-ghost" style="font-size:11px;padding:4px 10px;color:#A78BFA;border-color:#A78BFA" onclick="pvThesPromote(${i})" title="Confirmer pour TOUTE l'entity ${escapeHtml(currentProject?.entity||'')} — s'appliquera à tous les futurs imports sans restriction de projet">🏢 Promouvoir au niveau ${escapeHtml(currentProject?.entity||'entity')}</button>
+              <button class="btn btn-ghost" style="font-size:11px;padding:4px 10px" onclick="pvThesToggleConfirm(${i})">Annuler</button>
+            </div>
+          </td>
+        </tr>`;
+        }).join('')}
+        </tbody>
+      </table></div>
+    </details>`;
+  }
 
   panel.innerHTML = html;
 }
