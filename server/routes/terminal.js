@@ -160,6 +160,27 @@ router.post('/sandboxes/:sbId/terminal', (req, res) => {
         contextBlock = `Rapport ${reportFile} (${sbId}/${entityId}/${projId}) :\n${content.slice(0, 8000)}`;
       }
 
+      // ── Enrichissement pipeline-feed : injection des instructions ────────
+      // Si instructions-directives.md ou instructions-scoping.md existent à
+      // la racine du sandbox, on les injecte dans le contextBlock afin que
+      // le skill chorus-corpus-directives / chorus-corpus-scoping les lise
+      // directement depuis le prompt (pré-remplit les 4+5 questions sans
+      // interaction). Uniquement pour kind === 'pipeline-feed' pour éviter
+      // d'alourdir tous les autres terminaux sandbox.
+      if (kind === 'pipeline-feed') {
+        const sbPath     = sb.path;
+        const instrDir   = path.join(sbPath, 'instructions-directives.md');
+        const instrScope = path.join(sbPath, 'instructions-scoping.md');
+        if (fs.existsSync(instrDir)) {
+          const content = fs.readFileSync(instrDir, 'utf8');
+          contextBlock += `\n\n[instructions-directives.md — réponses pré-remplies aux 4 questions chorus-corpus-directives]\n${content}`;
+        }
+        if (fs.existsSync(instrScope)) {
+          const content = fs.readFileSync(instrScope, 'utf8');
+          contextBlock += `\n\n[instructions-scoping.md — réponses pré-remplies aux 5 questions chorus-corpus-scoping]\n${content}`;
+        }
+      }
+
       // ── Enrichissement spécialisé pour chorus-strengthen / chorus-fix ──
       // Injecte les données déjà lues par scanSandbox() (convergence, rapport
       // de gaps) pour éviter que l'agent ECA reparte de zéro. Ajouté en

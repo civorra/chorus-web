@@ -862,7 +862,9 @@ function scanSandbox(sbId) {
 
   const kbModeled   = fileExists(path.join(sbPath, 'agent', 'chorus', 'index.org'));
   const hasScoping  = fileExists(path.join(sbPath, 'SCOPING.md'));
-  const hasCorpusDirectives = fileExists(path.join(sbPath, 'CORPUS-DIRECTIVES.md'));
+  const hasCorpusDirectives     = fileExists(path.join(sbPath, 'CORPUS-DIRECTIVES.md'));
+  const hasInstructionsDirectives = fileExists(path.join(sbPath, 'instructions-directives.md'));
+  const hasInstructionsScoping    = fileExists(path.join(sbPath, 'instructions-scoping.md'));
 
   const strengthenReport = readLastStrengthenReport(sbPath);
   const fixHistory       = readLastFixHistory(sbPath);
@@ -874,7 +876,7 @@ function scanSandbox(sbId) {
   // Prefer lastCheckResults (more authoritative); fall back to feedStatus.
   const ruleTraceGaps = lastCheckResults?.ruleTraceGaps ?? feedStatus?.ruleTraceGaps ?? null;
 
-  return { id: sbId, name, norm, standard, desc, path: sbPath, entities, testing, kbModeled, hasScoping, hasCorpusDirectives, strengthenReport, fixHistory, feedStatus, ruleTraceGaps };
+  return { id: sbId, name, norm, standard, desc, path: sbPath, entities, testing, kbModeled, hasScoping, hasCorpusDirectives, hasInstructionsDirectives, hasInstructionsScoping, strengthenReport, fixHistory, feedStatus, ruleTraceGaps };
 }
 
 // ── scanAll ───────────────────────────────────────────────────────────────

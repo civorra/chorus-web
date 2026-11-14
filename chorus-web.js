@@ -3409,19 +3409,32 @@ async function launchPipelineFeed() {
   if (!currentSandbox) return;
   const sb = currentSandbox;
 
-  // Charger la liste des fichiers corpus avant d'ouvrir le terminal
-  let files = [];
+  // Essayer d'abord instructions-directives.md (liste ordonnée déclarée par l'opérateur)
+  let files        = [];
+  let fromInstructions = false;
   try {
-    const r = await fetch(`${API}/api/sandboxes/${sb.id}/corpus-files`);
-    const d = await r.json();
-    if (d.ok) files = d.files || [];
+    const ri = await fetch(`${API}/api/sandboxes/${sb.id}/corpus-instructions`);
+    const di = await ri.json();
+    if (di.ok && di.files && di.files.length) {
+      files            = di.files;
+      fromInstructions = true;
+    }
   } catch {}
 
-  showPipelineFeedPreflight(sb, files);
+  // Fallback : scan récursif du dossier corpus/
+  if (!fromInstructions) {
+    try {
+      const r = await fetch(`${API}/api/sandboxes/${sb.id}/corpus-files`);
+      const d = await r.json();
+      if (d.ok) files = d.files || [];
+    } catch {}
+  }
+
+  showPipelineFeedPreflight(sb, files, fromInstructions);
 }
 
 /** Affiche l'overlay pré-vol avec la liste des fichiers corpus. */
-function showPipelineFeedPreflight(sb, files) {
+function showPipelineFeedPreflight(sb, files, fromInstructions = false) {
   const overlay = document.getElementById('pipeline-feed-preflight');
   if (!overlay) return;
 
@@ -3433,16 +3446,27 @@ function showPipelineFeedPreflight(sb, files) {
   if (!files.length) {
     list.innerHTML = '<div style="color:var(--text-muted);font-size:12px;padding:8px 0">Aucun fichier trouvé dans corpus/</div>';
   } else {
-    files.forEach((f, i) => {
+    // Bandeau d'info si la liste vient de instructions-directives.md
+    if (fromInstructions) {
+      const banner = document.createElement('div');
+      banner.style.cssText = 'font-size:11px;color:var(--text-muted);padding:4px 0 8px;border-bottom:1px solid var(--border);margin-bottom:6px';
+      banner.innerHTML = '📋 <em>Ordre défini dans <code>instructions-directives.md</code> — pré-sélectionné automatiquement.</em>';
+      list.appendChild(banner);
+    }
+
+    files.forEach((f) => {
       const row = document.createElement('label');
       row.className = 'pf-file-row';
-      const sizeStr = f.size != null
-        ? f.size > 1024 ? `${(f.size / 1024).toFixed(1)} ko` : `${f.size} o`
-        : '';
+      // Afficher la passe si disponible (fromInstructions)
+      const metaStr = fromInstructions && f.passe
+        ? `<span class="pf-file-size">passe ${f.passe} · ${f.mode || 'feed'}</span>`
+        : (f.size != null
+          ? `<span class="pf-file-size">${f.size > 1024 ? `${(f.size/1024).toFixed(1)} ko` : `${f.size} o`}</span>`
+          : '');
       row.innerHTML =
         `<input type="checkbox" name="pf-file" value="${escapeHtml(f.relPath)}" checked>` +
         `<span class="pf-file-name">${escapeHtml(f.relPath)}</span>` +
-        `<span class="pf-file-size">${sizeStr}</span>`;
+        metaStr;
       list.appendChild(row);
     });
   }

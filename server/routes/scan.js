@@ -115,6 +115,58 @@ router.get('/sandboxes/:sbId/corpus-files', (req, res) => {
   }
 });
 
+// ── GET /sandboxes/:sbId/corpus-instructions ─────────────────────────────
+// Lit instructions-directives.md à la racine du sandbox et parse la section
+// "## Corpus files — ordre d'ingestion" pour retourner la liste ordonnée
+// des fichiers corpus déclarés par l'opérateur.
+// Utilisé par launchPipelineFeed() pour pré-sélectionner les fichiers sans
+// demander à l'utilisateur de cocher manuellement.
+router.get('/sandboxes/:sbId/corpus-instructions', (req, res) => {
+  const { SANDBOXES_DIR } = require('../../chorus/fs');
+  try {
+    const sbPath   = path.join(SANDBOXES_DIR(), req.params.sbId);
+    const instrFile = path.join(sbPath, 'instructions-directives.md');
+    if (!fs.existsSync(instrFile)) {
+      return res.json({ ok: true, files: null }); // absent → fallback côté client
+    }
+
+    const content = fs.readFileSync(instrFile, 'utf8');
+
+    // Extraire la section ## Corpus files — ordre d'ingestion
+    const sectionMatch = content.match(
+      /##\s+Corpus files[^\n]*\n([\s\S]*?)(?=\n##\s|\n---\s*\n##\s|$)/
+    );
+    if (!sectionMatch) return res.json({ ok: true, files: null });
+
+    const section = sectionMatch[1];
+    const files   = [];
+
+    // Parser les lignes de tableau Markdown (ignorer header + séparateur)
+    for (const line of section.split('\n')) {
+      const cells = line.split('|').map(c => c.trim()).filter(Boolean);
+      // Ignorer header (Ordre/Fichier/Passe/Mode) et séparateur (---)
+      if (!cells.length || cells[0] === 'Ordre' || /^-+$/.test(cells[0])) continue;
+      const [ordre, fichier, passe, mode] = cells;
+      if (!fichier || fichier.startsWith('corpus/') === false && !fichier.includes('/')) continue;
+      const num = parseInt(ordre, 10);
+      if (isNaN(num)) continue;
+      files.push({
+        ordre:  num,
+        relPath: fichier,
+        name:   path.basename(fichier),
+        passe:  parseInt(passe, 10) || 1,
+        mode:   (mode || 'feed').trim(),
+      });
+    }
+
+    files.sort((a, b) => a.ordre - b.ordre);
+    res.json({ ok: true, files: files.length ? files : null });
+
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
 // ── GET /sandboxes/:sbId/feed-status ─────────────────────────────────────
 // Lit .chorus-unattended-state.json du sandbox et retourne l'état normalisé.
 // Appelé par le polling client toutes les N secondes pour mettre à jour le
