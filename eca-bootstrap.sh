@@ -92,6 +92,13 @@ else
   echo "[eca-bootstrap] ⚠ Aucune authentification disponible (ni OAuth ni API key ni webapp)"
 fi
 
+# ── NOTE : ANTHROPIC_API_KEY non injectée en mode max/pro ─────────────────
+# Les scripts Python (chorus-pdf, chorus-word…) lisent la clé directement
+# depuis /run/secrets/anthropic_api_key — sans passer par l'env d'ECA.
+# Cela garantit qu'ECA reste en mode OAuth Max (forfait illimité) et que
+# la clé API pay-per-token n'est utilisée QUE pour l'accès vision Claude
+# dans les scripts Python.
+
 send_message() {
   payload="$1"
   len=$(printf '%s' "$payload" | wc -c)

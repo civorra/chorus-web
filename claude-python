@@ -1,0 +1,49 @@
+#!/bin/sh
+# claude-python — wrapper container pour scripts Python nécessitant Claude vision.
+#
+# Miroir du wrapper hôte (~/.local/bin/claude-python).
+# Injecte ANTHROPIC_API_KEY depuis /run/secrets/anthropic_api_key UNIQUEMENT
+# pour les scripts de conversion (chorus-pdf / chorus-word / chorus-excel / chorus-xml).
+#
+# ⛔ Tous les autres scripts Python s'exécutent SANS clé API — ECA et les
+#    skills non-vision continuent d'utiliser le forfait Claude Max (OAuth).
+#
+# Usage : claude-python /path/to/extract-pdf-*.py [args...]
+
+SCRIPT="${1:-}"
+SCRIPT_BASENAME=$(basename "$SCRIPT" .py)
+
+# Scripts autorisés à recevoir la clé API (vision Claude uniquement)
+is_conversion_script() {
+    case "$SCRIPT_BASENAME" in
+        extract-pdf-*|\
+        extract-word-*|\
+        extract-excel-*|\
+        chorus-pdf-*|\
+        chorus-word-*|\
+        chorus-excel-*|\
+        chorus-xml-*)
+            return 0 ;;
+        *)
+            return 1 ;;
+    esac
+}
+
+SECRET_FILE="/run/secrets/anthropic_api_key"
+
+if is_conversion_script; then
+    if [ -f "$SECRET_FILE" ]; then
+        _key=$(cat "$SECRET_FILE")
+        if [ -n "$_key" ]; then
+            exec env ANTHROPIC_API_KEY="$_key" python3 "$@"
+        else
+            echo "[claude-python] ⚠️  Secret présent mais vide — mode texte (sans vision)" >&2
+        fi
+    else
+        echo "[claude-python] ⚠️  /run/secrets/anthropic_api_key absent — mode texte (sans vision)" >&2
+    fi
+else
+    echo "[claude-python] ⛔ Injection ANTHROPIC_API_KEY désactivée pour ce script (réservée aux scripts de conversion) : $SCRIPT_BASENAME" >&2
+fi
+
+exec python3 "$@"

@@ -103,6 +103,11 @@ RUN curl -fsSL -o /tmp/eca.zip \
 COPY web/eca-config.json /etc/eca/config.json
 COPY web/eca-bootstrap.sh /usr/local/bin/eca-bootstrap.sh
 RUN chmod +x /usr/local/bin/eca-bootstrap.sh
+# Wrapper claude-python : injecte ANTHROPIC_API_KEY uniquement pour les scripts
+# de conversion (extract-pdf-*, extract-word-*, extract-excel-*, chorus-pdf-*…).
+# Miroir du wrapper hôte — même convention, même restriction par nom de script.
+COPY web/claude-python /usr/local/bin/claude-python
+RUN chmod +x /usr/local/bin/claude-python
 
 # Racine de travail = tout le dépôt Chorus monté en volume, pour que ECA voie
 # engine/AGENTS.md, agent/skills/*.md et sandboxes/.

@@ -43,10 +43,13 @@ services:
       - ECA_MODEL_ARCHITECT=${ECA_MODEL_ARCHITECT:-anthropic/claude-sonnet-5}
       - ECA_MODEL_CODE=${ECA_MODEL_CODE:-anthropic/claude-sonnet-4-6}
       - ECA_MODEL_FAST=${ECA_MODEL_FAST:-anthropic/claude-haiku-4-5-20251001}
-    # No anthropic_api_key secret here: ECA uses OAuth credentials
-    # (Pro/Max subscription) mounted from ~/.config/eca/ on the host.
-    # API key fallback: eca-bootstrap.sh injects it automatically when
-    # OAuth credentials are absent AND the secret is configured.
+    # anthropic_api_key secret monté pour les scripts Python (chorus-pdf).
+    # ECA lui-même utilise OAuth (db.transit.json) — eca-bootstrap.sh
+    # n'injecte ANTHROPIC_API_KEY que si ANTHROPIC_PROVIDER_TYPE=max/pro
+    # (safe : ECA en mode Max ignore la variable, elle sert uniquement aux
+    # sous-processus Python qui appellent l'API Anthropic directement).
+    secrets:
+      - anthropic_api_key
     volumes:
       # Same mount as chorus-web: ECA must see engine/AGENTS.md,
       # agent/skills/*.md and sandboxes/ to load the real skills.
