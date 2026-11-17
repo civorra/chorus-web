@@ -95,12 +95,12 @@ function sortReportsByDateDesc(reports) {
 
 /**
  * Ouvre le terminal en mode 'report' et lance automatiquement :
- *   chorus-check <sbId> <projId> --summary --explain --from-report
+ *   chorus-check-report <sbId> workspace/<entityId>/reports/<run-report.json> --explain --summary
  * Remplace les anciens boutons 📋 (summary) / 💡 (explain) par un seul bouton
- * "🔍 Analyse" qui génère les deux rapports sans relancer le pipeline.
+ * "🔍 Analyse" qui génère les deux rapports sans relancer le pipeline (ENG-069).
  */
 function lvlTermAnalyseRun(sbId, entityId, projId, projName, reportFile, explainFile, syntheseFile) {
-  const cmd = `chorus-check ${sbId} ${projId} --summary --explain --from-report ${reportFile}`;
+  const cmd = `chorus-check-report ${sbId} workspace/${entityId}/reports/${reportFile} --explain --summary`;
   openLevelTerminal(
     'report',
     { sbId, entityId, projId, projName, reportFile, explainFile, syntheseFile },
@@ -460,7 +460,7 @@ function pvReportButtons(r, proj, sbId) {
       miniIcons =
         `<button class="btn btn-ghost btn-sm"
            style="padding:2px 8px;font-size:10px;flex-shrink:0;border:1px solid var(--text-muted);opacity:.8"
-           title="chorus-check --summary --explain --from-report (sans pipeline)"
+           title="chorus-check-report --explain --summary (sans pipeline)"
            onclick="lvlTermAnalyseRun('${sbId}','${proj.entity}','${proj.id}','${safeProj}','${r.label}',null,null)">🔍 Analyse</button>`;
     } else {
       // Au moins un existe → bouton(s) de visualisation individuel(s)
@@ -4386,11 +4386,11 @@ function renderReportsList(reports) {
     // Index dans le tableau complet (pour openReportView)
     const fullIdx = reports.indexOf(r);
 
-    // 🔍 Analyse — chorus-check --summary --explain --from-report (sans pipeline)
+    // 🔍 Analyse — chorus-check-report --explain --summary (sans pipeline)
     const safeProjName = (currentProject?.name || projId || '').replace(/'/g, "\\'");
     const miniIcons = `<button class="btn btn-ghost btn-sm"
          style="padding:2px 8px;font-size:10px;flex-shrink:0;border:1px solid var(--text-muted);opacity:.8"
-         title="chorus-check --summary --explain --from-report (sans pipeline)"
+         title="chorus-check-report --explain --summary (sans pipeline)"
          onclick="lvlTermAnalyseRun('${sbId}','${entityId}','${projId}','${safeProjName}','${r.label}',${r.explain_file ? `'${r.explain_file}'` : 'null'},${r.synthese_file ? `'${r.synthese_file}'` : 'null'})">🔍 Analyse</button>`;
 
     return `
@@ -4707,7 +4707,7 @@ function updateRvCheckButtons() {
   // Priority 1: fresh same-session analysis (in _lastReports alongside a run-report).
   // Priority 2: linked by timestamp — from explain_file/synthese_file on the run entry
   //             OR derived from the run label (handles minimal reportInfo from history modal).
-  // If NONE found for either kind → single "Analyse" button (--from-report mode).
+  // If NONE found for either kind → single "Analyse" button (chorus-check-report mode, ENG-069).
   // ⛔ No cross-slug fallback — only files explicitly linked to this run are valid.
   const sessionReports = window._lastReports || [];
   const hasCurrentRun  = sessionReports.some(r => r.kind === 'run');
@@ -4774,15 +4774,12 @@ function updateRvCheckButtons() {
     const runReportFile = _rvCurrentReport?.label;
     analyseBtn.style.display = '';
     analyseBtn.innerHTML     = '🔍 Analyse';
-    analyseBtn.title         = 'chorus-check --summary --explain --from-report (sans pipeline)';
+    analyseBtn.title         = 'chorus-check-report --explain --summary (sans pipeline)';
     analyseBtn.onclick       = () => {
       const ctx    = window._rvCtx || {};
       const rFile  = runReportFile || '';
       const rPath  = `workspace/${ctx.entityId}/reports/${rFile}`;
-      const cmd    = `chorus-check ${ctx.sbId} ${ctx.projId} --summary --explain --from-report ${rFile}\n`
-        + `Mode --from-report : charger les éléments depuis $SANDBOX/${rPath}.\n`
-        + `⚠ NE PAS relancer run.pl ni le pipeline MCP.\n`
-        + `Extraire RUN_TIMESTAMP du nom de fichier pour nommer les rapports produits.`;
+      const cmd    = `chorus-check-report ${ctx.sbId} ${rPath} --explain --summary`;
       closeReportView();
       openLevelTerminal('project', { sbId: ctx.sbId, entityId: ctx.entityId,
         projId: ctx.projId, projName: ctx.projName || ctx.projId }, cmd);
@@ -4813,11 +4810,7 @@ function openAnalyseFromReport(kind = 'summary') {
 
   const runReportPath = `workspace/${entityId}/reports/${runReportFile}`;
 
-  const cmd = `chorus-check ${sbId} --from-report ${runReportPath} --${kind}\n`
-    + `Mode --from-report : charger les éléments directement depuis $SANDBOX/${runReportPath}.\n`
-    + `⚠ NE PAS relancer run.pl, NE PAS appeler chorus_process ni le pipeline MCP.\n`
-    + `Extraire RUN_TIMESTAMP du nom de fichier pour nommer les rapports produits.\n`
-    + `Projet : ${projId}`;
+  const cmd = `chorus-check-report ${sbId} ${runReportPath} --${kind}`;
 
   closeReportView();
   openLevelTerminal('project', { sbId, entityId, projId, projName: projName || projId }, cmd);
@@ -6865,12 +6858,12 @@ function openHistoryModal(projId) {
         } else if (isJson) {
           viewBtn = `<button class="btn btn-ghost btn-sm" style="padding:2px 7px;font-size:10px;flex-shrink:0" title="Voir ${r.label} (rapport structuré run.pl)" onclick="openReportView({label:'${r.label}', kind:'run', run:'run.pl'}, {sbId:'${sbId}', sbName:'${(currentSandbox&&currentSandbox.name)||sbId}', entityId:'${proj.entity}', projId:'${projId}', projName:'${proj.name}'})">👁️</button>`;
         }
-        // 🔍 Analyse — chorus-check --summary --explain --from-report (sans pipeline)
+        // 🔍 Analyse — chorus-check-report --explain --summary (sans pipeline)
         const safeProjName = (proj.name || '').replace(/'/g, "\\'");
         const miniIcons = isJson
           ? `<button class="btn btn-ghost btn-sm"
                style="padding:2px 8px;font-size:10px;flex-shrink:0;border:1px solid var(--text-muted);opacity:.8"
-               title="chorus-check --summary --explain --from-report (sans pipeline)"
+               title="chorus-check-report --explain --summary (sans pipeline)"
                onclick="lvlTermAnalyseRun('${sbId}','${proj.entity}','${projId}','${safeProjName}','${r.label}',${r.explain_file ? `'${r.explain_file}'` : 'null'},${r.synthese_file ? `'${r.synthese_file}'` : 'null'})">🔍 Analyse</button>`
           : '';
 
