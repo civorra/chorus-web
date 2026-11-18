@@ -4524,6 +4524,37 @@ function elementMotif(e) {
   return '—';
 }
 
+// Generic "caveat" splitter — some rules across sandboxes (e.g. R06/R07 of
+// 08-ANSSI-PG-083-CENTRIC) append a trailing clause to `motif` that reads
+// like a failure ("RèglePQSécuAsym non satisfaite sans hybridation
+// post-quantique déclarée") even though the element's verdict stays
+// CONFORME (the clause is a non-blocking recommendation, not the reason
+// for the verdict). Displayed as-is, this trailing clause is visually
+// indistinguishable from a real non-conformity reason and misleads at a
+// glance.
+//
+// This is a display-only heuristic (no YAML/KB change, no engine semantics
+// touched): on a CONFORME-verdict row, detect a trailing " — ...<negative
+// keyword>..." clause and split it out of the main motif text so it can be
+// rendered as a separate, visually distinct "⚠️ réserve" annotation instead
+// of being read as part of the compliance justification.
+//
+// Pattern is intentionally generic (no hardcoded rule/domain names) so it
+// applies to any current or future sandbox motif following the same
+// "<justification> — <RègleX> non satisfaite/non respectée/requise ...>"
+// convention, without requiring a dedicated structured slot everywhere.
+const CAVEAT_TRAILING_RE = /\s+—\s+([^—]*?(?:non satisfaite|non respect[ée]e?s?|non conforme|requise?)[^—]*)$/i;
+
+function splitMotifCaveat(motif, status) {
+  if (status !== 'CONFORME' || typeof motif !== 'string') return { main: motif, caveat: null };
+  const m = motif.match(CAVEAT_TRAILING_RE);
+  if (!m) return { main: motif, caveat: null };
+  const caveat = m[1].trim();
+  const main = motif.slice(0, m.index).trim();
+  if (!main) return { main: motif, caveat: null }; // guard: don't empty the whole cell
+  return { main, caveat };
+}
+
 // Transforms the elements[] of the real run-report-*.json into displayable rows.
 // Replaces the former generateMockRows() (100% fictional data, including the
 // per-row "confidence" index — which has no equivalent in the real
@@ -4553,12 +4584,14 @@ function rowsFromRunReport(data) {
     const chain = Array.isArray(e._rule_trace) && e._rule_trace.length
       ? e._rule_trace.map(t => t.rule_id).join(' → ')
       : '—';
+    const { main: motif, caveat } = splitMotifCaveat(elementMotif(e), status);
     return {
       ref:          e.id || '?',
       label:        e.type_element || '?',
       status,
       rawVerdict:   e.verdict,
-      motif:        elementMotif(e),
+      motif,
+      caveat,
       source:       chain,
     };
   });
@@ -4636,7 +4669,7 @@ async function openReportView(reportInfo, ctx, initialFilter = 'ALL') {
       <td><code class="mono" style="font-size:11px;color:var(--accent)">${r.ref}</code></td>
       <td style="color:var(--text-primary)">${r.label}${(r.status==='A_CONFIRMER'||r.status==='UNPROCESSED') && r.rawVerdict && r.rawVerdict!=='CONFORME' && r.rawVerdict!=='NON_CONFORME' ? ` <span style="color:var(--text-muted);font-size:10px">(${r.rawVerdict})</span>` : ''}</td>
       <td><span class="rv-badge ${r.status}">${{CONFORME:'CONFORME',NON_CONFORME:'NON CONFORME',A_CONFIRMER:'À confirmer',UNPROCESSED:'Non évalué'}[r.status]||r.status}</span></td>
-      <td style="font-size:11px;color:var(--text-secondary);max-width:280px">${r.motif}</td>
+      <td style="font-size:11px;color:var(--text-secondary);max-width:280px">${r.motif}${r.caveat ? `<br><span style="color:var(--text-muted);font-style:italic" title="Réserve non bloquante — n'affecte pas le verdict CONFORME">⚠️ ${r.caveat}</span>` : ''}</td>
       <td><span style="font-size:10px;color:var(--text-muted);font-family:'JetBrains Mono',monospace">${r.source}</span></td>
     </tr>`
   ).join('') || `<tr><td colspan="5" style="text-align:center;padding:24px;color:var(--text-muted)">Aucun élément dans ce rapport.</td></tr>`;
