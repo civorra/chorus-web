@@ -4524,28 +4524,42 @@ function elementMotif(e) {
   return '—';
 }
 
-// Generic "caveat" splitter — some rules across sandboxes (e.g. R06/R07 of
-// 08-ANSSI-PG-083-CENTRIC) append a trailing clause to `motif` that reads
-// like a failure ("RèglePQSécuAsym non satisfaite sans hybridation
-// post-quantique déclarée") even though the element's verdict stays
-// CONFORME (the clause is a non-blocking recommendation, not the reason
-// for the verdict). Displayed as-is, this trailing clause is visually
-// indistinguishable from a real non-conformity reason and misleads at a
-// glance.
+// Generic "caveat" splitter — structured slot first (ENG-071), legacy
+// regex heuristic as fallback. Some rules across sandboxes (e.g. R06/R07 of
+// 08-ANSSI-PG-083-CENTRIC, written before ENG-071) append a trailing clause
+// to `motif` that reads like a failure ("RèglePQSécuAsym non satisfaite
+// sans hybridation post-quantique déclarée") even though the element's
+// verdict stays CONFORME (the clause is a non-blocking recommendation, not
+// the reason for the verdict). Displayed as-is, this trailing clause is
+// visually indistinguishable from a real non-conformity reason and
+// misleads at a glance.
 //
-// This is a display-only heuristic (no YAML/KB change, no engine semantics
-// touched): on a CONFORME-verdict row, detect a trailing " — ...<negative
-// keyword>..." clause and split it out of the main motif text so it can be
-// rendered as a separate, visually distinct "⚠️ réserve" annotation instead
-// of being read as part of the compliance justification.
+// This is a display-only change (no YAML/KB change, no engine semantics
+// touched): it first looks for the structured `caveat_motif`/
+// `caveat_motif_<aspect>` slot (ENG-071 convention for newly-authored
+// rules); if absent, it falls back to detecting a trailing " — ...<negative
+// keyword>..." clause on legacy CONFORME motifs and splits it out so it can
+// be rendered as a separate, visually distinct "⚠️ réserve" annotation
+// instead of being read as part of the compliance justification.
 //
-// Pattern is intentionally generic (no hardcoded rule/domain names) so it
-// applies to any current or future sandbox motif following the same
-// "<justification> — <RègleX> non satisfaite/non respectée/requise ...>"
-// convention, without requiring a dedicated structured slot everywhere.
+// The legacy regex pattern is intentionally generic (no hardcoded
+// rule/domain names) so it applies to any current sandbox motif following
+// the pre-ENG-071 "<justification> — <RègleX> non satisfaite/non
+// respectée/requise ...>" convention.
 const CAVEAT_TRAILING_RE = /\s+—\s+([^—]*?(?:non satisfaite|non respect[ée]e?s?|non conforme|requise?)[^—]*)$/i;
 
-function splitMotifCaveat(motif, status) {
+function splitMotifCaveat(e, motif, status) {
+  // 0. Structured slot takes priority (ENG-071 — chorus-engine-yaml.md
+  // § "Convention — caveat_motif pour réserve non bloquante sur CONFORME").
+  // Any rule authored after ENG-071 writes this slot directly instead of
+  // concatenating the reserve into `motif` — no regex needed in that case.
+  const structured = e.caveat_motif ??
+    (Object.keys(e).find(k => k.startsWith('caveat_motif_')) &&
+     e[Object.keys(e).find(k => k.startsWith('caveat_motif_'))]);
+  if (structured != null) return { main: motif, caveat: structured };
+
+  // 1. Legacy fallback heuristic — motifs written before ENG-071 that still
+  // concatenate the reserve into the main motif text.
   if (status !== 'CONFORME' || typeof motif !== 'string') return { main: motif, caveat: null };
   const m = motif.match(CAVEAT_TRAILING_RE);
   if (!m) return { main: motif, caveat: null };
@@ -4584,7 +4598,7 @@ function rowsFromRunReport(data) {
     const chain = Array.isArray(e._rule_trace) && e._rule_trace.length
       ? e._rule_trace.map(t => t.rule_id).join(' → ')
       : '—';
-    const { main: motif, caveat } = splitMotifCaveat(elementMotif(e), status);
+    const { main: motif, caveat } = splitMotifCaveat(e, elementMotif(e), status);
     return {
       ref:          e.id || '?',
       label:        e.type_element || '?',
