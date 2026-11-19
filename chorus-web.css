@@ -1231,6 +1231,25 @@ input, select, textarea { font-family: inherit; }
 .lvl-term-panel #lvl-term-ask-banner * {
   font-size: 1em !important;
 }
+/* ── Couverture exhaustive des 4 zones (ENG-XXX) ─────────────────────────
+   Les règles ci-dessus ne couvraient pas : le timestamp de chaque ligne
+   (.eca-ts), les lignes d'appel d'outil (.eca-tool-*), les lignes de
+   sous-agent (.eca-subagent-*) et les éléments markdown générés dans la
+   zone "Réponse ECA" (h2.md-h2, pre.md-code, table.md-table, etc.) — tous
+   déclarent un font-size en px dans ce fichier, non scalé par le zoom
+   data-fontsize du panel. On force ici 1em sur TOUT descendant de la zone
+   de log (#lvl-term-output) et de la zone réponse (#lvl-term-reply), ce
+   qui garantit que le zoom A-/A+ s'applique uniformément à :
+   - le titre de la fenêtre (.eca-session-title, déjà couvert ci-dessus)
+   - le bandeau/plan (taskboard + skill-banner, déjà couvert ci-dessus)
+   - la zone de log des commandes (#lvl-term-output et tout son contenu)
+   - la zone de sortie "Réponse ECA" (#lvl-term-reply et tout son contenu) */
+.lvl-term-panel #lvl-term-output,
+.lvl-term-panel #lvl-term-output *,
+.lvl-term-panel #lvl-term-reply,
+.lvl-term-panel #lvl-term-reply * {
+  font-size: 1em !important;
+}
 
 /* ── Recherche dans le log (Ctrl+F) ────────────────────────────────────── */
 mark.lvl-term-search-hit {
