@@ -245,11 +245,12 @@ router.post('/sandboxes/:sbId/terminal', (req, res) => {
 
         contextBlock += extra;
       }
-      // ── Enrichissement thesaurus-assistant ─────────────────────────────
+      // ── Enrichissement thesaurus-assistant (interactif + autonome) ────
       // Injecte le contenu actuel du thésaurus entity + les entrées _a_confirmer
       // du JSON projet, afin que le LLM ait le contexte complet sans avoir à lire
-      // les fichiers lui-même avant le premier eca__ask_user.
-      if (kind === 'thesaurus-assistant' && entityId && projId) {
+      // les fichiers lui-même avant le premier eca__ask_user (mode interactif)
+      // ou avant sa première décision autonome (mode autonome).
+      if ((kind === 'thesaurus-assistant' || kind === 'thesaurus-assistant-auto') && entityId && projId) {
         try {
           const sbPath   = path.join(chorus.SANDBOXES_DIR(), sbId);
           const thesFile = path.join(sbPath, 'workspace', entityId, 'thesaurus.org');
@@ -298,9 +299,10 @@ router.post('/sandboxes/:sbId/terminal', (req, res) => {
     // ⛔ eca__skill() est interdit pour les skills Chorus (non enregistrés dans
     // eca-config.json — toujours KO) — utiliser eca__read_file() uniquement.
     const CHORUS_SKILL_MAP = {
-      strengthen:            'chorus-strengthen',
-      fix:                   'chorus-fix',
-      'thesaurus-assistant': 'thesaurus-assistant', // court-circuite la détection regex
+      strengthen:                 'chorus-strengthen',
+      fix:                        'chorus-fix',
+      'thesaurus-assistant':      'thesaurus-assistant',      // court-circuite la détection regex
+      'thesaurus-assistant-auto': 'thesaurus-assistant-auto', // mode autonome — pas de eca__ask_user
       // les autres kinds n'ont pas de skill dédié ou sont gérés par le message lui-même
     };
     // Pour tout message contenant un déclencheur Chorus connu, forcer eca__read_file
@@ -364,6 +366,19 @@ router.post('/sandboxes/:sbId/terminal', (req, res) => {
         '⛔ PROMOTION ENTITY INTERDITE — l\'assistant ECA ne peut jamais écrire dans thesaurus.org § * Aliases, quelle que soit la demande de l\'utilisateur. La promotion vers l\'entité (🏢) est EXCLUSIVEMENT réalisée via le bouton 🏢 de l\'onglet Thésaurus de la webapp. Cette règle est absolue et sans exception.',
         '⛔ Si l\'utilisateur reporte sa décision (aucun choix parmi les 3 options) : déplacer l\'entrée vers <proj-id>.thesaurus.json § "pending" via eca__edit_file — NE JAMAIS réintroduire le terme dans * Pending de thesaurus.org. Le thésaurus entité ne doit contenir QUE des décisions confirmées (ENG-071).',
         '⛔ Le thésaurus entité (thesaurus.org § * Pending) doit toujours être vide à la fin d\'une session thesaurus-assistant — tout terme non tranché repart dans <proj-id>.thesaurus.json § "pending".',
+      ],
+      'thesaurus-assistant-auto': [
+        '✅ AUTONOMOUS MODE — ⛔ eca__ask_user INTERDIT, aucune interaction utilisateur, une seule passe batch sur tous les termes Pending.',
+        '✅ Pour chaque terme Pending : analyser le contexte KB (agent org) et le mapping proposé.',
+        '✅ Si une recommandation CLAIRE et JUSTIFIÉE se dégage (ex : match OID/RFC explicite, terme déjà confirmé ailleurs dans le même thésaurus, correspondance KB non ambiguë) → appliquer DIRECTEMENT et SILENCIEUSEMENT la décision (confirm ou out-of-scope), sans demander de validation.',
+        '⛔ Si AUCUNE recommandation claire ne se dégage (ambiguïté réelle entre plusieurs type_element/slot possibles, terme inconnu de la KB, information insuffisante) → NE PAS décider, laisser le terme inchangé dans <proj-id>.thesaurus.json § "pending", passer au terme suivant sans s\'arrêter.',
+        '✅ Décision ✅ Confirmer (recommandation claire, mapping vers un type_element/slot existant) → écrire dans <proj-id>.thesaurus.json § aliases_type_element ou aliases_slot_values (Niveau 2 projet) + supprimer de § "pending". ⛔ JAMAIS dans thesaurus.org § * Aliases.',
+        '✅ Décision ⬜ Hors périmètre (recommandation claire que le terme ne correspond à aucun concept KB pertinent) → écrire dans thesaurus.org § * Out-of-scope + supprimer de <proj-id>.thesaurus.json § "pending".',
+        '⛔ confidence dans <proj-id>.thesaurus.json § aliases DOIT être "confirmée" — format exact requis pour affichage dans la webapp.',
+        '⛔ Ne jamais appeler chorus-import-project avant la fin de la passe.',
+        '⛔ PROMOTION ENTITY INTERDITE — ne jamais écrire dans thesaurus.org § * Aliases, quelle que soit la situation. Réservé exclusivement au bouton 🏢 de la webapp.',
+        '✅ Fin de passe OBLIGATOIRE : produire un récapitulatif explicite listant séparément les termes ✅ confirmés, ⬜ classés hors périmètre, et ⏭️ ignorés faute de recommandation claire (avec le motif de l\'ambiguïté pour chacun) — ce résidu reste visible pour un traitement manuel ultérieur (mode interactif).',
+        '⛔ Ne jamais inventer ou forcer une recommandation pour faire disparaître un terme de la liste des ignorés — le doute doit toujours profiter à l\'absence de décision.',
       ],
       'chorus-import-project': [
         '✅ Appeler eca__task(op="plan",...) en Phase 0 pour afficher la progression des phases dans le bandeau.',

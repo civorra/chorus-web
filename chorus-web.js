@@ -822,18 +822,26 @@ function _pvThesOrigin(confidence) {
 
 // Renders the "Origine" column badge — 📥 Import (linked to the source
 // import report) or ✍️ Résolution manuelle (with the validation date).
-function _pvThesOriginBadge(confidence, sourceImport) {
+// `level` (2 ou 3, cf. chorus/thesaurus.js § scanSandboxThesaurus) est le
+// critère STRUCTUREL fiable — prioritaire sur le parsing texte `confidence`
+// (voir commentaire détaillé § colonne Action, renderPvThesaurusTab) : une
+// ligne level=3 est TOUJOURS entity-wide même si son texte confidence dit
+// juste "confirmed" au lieu de "entity-promoted" (édition manuelle du
+// thesaurus.org, import legacy, etc.).
+function _pvThesOriginBadge(confidence, sourceImport, level) {
   const origin = _pvThesOrigin(confidence);
+  // Niveau 3 structurel (thesaurus.org § Aliases) — toujours entity-wide,
+  // quel que soit le texte confidence exact.
+  if (level === 3) {
+    const date = origin.date || '?';
+    return `<span style="color:#A78BFA" title="Vit dans thesaurus.org (Niveau 3 — entity-wide) — s'applique à tous les projets de l'entity">🏛️ Entity (${date})</span>`;
+  }
   // WEB-027 Niveau 2 — scopé au projet uniquement
   if (origin.kind === 'manual-project') {
     return `<span style="color:var(--ok,#30D158)" title="Confirmé pour ce projet uniquement le ${origin.date} (Niveau 2 — project-scoped)">🔑 Projet (${origin.date})</span>`;
   }
-  // WEB-027 Niveau 3 — valide pour toute l'entity
-  if (origin.kind === 'manual-entity') {
-    return `<span style="color:#A78BFA" title="Promu à l'entity le ${origin.date} — s'applique à tous les projets (Niveau 3 — entity-wide)">🏢 Entity (${origin.date})</span>`;
-  }
-  // Legacy : confirmé manuellement
-  if (origin.kind === 'manual') {
+  // Legacy : confirmé manuellement (Niveau 2 historique, pré-WEB-027)
+  if (origin.kind === 'manual' || origin.kind === 'manual-entity') {
     return `<span style="color:var(--accent)" title="Confirmé manuellement le ${origin.date}">✍️ Manuel (${origin.date})</span>`;
   }
   return `<span style="color:var(--text-muted)" title="Résolu automatiquement lors de l'import">📥 ${sourceImport || 'Import'}</span>`;
@@ -872,8 +880,8 @@ async function renderPvThesaurusTab() {
       : thesaurus;
     const shardsToUse = entityId ? entityShards : thesaurus;
 
-    const allTypeElement = shardsToUse.flatMap(s => s.aliasesTypeElement.map(a => ({ ...a, shard: s.shard })));
-    const allSlotValues  = shardsToUse.flatMap(s => s.aliasesSlotValues.map(a => ({ ...a, shard: s.shard })));
+    const allTypeElement = shardsToUse.flatMap(s => s.aliasesTypeElement.map(a => ({ ...a, shard: s.shard, level: s.level })));
+    const allSlotValues  = shardsToUse.flatMap(s => s.aliasesSlotValues.map(a => ({ ...a, shard: s.shard, level: s.level })));
 
     // WEB-027 : inclure aussi les Pending de l'entité 'global' dont le scope
     // correspond à l'entity courante (migration legacy — global.org contient des
@@ -1037,15 +1045,31 @@ async function renderPvThesaurusTab() {
           <td style="padding:4px 8px;color:var(--text-secondary)">${a.term}</td>
           <td style="padding:4px 8px;color:var(--accent);font-family:'JetBrains Mono',monospace">${a.kind === 'type_element' ? `type_element = ${a.target}` : `${a.slot} = ${a.value}`}</td>
           <td style="padding:4px 8px;color:var(--success);font-size:11px">${a.confidence || ''}</td>
-          <td style="padding:4px 8px;font-size:11px">${_pvThesOriginBadge(a.confidence, a.sourceImport)}</td>
+          <td style="padding:4px 8px;font-size:11px">${_pvThesOriginBadge(a.confidence, a.sourceImport, a.level)}</td>
           <td style="padding:4px 8px;white-space:nowrap">${
-            // "Annuler" disponible pour les confirmations manuelles :
-            //   manual         → legacy (pré-WEB-027, dans thesaurus.org)
-            //   manual-project → Niveau 2 (project-scoped, <projId>.thesaurus.json)
-            // Niveau 3 entity-promoted : annulation non applicable (intentionnel).
-            ['manual', 'manual-project'].includes(_pvThesOrigin(a.confidence).kind)
-            ? `<button class="btn btn-ghost" style="font-size:11px;padding:2px 8px;color:var(--text-muted)" onclick="pvThesUnconfirm(${i})" title="Remet ce terme en attente de confirmation">↩️ Annuler</button>`
-            : ''}</td>
+            // Critère fiable = provenance STRUCTURELLE (a.level, cf.
+            // chorus/thesaurus.js § scanSandboxThesaurus — level3Shards vs
+            // level2Shards), pas un parsing du texte libre `confidence`.
+            // Raison : une ligne Niveau 3 (thesaurus.org § Aliases) peut avoir
+            // été écrite directement dans le fichier (édition manuelle, import
+            // legacy, etc.) avec le texte générique "✅ confirmed (validated via
+            // chorus-web <date>)" au lieu du texte "entity-promoted" normalement
+            // produit par le bouton 🏢 — un parsing texte la classerait alors à
+            // tort comme "manual" (Niveau 2, annulable), alors qu'elle vit déjà
+            // dans thesaurus.org et EST, par construction, une promotion entity.
+            // (Incident : sandbox 08-ANSSI-PG-083-CENTRIC, 5 lignes eviden —
+            // texte "confirmed" mais level=3 réel.)
+            //
+            // level 3 → toujours entity-wide, jamais annulable depuis la webapp
+            //   (garde-fou serveur symétrique dans unconfirmThesaurusAlias).
+            // level 2 → annulable UNIQUEMENT si réellement confirmé manuellement
+            //   (texte confidence contient "validated via chorus-web" sans
+            //   "entity-promoted" — exclut les résolutions auto "certaine").
+            a.level === 3
+            ? ''
+            : (['manual', 'manual-project'].includes(_pvThesOrigin(a.confidence).kind)
+                ? `<button class="btn btn-ghost" style="font-size:11px;padding:2px 8px;color:var(--text-muted)" onclick="pvThesUnconfirm(${i})" title="Remet ce terme en attente de confirmation">↩️ Annuler</button>`
+                : '')}</td>
         </tr>`).join('')}
       </tbody>
     </table></div>`;
@@ -1075,7 +1099,13 @@ async function renderPvThesaurusTab() {
   html += `<div id="pv-thes-pending-section" style="margin-bottom:16px;scroll-margin-top:16px">
     <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
       <span style="font-size:11px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:.06em">⚠️ En attente de confirmation (${nPending})</span>
-      ${nPending ? `<button class="btn btn-ghost" style="font-size:11px;padding:2px 10px;color:var(--accent);border-color:var(--accent);border-radius:4px" onclick="startThesaurusAssistant()" title="Lancer un assistant ECA interactif pour résoudre les mappings en attente (eca__ask_user)">🤖 Assistant</button>` : ''}
+      ${nPending ? `
+        <label style="font-size:11px;color:var(--text-muted);display:flex;align-items:center;gap:4px;cursor:pointer" title="Coché : le LLM applique directement ses recommandations claires et ignore (sans bloquer) les termes ambigus — une seule passe, aucune interaction. Décoché (défaut) : chaque terme est soumis à validation via une question explicite (eca__ask_user), un terminal par terme traité.">
+          <input type="checkbox" id="pv-thes-autonomous" onchange="_setThesaurusAutonomousMode(this.checked)" ${_getThesaurusAutonomousMode() ? 'checked' : ''}>
+          Mode autonome
+        </label>
+        <button class="btn btn-ghost" style="font-size:11px;padding:2px 10px;color:var(--accent);border-color:var(--accent);border-radius:4px" onclick="startThesaurusAssistant()" title="Lancer un assistant ECA pour résoudre les mappings en attente">🤖 Assistant</button>
+      ` : ''}
     </div>`;
   if (nPending) {
     html += `<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:12px">
@@ -1390,6 +1420,21 @@ async function pvThesUnconfirm(i) {
     if (!r.ok || !data.ok) throw new Error(data.error || 'Échec de l\'annulation');
     const cacheKey = `${currentSandbox.id}/${currentProject.entity}/${currentProject.id}`;
     delete _pvThesaurusCache[cacheKey];
+    // driftedElements : Frames du JSON projet déjà figées avec l'ancienne
+    // résolution thésaurus (cf. chorus/thesaurus.js § _detectProjectJsonDrift).
+    // unconfirmThesaurusAlias ne modifie jamais <projId>.json — sans cette
+    // alerte explicite, l'annulation reste invisible pour le JSON déjà généré
+    // tant qu'aucun re-import n'est relancé (verdict run.pl potentiellement
+    // périmé vis-à-vis de la nouvelle décision thésaurus).
+    if (Array.isArray(data.driftedElements) && data.driftedElements.length) {
+      alert(
+        `⚠️ Confirmation annulée, mais ${data.driftedElements.length} élément(s) du JSON projet ` +
+        `utilisent déjà l'ancienne résolution de "${a.term}" :\n` +
+        data.driftedElements.map(id => `  • ${id}`).join('\n') +
+        `\n\nCe JSON est maintenant potentiellement périmé vis-à-vis du thésaurus — ` +
+        `relancez un ré-import (--keep-patches) pour appliquer la nouvelle décision.`
+      );
+    }
     renderPvThesaurusTab();
   } catch (err) {
     alert(`Erreur : ${err.message}`);
@@ -1459,6 +1504,18 @@ async function _refreshThesaurusCache(sb, proj) {
   };
 }
 
+// ── Mode autonome vs interactif — thesaurus-assistant ─────────────────────
+// Préférence persistée en localStorage (par défaut : interactif, inchangé).
+// Pas de dépendance à un projet/sandbox précis : c'est un réglage global de
+// session de travail, cohérent avec un seul bouton 🤖 Assistant dans l'onglet.
+function _getThesaurusAutonomousMode() {
+  try { return localStorage.getItem('chorus-thesaurus-autonomous') === '1'; }
+  catch { return false; }
+}
+function _setThesaurusAutonomousMode(checked) {
+  try { localStorage.setItem('chorus-thesaurus-autonomous', checked ? '1' : '0'); } catch {}
+}
+
 async function startThesaurusAssistant(forceRefresh = false) {
   const proj = currentProject, sb = currentSandbox;
   if (!proj || !sb) return;
@@ -1477,6 +1534,7 @@ async function startThesaurusAssistant(forceRefresh = false) {
     return;
   }
 
+  const autonomous  = _getThesaurusAutonomousMode();
   const thesPath    = `workspace/${proj.entity}/thesaurus.org`;
   const projRelPath = `workspace/${proj.entity}/${proj.id}.json`;
 
@@ -1488,18 +1546,7 @@ async function startThesaurusAssistant(forceRefresh = false) {
     `   Source    : ${p.sourceImport || '—'}`
   ).join('\n\n');
 
-  const autoCmd = [
-    `# Assistant thésaurus — ${pending.length} terme(s) en attente — ${proj.entity}`,
-    `# Thésaurus  : ${thesPath}`,
-    `# Projet JSON: ${projRelPath}`,
-    ``,
-    `Tu es l'assistant de résolution du thésaurus pour le projet "${proj.name}"`,
-    `(entity : ${proj.entity}, sandbox : ${sb.id}).`,
-    ``,
-    `${pending.length} terme(s) en attente de confirmation :`,
-    ``,
-    pendingList,
-    ``,
+  const protocolInteractif = [
     `Protocole :`,
     `1. Lis d'abord le thésaurus via eca__read_file("${thesPath}") pour connaître son état exact.`,
     `2. Pour chaque terme, analyse le contexte KB si nécessaire (agent org), puis utilise`,
@@ -1514,6 +1561,45 @@ async function startThesaurusAssistant(forceRefresh = false) {
     `     (commande : chorus-import-project + sandbox + source + --context ${proj.entity} + --out ${projRelPath} + --keep-patches)`,
     `   - Puis lancer un audit : chorus-audit-import sur ${projRelPath}`,
     `   - Si tout est rejeté/hors-périmètre → aucune action nécessaire.`,
+  ];
+
+  const protocolAutonome = [
+    `Protocole — MODE AUTONOME (aucune interaction, une seule passe) :`,
+    `1. Lis d'abord le thésaurus via eca__read_file("${thesPath}") pour connaître son état exact.`,
+    `2. Pour CHAQUE terme, analyse le contexte KB si nécessaire (agent org) :`,
+    `   - Si une recommandation CLAIRE et JUSTIFIÉE se dégage (match OID/RFC explicite,`,
+    `     correspondance KB non ambiguë, etc.) → applique-la DIRECTEMENT et SILENCIEUSEMENT :`,
+    `     ✅ Confirmer → déplacer vers * Aliases (slot values ou type_element selon le type)`,
+    `     ⬜ Hors périmètre → déplacer vers * Out-of-scope avec une explication courte`,
+    `   - Si AUCUNE recommandation claire ne se dégage (ambiguïté réelle, terme inconnu de la`,
+    `     KB, information insuffisante) → NE PAS décider, laisser la ligne Pending inchangée,`,
+    `     passer au terme suivant sans t'arrêter. ⛔ N'appelle JAMAIS eca__ask_user.`,
+    `3. Après chaque décision appliquée, mets à jour immédiatement thesaurus.org via eca__edit_file.`,
+    `   Respecte scrupuleusement le format des tables org-mode existantes.`,
+    `4. Une fois tous les termes passés en revue, produis un récapitulatif explicite :`,
+    `   - ✅ termes confirmés (liste)`,
+    `   - ⬜ termes classés hors périmètre (liste)`,
+    `   - ⏭️ termes laissés en Pending faute de recommandation claire (liste + motif de l'ambiguïté)`,
+    `   Puis indique les étapes suivantes :`,
+    `   - Si des aliases ont été confirmés → proposer un re-import du projet`,
+    `     (commande : chorus-import-project + sandbox + source + --context ${proj.entity} + --out ${projRelPath} + --keep-patches)`,
+    `   - Puis lancer un audit : chorus-audit-import sur ${projRelPath}`,
+    `   - Si des termes restent en Pending → signaler qu'ils nécessitent le mode interactif (case "Mode autonome" décochée).`,
+  ];
+
+  const autoCmd = [
+    `# Assistant thésaurus — ${pending.length} terme(s) en attente — ${proj.entity}${autonomous ? ' — MODE AUTONOME' : ''}`,
+    `# Thésaurus  : ${thesPath}`,
+    `# Projet JSON: ${projRelPath}`,
+    ``,
+    `Tu es l'assistant de résolution du thésaurus pour le projet "${proj.name}"`,
+    `(entity : ${proj.entity}, sandbox : ${sb.id}).`,
+    ``,
+    `${pending.length} terme(s) en attente de confirmation :`,
+    ``,
+    pendingList,
+    ``,
+    ...(autonomous ? protocolAutonome : protocolInteractif),
     ``,
     `⛔ Ne jamais modifier le fichier JSON du projet directement.`,
     `⛔ Ne promouvoir à l'entity (🏢) que si l'utilisateur le demande explicitement.`,
@@ -1525,7 +1611,7 @@ async function startThesaurusAssistant(forceRefresh = false) {
     entityId: proj.entity,
     projId:   proj.id,
     projName: proj.name,
-    kind:     'thesaurus-assistant',
+    kind:     autonomous ? 'thesaurus-assistant-auto' : 'thesaurus-assistant',
   }, autoCmd);
 }
 

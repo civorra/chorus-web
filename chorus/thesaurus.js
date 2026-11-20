@@ -767,6 +767,39 @@ function resolveThesaurusPending(sbId, shard, term, sourceImport, action, opts =
   return { ok: true, targetShard: resolvedShard, scope: targetScope, level: resolvedLevel };
 }
 
+// ── Détection de drift projet-JSON après annulation ───────────────────────
+//
+// Un alias confirmé peut déjà avoir été "compilé" dans <projId>.json lors
+// d'un import/re-import antérieur (valeur figée en dur dans elements[].
+// type_element ou elements[].<slot>, cf. chorus-import-project.md § Phase 3).
+// unconfirmThesaurusAlias() ne touche jamais ce fichier (seul le thésaurus
+// est modifié) — après une annulation, le JSON projet peut donc rester
+// silencieusement périmé par rapport à la nouvelle vérité thésaurus (le
+// terme est reparti en Pending, mais l'élément continue d'utiliser l'ancien
+// mapping confirmé).
+//
+// Détection : chercher dans elements[] toute Frame dont _alignment_source
+// mentionne le terme annulé (convention chorus-import-project.md — chaque
+// résolution thésaurus appliquée à une Frame documente sa provenance dans
+// ce champ texte libre, cf. incidents sandbox 08-ANSSI-PG-083-CENTRIC).
+// Best-effort / non-bloquant : une correspondance manquée ne doit jamais
+// empêcher l'annulation elle-même de réussir.
+function _detectProjectJsonDrift(sbPath, entityId, projectId, term) {
+  if (!entityId || !projectId || !term) return [];
+  try {
+    const projPath = path.join(sbPath, 'workspace', entityId, `${projectId}.json`);
+    const raw = readFileSafe(projPath);
+    if (!raw) return [];
+    const data = JSON.parse(raw);
+    const termLower = term.toLowerCase();
+    return (data.elements || [])
+      .filter(e => typeof e._alignment_source === 'string' && e._alignment_source.toLowerCase().includes(termLower))
+      .map(e => e.id);
+  } catch {
+    return [];
+  }
+}
+
 // ── Annulation d'une confirmation manuelle ────────────────────────────────
 //
 // Symétrique de resolveThesaurusPending(action='confirm') : remet un alias
@@ -898,7 +931,8 @@ function unconfirmThesaurusAlias(sbId, shard, term, sourceImport, opts = {}) {
           });
         } catch { /* non-bloquant */ }
 
-        return { ok: true, shard, scope: shard, level: 2 };
+        const driftedElements = _detectProjectJsonDrift(sbPath, opts.entityId, opts.projectId, term);
+        return { ok: true, shard, scope: shard, level: 2, driftedElements };
       }
     }
   }
@@ -941,82 +975,29 @@ function unconfirmThesaurusAlias(sbId, shard, term, sourceImport, opts = {}) {
     throw new Error(`Alias confirmé introuvable pour terme="${term}" source="${sourceImport}" dans ${shard}.org`);
   }
 
-  // 2) Garde-fou : refuser si l'alias n'a pas été confirmé manuellement.
+  // 2) ⛔ Garde-fou STRUCTUREL : cette branche traite exclusivement des lignes
+  // vivant dans workspace/<entity>/thesaurus.org § Aliases — c'est-à-dire,
+  // par construction du fichier lui-même, des mappings Niveau 3 (entity-wide).
+  // Refuser systématiquement, QUEL QUE SOIT le texte de la colonne confidence.
+  //
+  // Avant ce correctif, le refus se basait sur un parsing texte (regex
+  // "validated via chorus-web" + regex "entity-promoted") — fragile car une
+  // ligne peut très bien vivre dans thesaurus.org avec un texte confidence
+  // générique "✅ confirmed (validated via chorus-web <date>)" (sans le
+  // suffixe "entity-promoted"), par exemple si elle y a été écrite par une
+  // autre voie que le bouton 🏢 (édition manuelle du fichier, import legacy,
+  // migration WEB-027...). Le garde-fou texte laissait alors passer
+  // l'annulation d'une ligne pourtant bien entity-wide. (Incident : sandbox
+  // 08-ANSSI-PG-083-CENTRIC, entity eviden, 5 lignes "CKM_RSA_AES_KEY_WRAP" /
+  // "*Hybrid KEM" — confidence="✅ confirmed (validated via chorus-web
+  // 2026-11-10)", level=3 réel, bouton ↩️ Annuler affiché à tort côté UI et
+  // accepté à tort côté serveur avant ce correctif.)
   const confidenceCol = found.kind === 'type_element' ? found.cells[2] : found.cells[3];
-  if (!/validated via chorus-web/i.test(confidenceCol || '')) {
-    throw new Error(
-      `Cet alias a été résolu à l'import (chorus-import-project), pas via chorus-web — ` +
-      `annulation refusée (confidence="${confidenceCol}"). Seules les confirmations ` +
-      `manuelles peuvent être annulées depuis la webapp.`
-    );
-  }
-  // §2 — Refuser explicitement les promotions entity-promoted.
-  // La confidence "entity-promoted (validated via chorus-web DATE)" satisfait
-  // le regex précédent — sans ce guard supplémentaire, l'API accepterait de
-  // défaire une promotion via un appel direct, contournant le masquage UI.
-  if (/entity-promoted/i.test(confidenceCol || '')) {
-    throw new Error(
-      `Alias promu à l'entity (entity-promoted) — annulation non autorisée depuis la webapp ` +
-      `(confidence="${confidenceCol}"). Cette promotion ne peut être révisée que via un ré-import.`
-    );
-  }
-
-  // 3) Backup avant écriture.
-  const backupDir = path.join(sbPath, 'agent', '.backups');
-  fs.mkdirSync(backupDir, { recursive: true });
-  const ts = new Date().toISOString().replace(/[-:]/g, '').replace('T', '-').slice(0, 15);
-  fs.writeFileSync(path.join(backupDir, `${shard}.org.bak-${ts}`), content, 'utf8');
-
-  // 4) Supprimer la ligne Aliases du shard source.
-  lines.splice(found.rowIdx, 1);
-  fs.writeFileSync(shardPath, lines.join('\n'), 'utf8');
-
-  // 5) Reconstruire une ligne Pending dans le même fichier (WEB-027 — Pending
-  //    est entity-scoped, pas global). Compat descendante : si shard = 'global',
-  //    écrire dans global.org comme avant.
-  const proposed = found.kind === 'type_element'
-    ? `type_element: ${found.cells[1]} ?`
-    : `${found.cells[1]}: ${found.cells[2]} ?`;
-  const pendingRow = _makeOrgRow([term, proposed, '⚠️ _a_confirmer', sourceImport, shard]);
-
-  const pendingBounds = _findOrgSectionBounds(lines, /^\*\s+Pending/i);
-  if (!pendingBounds) throw new Error(`Section "Pending" introuvable dans ${shard}`);
-  // Guard WEB-032 — déduplication Pending (Niveau 3).
-  // Si une entrée Pending pour le même terme+slot existe déjà (l'entrée
-  // originale de l'import n'a pas été retirée par ECA lors de la validation
-  // dans Aliases), on ne réinsère pas pour éviter le doublon.
-  const _slotPfx3 = proposed ? proposed.split(':')[0].trim() : '';
-  const _dupExists3 = lines.slice(pendingBounds.start, pendingBounds.end).some(l => {
-    const t = l.trim();
-    if (!t.startsWith('|') || /^\|[-+]+\|?$/.test(t)) return false;
-    const c = t.split('|').slice(1, -1).map(s => s.trim());
-    return c[0] === term && c[1] && c[1].split(':')[0].trim() === _slotPfx3;
-  });
-  const pendingInsertion = _findTableInsertionPoint(lines, pendingBounds.start, pendingBounds.end);
-  if (!_dupExists3) {
-    if (pendingInsertion) {
-      lines.splice(pendingInsertion.lastRowIdx + 1, 0, pendingRow);
-    } else {
-      lines.splice(pendingBounds.end, 0, pendingRow);
-    }
-  }
-  fs.writeFileSync(shardPath, lines.join('\n'), 'utf8');
-
-  // 6) Journal de décisions terminologiques (best-effort — jamais bloquant).
-  try {
-    _appendThesaurusLog(sbPath, opts.entityId, opts.projectId, opts.projectName, {
-      date:         new Date().toISOString().slice(0, 10),
-      term,
-      action:       '↩️ Annulé (retour en Pending)',
-      typeElement:  found.kind === 'type_element' ? found.cells[1] : null,
-      slot:         found.kind === 'slot_value' ? found.cells[1] : null,
-      value:        found.kind === 'slot_value' ? found.cells[2] : null,
-      shard,
-      sourceImport,
-    });
-  } catch { /* ne jamais bloquer pour le log */ }
-
-  return { ok: true, shard, scope: shard };
+  throw new Error(
+    `Alias vivant dans ${shard}.org § Aliases (Niveau 3 — entity-wide) — annulation non ` +
+    `autorisée depuis la webapp, quel que soit le texte de confidence ("${confidenceCol}"). ` +
+    `Une entrée Niveau 3 ne peut être révisée que via un ré-import.`
+  );
 }
 
 module.exports = { scanSandboxThesaurus, resolveThesaurusPending, unconfirmThesaurusAlias };
