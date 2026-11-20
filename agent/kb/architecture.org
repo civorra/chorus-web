@@ -1,0 +1,205 @@
+#+TITLE: Chorus Web — Architecture
+#+DATE: 2026-11-20
+#+AUTHOR: ECA KB
+#+DESCRIPTION: Global architecture of chorus-web: stack, module layout, data flows, ECA integration, Perl bridge, auth, Docker.
+
+* Overview
+
+Chorus Web (~chorus-web~) is a Node.js/Express web application acting as a GUI frontend
+to the Chorus Engine pipeline.  It does NOT embed the Chorus Perl engine — it delegates
+all inference and KB work to the ECA agent running in a separate ~eca-server~ container
+via an HTTPS + SSE API.
+
+| Layer       | Technology            | Entry point              |
+|-------------+-----------------------+--------------------------|
+| Backend     | Node.js + Express     | ~server.js~              |
+| Frontend    | Vanilla JS / HTML5    | ~chorus-web.html/js/css~ |
+| ECA client  | HTTPS + SSE (custom)  | ~eca-client.js~          |
+| Perl bridge | ~child_process.spawn~ | ~server/helpers/perl.js~ |
+| Auth        | OAuth PKCE / Docker   | ~auth.js~                |
+| Containers  | Docker Compose        | ~docker-compose.yml~     |
+
+* Module layout
+
+#+BEGIN_EXAMPLE
+chorus-web/
+  server.js                   ← Express entry point; mounts all routers
+  auth.js                     ← /api/auth/* routes + OAuth PKCE + Docker restart
+  eca-client.js               ← All communication with eca-server (SSE, polling)
+  prompts.js                  ← System prompts for chorus-check / chorus-complete-report
+  chorus-web.html/js/css      ← SPA frontend (served with no-store headers)
+  chorus/
+    index.js                  ← Public API re-exporter
+    fs.js                     ← CHORUS_HOME(), SANDBOXES_DIR(), low-level file helpers
+    scanner.js                ← scanAll/scanSandbox/scanEntity/scanProject; KB file readers
+    parser.js                 ← .org / README / report parsing helpers
+    reports.js                ← parseReport, readReport, writeCheckReport, buildRunReportIndex
+    thesaurus.js              ← resolveThesaurusPending, unconfirmThesaurusAlias
+  server/
+    state.js                  ← Shared mutable state (activeTerminals Map, latencyHistory)
+    helpers/
+      sse.js                  ← sseInit/sseSend/sseDone/sseError wrappers
+      perl.js                 ← spawnPerl() — spawn Perl script, stream stdout/stderr as SSE
+    routes/
+      eca.js                  ← /api/eca/* — ECA server health, chat management
+      scan.js                 ← /api/sandboxes — sandbox/entity/project scan endpoints
+      projects.js             ← /api/sandboxes/:sbId/projects — import, check, complete-report
+      reports.js              ← /api/sandboxes/:sbId/reports — read/serve report files
+      terminal.js             ← /api/sandboxes/:sbId/terminal — SSE interactive ECA terminal
+      thesaurus.js            ← /api/sandboxes/:sbId/thesaurus — alias resolution endpoints
+#+END_EXAMPLE
+
+* Data flow — normal request lifecycle
+
+** Scan / read (GET)
+
+#+BEGIN_EXAMPLE
+browser
+  → GET /api/sandboxes
+  → scan.js router
+  → chorus/scanner.js (scanAll / scanSandbox)
+    → chorus/fs.js (readFileSafe, listDirs)
+    → chorus/parser.js (parseSandboxReadme, extractOrgTable …)
+    → chorus/reports.js (buildRunReportIndex, computeConvergenceFromRunReport)
+    → chorus/thesaurus.js (scanSandboxThesaurus)
+  ← JSON response
+#+END_EXAMPLE
+
+** ECA terminal (POST → SSE stream)
+
+#+BEGIN_EXAMPLE
+browser
+  → POST /api/sandboxes/:sbId/terminal  { message, sessionId, level, … }
+  → routes/terminal.js
+    → chorus.scanSandbox() — build context block
+    → eca.setChatAgent(chatId, agent)   — set expected agent (undocumented REST endpoint)
+    → eca.subscribeEcaEvents(chatId)    — open SSE /api/v1/events BEFORE sending prompt
+    → eca.ecaRequest('/api/v1/chats/:id/prompt', POST, { message })
+    ↔ SSE events relayed to browser:
+        chunk       — text fragment
+        tool        — tool call info (classifyToolCall)
+        ask         — eca__ask_user payload
+        skill       — skill loaded (bandeau "Skill actif")
+        taskboard   — eca__task state update
+        ping        — keep-alive (every 15s)
+        refresh     — trigger UI refresh on key file writes (WEB-021)
+        thesaurus-restart / thesaurus-status — thesaurus-assistant lifecycle
+        done / error — terminal finished
+#+END_EXAMPLE
+
+** Perl execution (SSE stream)
+
+#+BEGIN_EXAMPLE
+browser
+  → POST /api/sandboxes/:sbId/projects/:projId/check   (or similar)
+  → routes/projects.js (or terminal.js)
+  → server/helpers/perl.js → child_process.spawn('perl', args, { cwd, env })
+    → stdout/stderr lines → sseSend(res, 'log', { line })
+    → close code 0 → onDone() → sseDone(res)
+    → close code != 0 → sseError(res, …)
+#+END_EXAMPLE
+
+** Auth — credential resolution order
+
+#+BEGIN_EXAMPLE
+Priority (highest first):
+  1. ECA OAuth native   → $CHORUS_HOME/../.eca/db.transit.json  (Transit/Clojure format)
+  2. Webapp auth file   → $CHORUS_HOME/.webapp-auth.json         (plain JSON, mode 0600)
+  3. Environment        → ANTHROPIC_API_KEY env var              (injected by eca-bootstrap.sh)
+
+GET /api/auth/status reads all three sources and merges them (dedup by provider).
+POST /api/auth/apikey writes to .webapp-auth.json and triggers Docker restart of eca-server.
+POST /api/auth/reload-eca triggers Docker restart directly.
+#+END_EXAMPLE
+
+* ECA server integration
+
+~eca-client.js~ owns ALL communication with the remote ~eca-server~ container.
+
+| Function              | Purpose                                                        |
+|-----------------------+----------------------------------------------------------------|
+| ~ecaRequest~          | Generic HTTPS request (Bearer auth, ~agent:false~ per request) |
+| ~pingTcp~             | TCP-only health probe — avoids Jetty 12 HTTP bug in /health    |
+| ~promptAndWait~       | Legacy polling mode (GET /chats/:id); Jetty bug fallback       |
+| ~promptAndWaitSSE~    | Preferred one-shot mode via SSE — avoids Jetty bug entirely    |
+| ~subscribeEcaEvents~  | Long-lived SSE /api/v1/events — multi-chat, sub-agent aware    |
+| ~setChatAgent~        | POST /chats/:id/agent — undocumented REST endpoint (see §Pitfalls) |
+| ~subscribeLoginFlow~  | Drives ECA native /login flow (device-code / PKCE)             |
+| ~sendLoginStep~       | Sends a reply to an ask-question in a login flow               |
+
+** SSE event model (~subscribeEcaEvents~)
+
+- Opens a single persistent connection to ~/api/v1/events~ (global, all chats)
+- Filters by parent ~chatId~ AND dynamically tracks sub-agent ~chatId~s (Axe 5)
+- Sub-agent tool calls emitted on a separate ~subagent-<toolCallId>~ chatId — the
+  parent's ~spawn_agent~ toolCallRun carries ~details.subagentChatId~ revealing it
+- Tool names in SSE payloads are WITHOUT ~eca__~ prefix (confirmed empirically
+  2026-10-13 — TOOL_FAMILIES map must NOT include "eca__" prefix, see §Pitfalls)
+
+** Tool call classification (~classifyToolCall~)
+
+Groups ~≈15 ECA tools into families: ~read~ · ~edit~ · ~shell~ · ~git~ · ~agent~ · ~task~ · ~skill~.
+Extracts structured metadata: ~taskboard~ (eca__task details), ~isSubagent~,
+~isSkillLoad~/~skillName~, ~path~ (write target, used by WEB-021 refresh trigger).
+
+* Sandbox filesystem conventions
+
+~SANDBOXES_DIR()~ defaults to ~/chorus/engine/sandboxes~ (overridable via ~SANDBOXES~ env var).
+
+#+BEGIN_EXAMPLE
+$SANDBOXES/<sbId>/
+  config.json (or config.pl)         ← sandbox name, norm, description
+  agent/chorus/index.org             ← pipeline + integrated corpus table
+  agent/chorus/<slug>.org            ← per-agent KB definition
+  agent/.kb-hash                     ← sha256 of KB content (stale detection)
+  rules/<slug>/<RNN>-*.yml           ← YAML inference rules
+  corpus/                            ← normative source documents
+  workspace/<entity>/
+    <projId>.json                    ← imported + checked project (Flat convention)
+    <projId>.label.json              ← display name sidecar (WEB-026)
+    <projId>.thesaurus.json          ← project-level thesaurus Niveau 2 (WEB-027)
+    thesaurus.org                    ← entity-level thesaurus Niveau 3
+    reports/
+      run-report-*.json              ← Chorus pipeline output (chorus-check)
+      explain-*.md / synthese-*.md   ← ECA-generated reports
+      import-report-*.org            ← chorus-import-project trace
+      audit-import-*.md              ← chorus-audit-import report
+  .last-check-results.json           ← chorus-check --all cache (kb_hash + convergence)
+  .last-strengthen-report.json       ← chorus-strengthen gap report
+  .last-fix-history.json             ← chorus-fix patch history
+  .chorus-unattended-state.json      ← chorus-feed --unattended checkpoint
+  SCOPING.md                         ← corpus scoping confirmation
+  CORPUS-DIRECTIVES.md               ← version pinning + no_auto_rules
+#+END_EXAMPLE
+
+* Thesaurus — 3-tier architecture
+
+| Tier | File                                      | Scope   | Managed by               |
+|------+-------------------------------------------+---------+--------------------------|
+|  Niv 2 | ~workspace/<entity>/<projId>.thesaurus.json~ | Project | thesaurus-assistant ECA skill |
+|  Niv 3 | ~workspace/<entity>/thesaurus.org~          | Entity  | Webapp 🏢 button only    |
+|  Global | ~agent/thesaurus/global.org~               | Sandbox | chorus-import-project    |
+
+⛔ The ECA thesaurus-assistant skill MUST NEVER write to thesaurus.org § Aliases —
+entity promotion is exclusively via the webapp 🏢 button (ENG-071).
+
+* Docker deployment
+
+~docker-compose.yml~ defines two services:
+- ~chorus-web~ — this Node.js app (port 3000, mounts CHORUS_HOME and Docker socket)
+- ~eca-server~  — ECA headless server (port 7777, TLS self-signed *.local.eca.dev)
+
+~eca-bootstrap.sh~ runs at container startup: injects ~ANTHROPIC_API_KEY~ from
+~$CHORUS_HOME/.webapp-auth.json~ if present; falls back to env var.
+
+~auth.js~ triggers Docker socket restart of ~eca-server~ after any credential change:
+~POST /containers/<name>/restart~ on ~/var/run/docker.sock~ (mounted read-write).
+
+* Frontend caching — no-store rule
+
+All three frontend files (~chorus-web.html~, ~chorus-web.js~, ~chorus-web.css~) are
+served with explicit ~Cache-Control: no-store, no-cache, must-revalidate~ headers.
+
+Rationale (incident 2026-10-14): ~sendFile()~ applies ~Last-Modified/ETag~ by default;
+some browsers/proxies do not revalidate on F5, keeping old JS active post-deploy.
+The HTML file had the guard first; JS/CSS were added after the incident.

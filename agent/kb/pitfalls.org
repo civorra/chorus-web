@@ -1,0 +1,284 @@
+#+TITLE: Chorus Web — Pitfalls
+#+DATE: 2026-11-20
+#+AUTHOR: ECA KB
+#+DESCRIPTION: Known pitfalls, confirmed bugs, and non-obvious invariants in chorus-web. Read before any modification.
+
+* P-01 — Jetty 12 / GraalVM native: GET /chats/:id socket hang-up
+
+** Symptom
+~GET /api/v1/chats/:id~ causes socket hang-up / ECONNRESET when the chat
+contains large stored messages (> ~5 KB).  No error on the ECA side — the
+client receives ECONNRESET silently.
+
+** Root cause
+Jetty 12 + Ring adapter bug: ~IllegalArgumentException: "No matching field found:
+getOutputStream for class org.eclipse.jetty.ee9.nested.Response"~.  Confirmed
+empirically, no fix on eca-server side.
+
+** Workarounds in place
+1. ~promptAndWait~: catch ECONNRESET/socket hang-up → fall back to ~GET /api/v1/chats~
+   (list endpoint, unaffected) to check ~status~ only; return a minimal shell object.
+2. ~promptAndWaitSSE~: avoids GET /chats/:id entirely — preferred for all new one-shot calls.
+3. ~ecaRequest~: sets ~agent: false~ (no connection pooling) to prevent reusing a
+   destroyed socket.  Trade-off: one TLS handshake per request (~150ms overhead).
+4. ~pingTcp~: health check uses TCP-only probe (no HTTP request) to avoid triggering
+   this bug at high polling frequency (was responsible for ~46/54 occurrences in a
+   10-minute sample before the fix).
+
+** Impact if ignored
+Using ~GET /chats/:id~ in a new feature will silently fail on large sessions,
+returning stale/null data or causing unhandled promise rejections.
+
+* P-02 — ECA tool names: NO "eca__" prefix in remote SSE events
+
+** Symptom
+Every tool call in ~classifyToolCall~ matches ~DEFAULT_FAMILY~ (icon ⚙, label "Outil")
+even for well-known tools like ~eca__read_file~ or ~eca__shell_command~.
+
+** Root cause
+The ~/api/v1/events~ SSE stream from a remote eca-server emits tool names WITHOUT
+the ~eca__~ prefix (confirmed empirically 2026-10-13 on tools: read_file, grep,
+directory_tree, shell_command, skill, spawn_agent, task).
+The ~eca__~ prefix only exists on the CLIENT SIDE (this session's MCP tool names).
+
+** Fix in place
+~TOOL_FAMILIES~ map uses bare names (~read_file~, ~edit_file~, etc.), not ~eca__read_file~.
+
+** Impact if ignored
+Adding a new tool to ~TOOL_FAMILIES~ using the ~eca__~ prefix will silently never match.
+
+* P-03 — ECA agent routing: POST /prompt body field "agent" has no effect
+
+** Symptom
+A chat created with ~{ message, agent: 'architect' }~ body stays on ~defaultAgent~ (~code~).
+~GET /api/v1/chats/:id~ returns ~agent: "code"~ regardless of the prompt body.
+
+** Root cause
+The ~agent~ field in ~POST /api/v1/chats/:id/prompt~ is documented in the JSON-RPC
+protocol but NOT honoured by the eca-server HTTP REST API (confirmed 2026-10-13).
+
+** Fix in place
+~setChatAgent(chatId, agentName)~: sends ~POST /api/v1/chats/:id/agent { agent }~
+(undocumented REST endpoint, confirmed → 204 No Content, durable effect).
+Must be called BEFORE the prompt is sent.
+
+** Impact if ignored
+Heavy skills (~chorus-feed~, ~chorus-check~) will run on the ~code~ agent instead of
+~architect~, losing extended thinking and producing lower-quality results.
+
+* P-04 — SSE login flow: connection MUST stay open during device-code validation
+
+** Symptom
+GitHub Copilot login flow starts successfully (user code displayed), but ECA
+chat stays in status "login" indefinitely after the user validates on github.com/login/device.
+
+** Root cause
+ECA's internal polling toward the GitHub provider appears to be tied to the lifecycle
+of the ~/api/v1/events~ HTTP connection opened from ~/login github~.  Closing this
+connection prematurely (e.g., after receiving the user code) blocks ECA's polling.
+
+** Fix in place
+~subscribeLoginFlow~ keeps the SSE connection (~req~) alive throughout the entire
+device-code validation.  The ~ecaSub~ object is stored in the in-memory session
+and passed from ~/start~ to ~/wait~ without being destroyed between routes.
+~destroy()~ is called only after ~onSuccess~/~onCancelled~/~onError~.
+
+** Impact if ignored
+Any refactoring that closes the ~req~ early will silently break Copilot login.
+
+* P-05 — WEB-025 family: idle status during eca__ask_user closes terminal prematurely
+
+** Background
+When ECA issues ~eca__ask_user~, its chat status briefly transitions to ~idle~
+(waiting for user input) — this would trigger ~onDone()~ → ~finish()~ → close
+the SSE stream before the user has responded.
+
+** Guards in place (all in routes/terminal.js)
+
+| Guard           | Flag                 | Trigger                                   | Reset                          |
+|-----------------+----------------------+-------------------------------------------+--------------------------------|
+| WEB-025         | ~waitingForUserInput~ | ~onAsk~ fires                            | ~clearAskGuard()~ on first chunk or toolLog |
+| WEB-025b        | ~postRespondPending~, ~deferredDoneHandle~ | user responds via ~/respond~ | next ~onAsk~ cancels timer |
+| WEB-025d        | ~lastKnownPendingCount~ | ~eca__edit_file~ on thesaurus.org       | proactive close after Pending drain |
+
+** Critical invariant (WEB-025b v2 design)
+The deferred-close timer (8s) starts from ~onDone~ (ECA actually idle), NOT from
+~clearAskGuard~ (user responded).  This handles ECA taking 30s+ between responding
+to an ask_user and calling the next one (e.g., while writing to thesaurus files).
+
+** Impact if ignored
+Refactoring the terminal SSE close logic without preserving all three guards will
+cause session drops mid-interaction for thesaurus-assistant and other multi-turn skills.
+
+* P-06 — _audit block: must be at root JSON level, NOT inside _import
+
+** Symptom
+webapp Import and Audit tabs are empty despite ~chorus-audit-import~ running successfully.
+
+** Root cause
+The scanner (~scanFlatProject~) reads ~projJson._audit~.  If the ECA skill writes the
+block as ~projJson._import._audit~ instead, it is silently ignored.
+
+** Required structure
+#+BEGIN_EXAMPLE
+{
+  "project": "…",
+  "_import": { … },
+  "_audit": { "run": true, "date": "…", … },   ← at root, NOT inside _import
+  "elements": [ … ]
+}
+#+END_EXAMPLE
+
+** Impact if ignored
+Audit badge never appears in the UI; the "Combler" button for fixable gaps never shows.
+
+* P-07 — import-report: #+SOURCE must be a file path, not a description
+
+** Symptom
+Thesaurus tab is empty after import.  ~sourceBasename~ is ~null~ in the scan result.
+
+** Root cause
+~collectImportHistory~ (parser.js) extracts ~#+SOURCE:~ from ~import-report-*.org~.
+~scanFlatProject~ derives ~sourceBasename~ from this path via ~path.basename~.
+If ~#+SOURCE:~ contains a description ("fusion 3 fichiers", etc.), the basename
+is invalid and ~scanSandboxThesaurus~ cannot filter thesaurus entries by source.
+
+** Required format
+#+BEGIN_EXAMPLE
+#+SOURCE: workspace/<entity>/sources/<filename>-text.md   ← file path
+#+OUTPUT_JSON: workspace/<entity>/project-import-NNN.json  ← required too
+#+DATE: YYYY-MM-DD                                          ← required too
+#+END_EXAMPLE
+
+Merge mode: use the FIRST source file of the list as ~#+SOURCE:~.
+
+** Impact if ignored
+Thesaurus tab silently empty for the affected project.
+
+* P-08 — Re-import with same projId: Niveau 2 thesaurus file must be preserved
+
+** Symptom
+After re-import (↺ button), previously confirmed ~_a_confirmer~ entries disappear.
+Or: new ~_a_confirmer~ entries are written to ~_import.a_confirmer~ in the JSON but
+the corresponding ~<projId>.thesaurus.json~ is never created.
+
+** Root cause
+If the ECA skill does not check for an existing ~<projId>.thesaurus.json~ on re-import,
+it may silently create a new JSON without migrating existing Niveau 2 decisions, OR
+fail to create the file even when new ~_a_confirmer~ entries require it.
+
+** Rule (from chorus-import-project skill)
+On re-import (~--out~ points to an existing JSON):
+- Read ~<projId>.thesaurus.json~ (Niv 2) FIRST
+- If it exists: preserve/merge its content
+- If it does not exist AND at least one ~_a_confirmer~ is produced: CREATE it with a ~"pending"~ section
+
+Incident: sandbox 08-ANSSI-PG-083-CENTRIC, entity Apache, 2026-11-20 — file absent
+after re-import despite 2 new ~_a_confirmer~ entries.
+
+** Impact if ignored
+~_a_confirmer~ entries accumulate in JSON without a Niv 2 file → assistant cannot
+resolve them → thesaurus-assistant silently skips them on next invocation.
+
+* P-09 — _import.import_report and #+OUTPUT_JSON: required for Import tab
+
+** Symptom
+Import tab (webapp) is empty even though import ran successfully.
+
+** Two required conditions (both must be true)
+1. ~_import.import_report~ in the project JSON must point to the ~import-report-NNN.org~ file
+   (e.g. ~"workspace/<entity>/reports/import-report-001.org"~). If absent → Import tab empty.
+2. The ~import-report-NNN.org~ file must contain both ~#+DATE:~ AND ~#+OUTPUT_JSON:~ headers.
+   Without these, ~collectImportHistory~ cannot associate the report with the project.
+
+* P-10 — Frontend JS/CSS caching: no-store headers mandatory
+
+** Symptom
+After deploying a new ~chorus-web.js~, users still see old behaviour despite F5 reload.
+
+** Root cause
+Express ~sendFile()~ sets ~Last-Modified/ETag~ headers by default.  Some browsers/proxies
+honour these without revalidating on F5 (treating it as "fresh").
+
+** Fix in place
+All three frontend files served with ~Cache-Control: no-store, no-cache, must-revalidate~
++ ~Pragma: no-cache~ + ~Expires: 0~.  Added after incident 2026-10-14.
+
+** Impact if ignored
+Reverting the headers for performance will re-introduce stale JS in production.
+
+* P-11 — Concurrency: chorus-strengthen and chorus-fix mutual exclusion
+
+** Symptom
+Two concurrent ~chorus-strengthen~ sessions on the same sandbox cause CPU spike to 99%
+and potentially infinite Perl loops.
+
+** Guards in place
+Before spawning an ECA terminal with ~kind='strengthen'~, ~terminal.js~ checks ~activeTerminals~
+for any existing session with ~sbId === current && kind === 'strengthen'~.  If found → reject
+with an error message.  Similarly, ~kind='fix'~ is blocked if a ~strengthen~ or ~fix~ session
+is already running on the same sandbox.
+
+** Important
+This guard only applies to sessions started via the UI's dedicated "Renforcer / Fix" buttons
+(which explicitly set ~kind~).  A user typing ~chorus-strengthen sbId~ in a free-text terminal
+is NOT guarded — by design (operator override).
+
+* P-12 — Anthropic OAuth PKCE: User-Agent header required
+
+** Symptom
+~POST https://console.anthropic.com/v1/oauth/token~ returns HTTP 400
+~"Invalid request format"~.
+
+** Root cause
+Node.js ~https.request~ does NOT send a ~User-Agent~ header by default.
+~console.anthropic.com/v1/oauth/token~ rejects requests without a recognised User-Agent.
+
+** Fix in place
+~httpsPost~ in ~auth.js~ always adds ~User-Agent: 'Mozilla/5.0 (chorus-web)'~.
+
+* P-13 — GitHub Copilot: ECA does not read GITHUB_COPILOT_TOKEN env var
+
+** Background
+An earlier implementation performed the Device Flow (RFC 8628) in Node.js and stored
+the token in ~.webapp-auth.json~, then injected it as ~GITHUB_COPILOT_TOKEN~ via
+~eca-bootstrap.sh~ and Docker restart.
+
+** Why it failed
+No version of ECA tested (0.164.0 / 0.165.0 / 0.165.1) reads ~GITHUB_COPILOT_TOKEN~.
+ECA expects Copilot credentials exclusively in its own OAuth store (~db.transit.json~),
+written by ECA itself via ~/login github~.
+
+** Current approach
+~auth.js~ drives ECA's native ~/login github~ conversational flow via ~subscribeLoginFlow~.
+ECA performs the Device Flow itself and writes ~db.transit.json~ in its container.
+
+* P-14 — scanFlatProject: nested sources/ folders create phantom "available" projects
+
+** Symptom
+A project imported via the web UI (using ~workspace/<entity>/sources/<projId>/~ as staging)
+appears twice in the UI: once as the real ~workspace/<entity>/project-<projId>.json~ entry
+and once as an "available (not imported)" entry from ~sources/<projId>/~.
+
+** Root cause
+~scanEntity~ scans both flat ~project-*.json~ files and ~sources/<id>/~ subdirs.
+A staging dir ~sources/import-<ts>/~ does not trivially equal ~project-import-<ts>~
+(the flat slug), so the ~flatSlugs.has(id)~ check missed it.
+
+** Fix in place
+~isCoveredByFlatProject(id)~ also checks ~flatSlugs.has('project-' + id)~ and
+~flatSlugs.has('projet-' + id)~ — covers all real import route naming conventions.
+
+* P-15 — .last-check-results.json: stale detection uses hash prefix only
+
+** Symptom
+After cloning or renaming a sandbox, ~.last-check-results.json~ shows as stale even
+when the KB content is identical (only the absolute path in the hash file changed).
+
+** Root cause
+~sha256sum~ output format: ~"<hash>  <filepath>"~.  If the sandbox is cloned/renamed,
+the filepath token changes even though the hash is the same.
+
+** Fix in place
+~normalizeHash(s)~ in ~scanner.js~ takes only the first whitespace-delimited token
+(the hash itself) for comparison.  The filepath portion is ignored.

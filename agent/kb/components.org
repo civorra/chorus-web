@@ -1,0 +1,303 @@
+#+TITLE: Chorus Web — Components
+#+DATE: 2026-11-20
+#+AUTHOR: ECA KB
+#+DESCRIPTION: Detailed description of every JS module in chorus-web: routes, chorus/ package, helpers, auth, eca-client, prompts.
+
+* server.js — Entry point
+
+Minimal orchestrator. Responsibilities:
+- Loads ~.env~ manually (no dotenv dep — plain regex parse)
+- Mounts ~auth.js~ middleware BEFORE all other middleware
+- Mounts ~express.json({ limit: '2mb' })~ and CORS headers
+- Mounts all 6 routers under ~/api~
+- Serves frontend files (~chorus-web.html/js/css~) with ~no-store~ headers
+- Logs startup status (CHORUS_HOME, model, API key presence)
+
+Environment variables consumed at startup:
+| Var                   | Default              | Usage                          |
+|-----------------------+----------------------+--------------------------------|
+| ~PORT~                | 3000                 | Express listen port            |
+| ~CHORUS_HOME~         | (required)           | Sandbox root parent            |
+| ~SANDBOXES~           | /chorus/engine/sandboxes | Sandbox directory          |
+| ~ANTHROPIC_API_KEY~   | (optional)           | Logged at startup if absent    |
+| ~ECA_DEFAULT_MODEL~   | (optional)           | Used to infer provider for log |
+| ~ANTHROPIC_MODEL~     | claude-opus-4-5      | Logged at startup              |
+| ~CORS_ORIGIN~         | *                    | Access-Control-Allow-Origin    |
+
+* chorus/ — Filesystem & KB layer
+
+Pure Node.js, no Express. All reads from disk, no writes (except ~thesaurus.js~).
+
+** chorus/fs.js
+
+Low-level filesystem primitives shared by all other modules:
+
+| Export          | Signature                          | Description                             |
+|-----------------+------------------------------------+-----------------------------------------|
+| ~CHORUS_HOME~   | ~() → string~                      | Reads ~CHORUS_HOME~ env var or throws   |
+| ~SANDBOXES_DIR~ | ~() → string~                      | Reads ~SANDBOXES~ env or returns default |
+| ~readFileSafe~  | ~(path) → string\|null~            | fs.readFileSync, returns null on error  |
+| ~listDirs~      | ~(path) → string[]~                | List subdirectory names, [] on error    |
+| ~fileExists~    | ~(path) → bool~                    | fs.accessSync wrapper                   |
+
+** chorus/scanner.js
+
+Main scanner — builds the structured JSON representation of sandboxes/entities/projects
+consumed by all ~/api/sandboxes~ routes.
+
+| Export                   | Description                                                       |
+|--------------------------+-------------------------------------------------------------------|
+| ~scanAll~                | Scans all sandbox dirs under SANDBOXES_DIR                        |
+| ~scanSandbox~            | One sandbox: config + entities + testing + kbModeled + feed status |
+| ~scanEntity~             | One workspace/<entity>: flat + nested projects                    |
+| ~scanFlatProject~        | workspace/<entity>/<projId>.json convention (current)             |
+| ~scanNestedProject~      | workspace/<entity>/sources/<id>/ convention (legacy)              |
+| ~scanProject~            | Alias for ~scanNestedProject~ (back-compat)                       |
+| ~scanSandboxCorpus~      | Pipeline agents + corpus files from agent/chorus/index.org        |
+| ~readAgentOrgFile~       | Raw read of agent/chorus/<slug>.org                               |
+| ~readRuleYamlFile~       | Raw read of rules/<slug>/<file>.yml (path traversal safe)         |
+| ~readLastCheckResults~   | .last-check-results.json + stale detection vs agent/.kb-hash      |
+| ~readLastStrengthenReport~ | .last-strengthen-report.json + stale detection                  |
+| ~readLastFixHistory~     | .last-fix-history.json                                            |
+
+~scanSandbox~ also calls ~readFeedStatus~ (internal) for ~.chorus-unattended-state.json~.
+
+~scanFlatProject~ is the dominant project convention.  It reads:
+- ~<projId>.json~ — the imported + checked project data
+- ~<projId>.label.json~ — display name sidecar (WEB-026)
+- ~<projId>.thesaurus.json~ — project-level thesaurus Niveau 2
+- ~reports/run-report-*.json~ — via buildRunReportIndex
+- Computes ~hasUnintegratedThesaurus~ by comparing mtime of project JSON vs
+  Niv 2 (~<projId>.thesaurus.json~) and Niv 3 (~thesaurus.org~)
+
+Sandbox ~testing~ object maps the 4 strategy slugs (~iso/edges/cross/scale~) to
+their last ~run-report-*.json~ status and convergence (from ~.last-check-results.json~
+when available, fallback to ~computeConvergenceFromRunReport~).
+
+** chorus/parser.js
+
+Org-mode and report parsing utilities.  Key exports:
+
+| Export                        | Description                                                    |
+|-------------------------------+----------------------------------------------------------------|
+| ~extractOrgTable~             | Extracts a 2D array from an org table under a given heading    |
+| ~extractOrgSection~           | Returns raw text of an org section by heading regex            |
+| ~extractFrameCatalogue~       | Parses Frame catalog table from agent .org file                |
+| ~extractRuleCatalogue~        | Parses Rule catalog table; falls back to YAML read if empty    |
+| ~parseSandboxReadme~          | Parses README.org corpus table (file / source / date / presplit)|
+| ~parseCorpusDirectivesVersions~ | Parses version pins from CORPUS-DIRECTIVES.md                |
+| ~collectImportHistory~        | Reads import-report-*.org headers (#+DATE, #+OUTPUT_JSON)      |
+
+~extractOrgTable~ handles multiple pipeline heading formats:
+- Classic ~* Pipeline global~ (5 cols: pos/module/slug/kb/status)
+- New ~* Agents~ (8 cols: #/Slug/KB org/Rules/…) and minimal (4 cols: #/Slug/Intent/Frames)
+
+** chorus/reports.js
+
+| Export                       | Description                                                     |
+|------------------------------+-----------------------------------------------------------------|
+| ~parseReport~                | Parses compliance-report-*.md into {verdict,frames,conformes,…}|
+| ~readReport~                 | Reads report file from workspace/<entity>/reports/              |
+| ~writeCheckReport~           | Writes a check report markdown to disk                          |
+| ~buildRunReportIndex~        | Indexes all run-report-*.json by project filename               |
+| ~computeConvergenceFromRunReport~ | Computes convergence from a single run-report JSON         |
+
+~buildRunReportIndex~ returns a ~Map<projectFilename, RunEntry[]>~.  Used by
+~scanFlatProject~ to match explain-*/synthese-* reports to run-report timestamps
+(two filename formats: ~run-report-YYYYMMDD-HHMMSS.json~ new and ~run-report-YYYYMMDDHHMMSS.json~ legacy).
+
+** chorus/thesaurus.js
+
+| Export                      | Description                                                      |
+|-----------------------------+------------------------------------------------------------------|
+| ~scanSandboxThesaurus~      | Reads Niv 3 (thesaurus.org) + Niv 2 files, returns summary      |
+| ~resolveThesaurusPending~   | Called by ~/api/thesaurus/resolve~ — writes decision to files    |
+| ~unconfirmThesaurusAlias~   | Called by ~/api/thesaurus/unconfirm~ — reverts a confirmed alias |
+
+* server/state.js — Shared state
+
+Two singleton objects shared across all routers:
+
+| Export           | Type               | Content                                       |
+|------------------+--------------------+-----------------------------------------------|
+| ~activeTerminals~ | ~Map<sessionId, TerminalRecord>~ | Live ECA SSE sessions (spawn/stop) |
+| ~latencyHistory~  | ~number[]~ (ring, max 30) | TCP ping latencies to eca-server     |
+| ~recordLatency~   | ~(ms: number) → void~     | Push latency, trim to LATENCY_HISTORY_MAX |
+
+~TerminalRecord~ fields set by ~routes/terminal.js~:
+~sbId, level, entityId, projId, reportFile, kind, startedAt, lastMessage,
+ currentSkill, skillHistory, taskboard~
+
+* server/helpers/sse.js — SSE primitives
+
+Thin wrappers over ~res.write~ / ~res.end~.  Every SSE route uses these:
+
+| Export      | Signature                       | Sends                             |
+|-------------+---------------------------------+-----------------------------------|
+| ~sseInit~   | ~(res) → void~                  | text/event-stream headers         |
+| ~sseSend~   | ~(res, event, data) → void~     | ~event: X\ndata: JSON\n\n~        |
+| ~sseDone~   | ~(res, data?) → void~           | event:done + res.end()            |
+| ~sseError~  | ~(res, message) → void~         | event:error + res.end()           |
+
+* server/helpers/perl.js — Perl bridge
+
+| Export      | Signature                                | Description                       |
+|-------------+------------------------------------------+-----------------------------------|
+| ~spawnPerl~ | ~(args, cwd, res, onDone) → ChildProcess~ | Spawns PERL_BIN, streams via SSE |
+| ~PERL~      | ~string~                                 | PERL_BIN env var or 'perl'        |
+
+~spawnPerl~ streams stdout lines as ~event:log {line}~ and stderr lines as
+~event:log {line, level:'warn'}~.  Calls ~onDone()~ on exit code 0, ~sseError~ otherwise.
+
+* server/routes/eca.js — ECA server management
+
+| Endpoint                        | Method | Description                                     |
+|---------------------------------+--------+-------------------------------------------------|
+| ~/api/eca/health~               | GET    | TCP ping (pingTcp) + latency history            |
+| ~/api/eca/chats~                | GET    | List active ECA chats                           |
+| ~/api/eca/chats/:id~            | DELETE | Delete a chat in eca-server                     |
+| ~/api/eca/chats/:id/clear~      | POST   | Clear chat messages (keep chat alive)           |
+
+Health endpoint uses ~pingTcp~ (TCP socket only, no HTTP) to avoid triggering the
+Jetty 12 ~IllegalArgumentException~ bug that pollutes eca-server logs.
+
+* server/routes/scan.js — Sandbox scan endpoints
+
+| Endpoint                              | Method | Description                              |
+|---------------------------------------+--------+------------------------------------------|
+| ~/api/sandboxes~                      | GET    | scanAll() — full sandbox list            |
+| ~/api/sandboxes/:sbId~                | GET    | scanSandbox() — one sandbox detail       |
+| ~/api/sandboxes/:sbId/corpus~         | GET    | scanSandboxCorpus() — KB pipeline view   |
+| ~/api/sandboxes/:sbId/agents/:slug/org~ | GET  | readAgentOrgFile() — raw .org content    |
+| ~/api/sandboxes/:sbId/rules/:slug/:f~ | GET    | readRuleYamlFile() — raw YAML content    |
+| ~/api/sandboxes/:sbId/feed-status~    | GET    | readFeedStatus() — unattended checkpoint |
+
+* server/routes/terminal.js — Interactive ECA terminal (SSE)
+
+The most complex route module.  Manages long-lived SSE sessions that drive ECA.
+
+| Endpoint                                   | Method | Description                        |
+|--------------------------------------------+--------+------------------------------------|
+| ~/api/terminals/active~                    | GET    | List active terminal sessions       |
+| ~/api/sandboxes/:sbId/terminal~            | POST   | Start ECA terminal session (SSE)    |
+| ~/api/sandboxes/:sbId/terminal/respond~    | POST   | Reply to eca__ask_user              |
+| ~/api/sandboxes/:sbId/terminal/stop~       | POST   | Stop terminal (graceful)            |
+| ~/api/sandboxes/:sbId/terminal~            | DELETE | Terminate + cleanup terminal        |
+
+** Agent routing (AGENT_BY_TRIGGER)
+
+Maps Chorus trigger keywords to ECA agent names (~architect~/~code~/~fast~) via regex.
+Applied before every prompt via ~setChatAgent(chatId, agent)~.
+⛔ The ~agent~ field in POST ~/prompt~ body has NO effect (Jetty 12 bug) —
+~setChatAgent~ (POST ~/api/v1/chats/:id/agent~) is the only working mechanism.
+
+** Context block injection
+
+Before sending a prompt, ~terminal.js~ builds a ~contextBlock~:
+- ~level=sandbox~ → norm + entity list from ~scanSandbox~
+- ~level=entity~  → project list
+- ~level=project~ → frames count + verdict
+- ~level=report~  → first 8000 chars of the report content
+- ~kind=strengthen/fix~ → convergence summary from ~.last-check-results.json~ + gap report
+- ~kind=pipeline-feed~ → ~instructions-directives.md~ + ~instructions-scoping.md~ if present
+- ~kind=thesaurus-assistant*~ → current thesaurus.org + _a_confirmer entries from project JSON
+
+** Skill directive injection (CHORUS_SKILL_MAP / knownSkillPatterns)
+
+For known Chorus triggers, injects:
+- An explicit ~eca__read_file~ directive with the skill file path
+- A ~SKILL_CRITICAL_RULES~ block with operational rules specific to that skill
+  (chorus-strengthen, chorus-check, chorus-create-project, chorus-feed, thesaurus-assistant,
+   thesaurus-assistant-auto, chorus-import-project)
+
+** WEB-025 family — ask_user guard
+
+Complex state machine to prevent premature SSE close during multi-turn ~eca__ask_user~
+interactions.  Flags: ~waitingForUserInput~, ~postRespondPending~, ~deferredDoneHandle~,
+~gracePeriodHandle~, ~lastKnownPendingCount~.  See §Pitfalls for the full breakdown.
+
+** WEB-025d — Thesaurus-assistant proactive close
+
+After each ~eca__edit_file~ on ~thesaurus.org~, reads ~* Pending~ section.
+- If Pending empty → signals ~thesaurus-status {complete}~, closes in 3s
+- If Pending non-empty → signals ~thesaurus-restart {remaining}~, closes in 2s
+Guard: ~lastKnownPendingCount~ prevents multiple close triggers for the same decision.
+
+** WEB-021 — Live Tests tab refresh
+
+Detects ~eca__write_file~ events where ~toolInfo.path~ basename is in ~REFRESH_TRIGGERS~
+(~.last-check-results.json~, ~.last-strengthen-report.json~, ~.last-fix-history.json~)
+and sends ~event:refresh {sbId}~ to trigger a frontend scan refresh.
+
+* server/routes/projects.js — Project import & check
+
+Handles project-level operations: chorus-import-project, chorus-check,
+chorus-complete-report, project creation/deletion, label update.
+Builds full ECA prompts with ~CHORUS_HOME~ and ~ENGINE_AGENTS_MD~ path hints.
+
+* server/routes/thesaurus.js — Alias resolution
+
+Exposes the thesaurus resolution API used by the webapp Thesaurus tab:
+- ~POST /api/sandboxes/:sbId/thesaurus/resolve~ — confirm/reject/out-of-scope an alias
+- ~POST /api/sandboxes/:sbId/thesaurus/unconfirm~ — revert a confirmed alias
+Delegates to ~chorus/thesaurus.js~.
+
+* auth.js — Credentials & OAuth
+
+** Credential sources (priority order)
+
+1. ~OAUTH_CREDENTIALS~ (~db.transit.json~) — ECA native OAuth (Anthropic Max/Pro, Copilot)
+   Parsed via regex matching on raw Transit/Clojure text — NOT full Transit deserialization.
+2. ~$CHORUS_HOME/.webapp-auth.json~ — API keys managed by this webapp (mode 0600)
+3. ~ANTHROPIC_API_KEY~ env var — injected by eca-bootstrap.sh
+
+** OAuth flows
+
+| Provider          | Flow              | Implementation                                |
+|-------------------+-------------------+-----------------------------------------------|
+| Anthropic         | PKCE + OOB code   | Full PKCE in Node.js (no dep); ANTHROPIC_CLIENT_ID |
+| GitHub Copilot    | ECA native /login | Drives ECA conversational flow via subscribeLoginFlow |
+
+Copilot: earlier attempt to implement Device Flow RFC 8628 directly in Node.js FAILED —
+ECA does NOT read ~GITHUB_COPILOT_TOKEN~ env var; it only reads its own OAuth store
+(~db.transit.json~, written by ECA itself via ~/login github~ command).
+
+** Docker restart
+
+~POST /api/auth/reload-eca~ and ~POST /api/auth/apikey~ call ~dockerRestart(containerName)~
+which sends ~POST /containers/<name>/restart?t=5~ to ~/var/run/docker.sock~ via raw ~http~.
+Requires Docker socket mounted read-write in the container.
+
+* eca-client.js — ECA server communication
+
+See ~architecture.org § ECA server integration~ for the function table.
+
+** ~promptAndWaitSSE~ vs ~promptAndWait~
+
+| Mode              | Mechanism    | Jetty 12 safe? | Use for                       |
+|-------------------+--------------+----------------+-------------------------------|
+| ~promptAndWait~   | GET /chats/:id polling | ❌ (hang-up on large content) | Legacy only |
+| ~promptAndWaitSSE~ | SSE /events  | ✅             | All new one-shot prompts      |
+
+~promptAndWaitSSE~: subscribes to SSE BEFORE sending the prompt to avoid missing
+early events if the response starts immediately.
+
+** ~subscribeEcaEvents~ — sub-agent visibility (Axe 5)
+
+Sub-agents run under a separate ~subagentChatId~ (format: ~subagent-<toolCallId>~).
+~subscribeEcaEvents~ dynamically adds each ~subagentChatId~ to its ~watchedChatIds~ Set
+when a ~toolCallRun~ event carries ~details.type === 'subagent'~ — no extra HTTP connection
+needed (the global ~/api/v1/events~ stream already carries all chats).
+
+* prompts.js — LLM system prompts
+
+System prompts for webapp-side LLM calls (pre-ECA delegation, MVP phase):
+
+| Export                 | Used by                               |
+|------------------------+---------------------------------------|
+| ~PROMPT_SUMMARY~       | chorus-check --summary equivalent     |
+| ~PROMPT_EXPLAIN~       | chorus-check --explain equivalent     |
+| ~PROMPT_CHAT~          | Interactive Q&A on a compliance report |
+| ~PROMPT_COMPLETE_REPORT~ | chorus-complete-report equivalent    |
+
+These will be replaced by real ECA skill invocations in MVP1.
