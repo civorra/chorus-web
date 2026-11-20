@@ -131,6 +131,13 @@ Key internals:
 Pending, Out-of-scope, **and ~* Conflicts~** (fix P-18 — commit a59bd5d).
 Each level-3 shard now exposes ~conflicts: [{term, existingMapping, newMapping, sourceImport}]~.
 
+~_cascadeEntityPromote(sbPath, entity, term, typeElement, slot, value, promotingProjId, today, orgPath)~
+Post-promotion cascade (P-19 fix): scans all ~<projId>.thesaurus.json~ in ~workspace/<entity>/~
+(excluding the promoting project) and for each file containing ~term~ in ~pending~:
+- Compatible mapping → move to ~aliases_type_element~ (cascade confidence)
+- Incompatible mapping → leave in pending + write to ~thesaurus.org § * Conflicts~
+Best-effort. Returns ~{ cascaded: [projId, ...], conflicted: [projId, ...] }~.
+
 ~resolveThesaurusPending~ routing:
 - If term found in ~thesaurus.org § * Pending~ → resolves in-place (Niv 3 org)
   - confirm + projectId present → useLevel2=true → writes to Niv 2 JSON

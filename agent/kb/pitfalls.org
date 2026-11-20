@@ -371,6 +371,42 @@ Des conflits terminologiques réels (mappings contradictoires inter-imports) s'a
 silencieusement.  Sans visibilité dans la webapp, l'ingénieur ne les découvre qu'en lisant
 ~thesaurus.org~ manuellement ou en constatant des verdicts incohérents entre projets.
 
+* P-19 — Promotion entity sans cascade : pending stale dans les autres projets de l'entity
+
+** Symptom
+Après la promotion du terme ~X~ depuis projet A vers le Niveau 3 (~thesaurus.org § * Aliases~),
+le terme reste dans ~<projB>.thesaurus.json § pending~ des autres projets de la même entity.
+Conséquence : dans l'onglet Thésaurus du projet B, ~X~ apparaît simultanément comme
+✅ Résolu (Niveau 3, entity-promoted) ET ⚠️ En attente — UI contradictoire.
+Le ~thesaurus-assistant~ peut aussi proposer à l'ingénieur de confirmer ~X~ une seconde fois.
+
+** Root cause
+~resolveThesaurusPending~ (branche ~isEntityPromote~) n'opérait que sur le fichier de promotion
+(retrait de ~thesaurus.org § * Pending~ + écriture dans ~thesaurus.org § * Aliases~).
+Aucun scan des autres ~<projId>.thesaurus.json~ de l'entity pour migrer leurs entrées pending
+correspondantes.
+
+** Fix appliqué (commit cf. P-19 — 2026-11-20)
+
+Solution A — Cascade backend (~chorus/thesaurus.js~) :
+Après écriture de l'alias en Niveau 3, ~_cascadeEntityPromote~ scanne tous les
+~<projId>.thesaurus.json~ de l'entity.  Pour chaque fichier contenant ~X~ en ~pending~ :
+- Mapping proposé compatible (même ~type_element~ ou vide) → migrer vers ~aliases_type_element~
+  (confidence ~"✅ entity-promoted (cascade from <projA> — <date>)"~)
+- Mapping proposé incompatible (autre ~type_element~) → laisser en pending + écrire
+  dans ~thesaurus.org § * Conflicts~
+Best-effort : les erreurs sur fichiers individuels ne bloquent jamais la promotion principale.
+
+Solution B — Dedup frontend (~chorus-web.js~) :
+~renderPvThesaurusTab~ filtre désormais les pending par terme seul pour les aliases Niveau 3 :
+~entityLevel3Terms~ = Set des termes des aliases ~level === 3~ (entity-promoted).
+~filteredPending~ et ~otherPendingDeduped~ excluent tout terme présent dans ~entityLevel3Terms~
+(indépendamment de ~sourceImport~ — couvre les données historiques pré-fix).
+
+** Impact if ignored (pré-fix)
+L'ingénieur voyait une UI contradictoire (✅ + ⚠️ pour le même terme) et risquait de
+confirmer à nouveau un terme déjà décidé au niveau entity.
+
 ** Fix appliqué (commit a59bd5d — 2026-11-20)
 ~scanSandboxThesaurus~ extrait désormais ~* Conflicts~ dans les shards Niveau 3 →
 champ ~conflicts: [{term, existingMapping, newMapping, sourceImport}]~ exposé par l'API.

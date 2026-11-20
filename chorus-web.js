@@ -967,7 +967,21 @@ async function renderPvThesaurusTab() {
     ...resolvedTypeElement.map(a => `${a.term}\u0000${a.sourceImport || ''}`),
     ...resolvedSlotValues.map(a => `${a.term}\u0000${a.sourceImport || ''}`),
   ]);
-  const filteredPending = pending.filter(p => !resolvedKeys.has(`${p.term}\u0000${p.sourceImport || ''}`));
+  // P-19 fix — dedup par terme seul pour les alias Niveau 3 (entity-promoted).
+  // Si un terme est confirmé au niveau entity (thesaurus.org § * Aliases, level 3),
+  // il ne doit plus apparaître en Pending même si la sourceImport diffère
+  // (imports de projets différents au sein de la même entity).
+  // La décision entity est autoritative — tout pending résiduel est un artefact
+  // de promotion-sans-cascade (désormais corrigé côté backend, mais les données
+  // historiques peuvent contenir ces cas).
+  const entityLevel3Terms = new Set([
+    ...resolvedTypeElement.filter(a => a.level === 3).map(a => a.term),
+    ...resolvedSlotValues.filter(a => a.level === 3).map(a => a.term),
+  ]);
+  const filteredPending = pending.filter(p =>
+    !resolvedKeys.has(`${p.term}\u0000${p.sourceImport || ''}`) &&
+    !entityLevel3Terms.has(p.term)
+  );
 
   // Déplacé en amont (était calculé plus bas, près de la section Pending) pour
   // pouvoir afficher un compteur/lien d'ancrage juste après le badge Entity,
@@ -978,7 +992,9 @@ async function renderPvThesaurusTab() {
   // 08-ANSSI-PG-083-CENTRIC, entity eviden : 5 Pending présents mais jamais
   // remarqués sous 73 lignes Resolved, sans aucun repère de scroll).
   const otherPendingDeduped = (otherPending || []).filter(op =>
-    !resolvedKeys.has(`${op.term}\u0000${op.sourceImport || ''}`));
+    !resolvedKeys.has(`${op.term}\u0000${op.sourceImport || ''}`) &&
+    !entityLevel3Terms.has(op.term)
+  );
 
   const nResolved = resolvedTypeElement.length + resolvedSlotValues.length;
   const nPending  = filteredPending.length;

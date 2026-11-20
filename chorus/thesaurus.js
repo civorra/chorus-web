@@ -630,6 +630,124 @@ function _resolvePendingFromProjectJson(sbPath, shard, term, sourceImport, actio
   return { ok: true, targetShard: projectId, scope: entityId, level: 2 };
 }
 
+// ── Cascade de promotion entity (P-19 fix) ────────────────────────────────
+//
+// Après qu'un terme est promu au Niveau 3 (thesaurus.org § * Aliases) depuis
+// un projet donné, scanner tous les <projId>.thesaurus.json de la même entity
+// et migrer ce terme de § pending → § aliases_type_element (cascade confidence)
+// si le mapping proposé est compatible, ou signaler un conflit dans
+// thesaurus.org § * Conflicts si le mapping proposé est différent.
+//
+// Best-effort : les erreurs sur fichiers individuels ne bloquent jamais la
+// promotion principale. Retourne { cascaded, conflicted } (arrays de projIds).
+
+function _cascadeEntityPromote(sbPath, entity, term, typeElement, slot, value, promotingProjId, today, orgPath) {
+  const cascaded   = [];
+  const conflicted = [];
+
+  try {
+    for (const { projId, path: projPath } of _collectProjectThesauri(sbPath, entity)) {
+      if (projId === promotingProjId) continue;
+
+      const raw = readFileSafe(projPath);
+      if (!raw) continue;
+      let data;
+      try { data = JSON.parse(raw); } catch { continue; }
+
+      const pendingArr = data.pending || [];
+      const idx = pendingArr.findIndex(p => p.term === term);
+      if (idx === -1) continue;
+
+      const entry          = pendingArr[idx];
+      const proposed       = (entry.proposed_mapping || '').trim();
+      // Extrait le type_element depuis "type_element: X ?" ou "type_element: X"
+      const teMatch        = proposed.match(/^type_element:\s*(.+?)\s*\??$/i);
+      const proposedTE     = teMatch ? teMatch[1].trim() : null;
+      const isConflict     = proposedTE && proposedTE !== typeElement;
+      const isCompatible   = !isConflict;
+
+      if (isConflict) {
+        // Conflit : laisser en pending + écrire dans thesaurus.org § * Conflicts
+        conflicted.push(projId);
+        try {
+          const orgContent  = readFileSafe(orgPath) || '';
+          const orgLines    = orgContent.split('\n');
+          const conflRow    = _makeOrgRow([
+            term,
+            `${proposedTE} (${projId})`,
+            `${typeElement} (entity-promoted from ${promotingProjId})`,
+            entry.source_import || '—',
+          ]);
+          const conflBounds = _findOrgSectionBounds(orgLines, /^\*\s+Conflicts?/i);
+          if (conflBounds) {
+            const ins = _findTableInsertionPoint(orgLines, conflBounds.start, conflBounds.end);
+            if (ins) orgLines.splice(ins.lastRowIdx + 1, 0, conflRow);
+            else     orgLines.splice(conflBounds.end, 0, conflRow);
+          } else {
+            // Créer la section * Conflicts si elle n'existe pas encore
+            orgLines.push(
+              '', '* Conflicts',
+              '  Mapping collisions between imports — arbitrage requis.',
+              '',
+              '  | Project term | Existing mapping | Conflicting mapping | Source import |',
+              '  |---|---|---|---|',
+              conflRow
+            );
+          }
+          fs.writeFileSync(orgPath, orgLines.join('\n'), 'utf8');
+        } catch { /* non-bloquant */ }
+        continue;
+      }
+
+      if (isCompatible) {
+        // Compatible : migrer de pending → aliases (cascade confidence)
+        cascaded.push(projId);
+        const cascadeConf = `✅ entity-promoted (cascade from ${promotingProjId} — ${today})`;
+
+        pendingArr.splice(idx, 1);
+        data.pending = pendingArr;
+
+        data.aliases_type_element = data.aliases_type_element || [];
+        const isDupTe = data.aliases_type_element.some(
+          a => a.term === term && a.type_element === typeElement
+        );
+        if (!isDupTe) {
+          data.aliases_type_element.push({
+            term,
+            type_element: typeElement,
+            confidence:   cascadeConf,
+            source_import: entry.source_import || null,
+          });
+        }
+
+        if (slot && value) {
+          data.aliases_slot_values = data.aliases_slot_values || [];
+          const isDupSv = data.aliases_slot_values.some(
+            a => a.term === term && a.slot === slot && a.value === value
+          );
+          if (!isDupSv) {
+            data.aliases_slot_values.push({
+              term,
+              slot:         slot.trim(),
+              value:        value.trim(),
+              confidence:   cascadeConf,
+              source_import: entry.source_import || null,
+            });
+          }
+        }
+
+        if (!data._meta) data._meta = {};
+        data._meta.updated = today;
+        try {
+          fs.writeFileSync(projPath, JSON.stringify(data, null, 2), 'utf8');
+        } catch { /* non-bloquant */ }
+      }
+    }
+  } catch { /* scan failure non-bloquant */ }
+
+  return { cascaded, conflicted };
+}
+
 function resolveThesaurusPending(sbId, shard, term, sourceImport, action, opts = {}) {
   const sbPath   = path.join(SANDBOXES_DIR(), sbId);
   // WEB-027 : lire depuis workspace/<entity>/thesaurus.org (ou legacy agent/thesaurus/)
@@ -785,6 +903,37 @@ function resolveThesaurusPending(sbId, shard, term, sourceImport, action, opts =
       }
 
       fs.writeFileSync(targetShardPath, targetLines.join('\n'), 'utf8');
+
+      // P-19 fix — cascade de la promotion vers les autres projets de l'entity.
+      // Best-effort : ne jamais bloquer la promotion principale si la cascade échoue.
+      if (isEntityPromote && opts.entityId) {
+        try {
+          const cascadeResult = _cascadeEntityPromote(
+            sbPath,
+            opts.entityId,
+            cleanTerm,
+            typeElement,
+            opts.slot ? opts.slot.trim() : null,
+            opts.value ? opts.value.trim() : null,
+            opts.projectId || null,
+            today,
+            targetShardPath
+          );
+          // Log de la cascade (best-effort)
+          if (cascadeResult.cascaded.length || cascadeResult.conflicted.length) {
+            _appendThesaurusLog(sbPath, opts.entityId, opts.projectId, opts.projectName, {
+              date:        today,
+              term:        cleanTerm,
+              action:      `🔄 Cascade promote → ${cascadeResult.cascaded.length} projet(s) mis à jour, ${cascadeResult.conflicted.length} conflit(s)`,
+              typeElement,
+              slot:        opts.slot ? opts.slot.trim() : null,
+              value:       opts.value ? opts.value.trim() : null,
+              shard:       targetShardName,
+              sourceImport: `cascade-${cascadeResult.cascaded.join(',')}`,
+            });
+          }
+        } catch { /* cascade non-bloquante */ }
+      }
     }
 
     // Mise à jour du targetShardName pour le log
