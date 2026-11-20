@@ -360,7 +360,15 @@ function scanSandboxThesaurus(sbPath) {
           sourceImport: a.source_import || null,
           sourceBasename: a.source_import ? res2(a.source_import) : null,
         })),
-        pending: [],
+        // ENG-071 — Pending vit en Niveau 2 (project JSON § "pending"), plus en Niveau 3 entity org.
+        pending: (data.pending || []).map(p => ({
+          term:            p.term,
+          proposed:        p.proposed_mapping || '',
+          flag:            p.flag || '⚠️ _a_confirmer',
+          sourceImport:    p.source_import || null,
+          scope:           null,
+          sourceBasename:  p.source_import ? res2(p.source_import) : null,
+        })),
         outOfScope: (data.out_of_scope || []).map(a => ({ term: a.term, reason: a.reason || '' })),
       });
     }
@@ -484,6 +492,95 @@ function _thesaurusWritePathForShard(sbPath, shard) {
   return newPath;
 }
 
+// ── ENG-071 — Résolution d'une entrée Pending en Niveau 2 (project JSON) ──
+//
+// Appelé par resolveThesaurusPending quand le terme n'est pas trouvé dans
+// thesaurus.org § * Pending (car ENG-071 a déplacé le Pending vers le JSON projet).
+//
+// confirm → retire de data.pending + écrit dans data.aliases_type_element (Niveau 2)
+// reject  → retire de data.pending + écrit dans thesaurus.org § * Out-of-scope (entité)
+
+function _resolvePendingFromProjectJson(sbPath, shard, term, sourceImport, action, opts) {
+  const { projectId, entityId } = opts;
+  const projPath = _projectThesaurusPath(sbPath, entityId, projectId);
+  const raw      = readFileSafe(projPath);
+  if (!raw) throw new Error(`Thésaurus projet introuvable : ${projPath}`);
+  let data;
+  try { data = JSON.parse(raw); } catch { throw new Error(`JSON invalide : ${projPath}`); }
+
+  const pendingArr = data.pending || [];
+  const idx = pendingArr.findIndex(p => p.term === term && p.source_import === sourceImport);
+  if (idx === -1) {
+    throw new Error(`Entrée Pending introuvable pour terme="${term}" source="${sourceImport}" dans ${projectId}.thesaurus.json`);
+  }
+
+  const entry = pendingArr[idx];
+  const today = new Date().toISOString().slice(0, 10);
+
+  // Backup JSON avant écriture
+  const backupDir = path.join(sbPath, 'agent', '.backups');
+  fs.mkdirSync(backupDir, { recursive: true });
+  const ts = new Date().toISOString().replace(/[-:]/g, '').replace('T', '-').slice(0, 15);
+  fs.writeFileSync(path.join(backupDir, `${projectId}.thesaurus.json.bak-${ts}`), raw, 'utf8');
+
+  // Supprimer de pending
+  pendingArr.splice(idx, 1);
+  data.pending = pendingArr;
+  if (!data._meta) data._meta = {};
+  data._meta.updated = today;
+
+  if (action === 'confirm') {
+    const typeElement = (opts.typeElement || '').trim();
+    if (!typeElement) throw new Error('typeElement requis pour confirmer');
+    const confidence = `✅ confirmed (validated via chorus-web ${today} — project-scoped)`;
+    data.aliases_type_element = data.aliases_type_element || [];
+    const isDup = data.aliases_type_element.some(a => a.term === term && a.type_element === typeElement);
+    if (!isDup) {
+      data.aliases_type_element.push({ term, type_element: typeElement, confidence, source_import: sourceImport });
+    }
+    if (opts.slot && opts.value) {
+      data.aliases_slot_values = data.aliases_slot_values || [];
+      const isDupSv = data.aliases_slot_values.some(a => a.term === term && a.slot === opts.slot && a.value === opts.value);
+      if (!isDupSv) {
+        data.aliases_slot_values.push({ term, slot: opts.slot.trim(), value: opts.value.trim(), confidence, source_import: sourceImport });
+      }
+    }
+    fs.writeFileSync(projPath, JSON.stringify(data, null, 2), 'utf8');
+
+  } else if (action === 'reject') {
+    // Out-of-scope → thesaurus.org entité (entity-scoped)
+    fs.writeFileSync(projPath, JSON.stringify(data, null, 2), 'utf8');
+    const orgPath    = _thesaurusWritePathForShard(sbPath, shard);
+    const orgContent = readFileSafe(orgPath) || '';
+    const orgLines   = orgContent.split('\n');
+    const outBounds  = _findOrgSectionBounds(orgLines, /^\*\s+Out-of-scope/i);
+    if (outBounds) {
+      const newRow = _makeOrgRow([term, entry.proposed_mapping || entry.note || '—', '—', sourceImport]);
+      const insertion = _findTableInsertionPoint(orgLines, outBounds.start, outBounds.end);
+      if (insertion) orgLines.splice(insertion.lastRowIdx + 1, 0, newRow);
+      else           orgLines.splice(outBounds.end, 0, newRow);
+      fs.writeFileSync(orgPath, orgLines.join('\n'), 'utf8');
+    }
+  } else {
+    throw new Error(`action invalide : ${action}`);
+  }
+
+  // Journal (best-effort)
+  try {
+    _appendThesaurusLog(sbPath, entityId, projectId, opts.projectName, {
+      date: today, term,
+      action:      action === 'confirm' ? '✅ Confirmé (Niveau 2)' : '❌ Rejeté (hors-périmètre)',
+      typeElement: action === 'confirm' ? (opts.typeElement || '').trim() : null,
+      slot:        action === 'confirm' ? (opts.slot  || '').trim() || null : null,
+      value:       action === 'confirm' ? (opts.value || '').trim() || null : null,
+      shard:       projectId,
+      sourceImport,
+    });
+  } catch { /* non-bloquant */ }
+
+  return { ok: true, targetShard: projectId, scope: entityId, level: 2 };
+}
+
 function resolveThesaurusPending(sbId, shard, term, sourceImport, action, opts = {}) {
   const sbPath   = path.join(SANDBOXES_DIR(), sbId);
   // WEB-027 : lire depuis workspace/<entity>/thesaurus.org (ou legacy agent/thesaurus/)
@@ -511,6 +608,11 @@ function resolveThesaurusPending(sbId, shard, term, sourceImport, action, opts =
     }
   }
   if (pendingRowIdx === -1) {
+    // ENG-071 — Pending vit désormais en Niveau 2 (project JSON § "pending").
+    // Si introuvable dans thesaurus.org § * Pending, tenter le fallback JSON.
+    if (opts.projectId && opts.entityId) {
+      return _resolvePendingFromProjectJson(sbPath, shard, term, sourceImport, action, opts);
+    }
     throw new Error(`Ligne Pending introuvable pour terme="${term}" source="${sourceImport}" dans ${shard}.org`);
   }
 
