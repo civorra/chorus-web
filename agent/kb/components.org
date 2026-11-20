@@ -128,7 +128,8 @@ Key internals:
 - ~_appendThesaurusLog~ — writes to ~workspace/<entity>/reports/thesaurus-log-<projId>.md~
 
 ~scanSandboxThesaurus~ extracts from thesaurus.org: Aliases (type_element + slot values),
-Pending, Out-of-scope.  **Does NOT extract ~* Conflicts~** — silent accumulation (see P-18).
+Pending, Out-of-scope, **and ~* Conflicts~** (fix P-18 — commit a59bd5d).
+Each level-3 shard now exposes ~conflicts: [{term, existingMapping, newMapping, sourceImport}]~.
 
 ~resolveThesaurusPending~ routing:
 - If term found in ~thesaurus.org § * Pending~ → resolves in-place (Niv 3 org)
@@ -140,8 +141,9 @@ Pending, Out-of-scope.  **Does NOT extract ~* Conflicts~** — silent accumulati
 
 ~unconfirmThesaurusAlias~ routing:
 - Niv 2 (projectId + entityId provided, alias in ~<projId>.thesaurus.json~):
-  → removes from Niv 2 JSON aliases + **reinserts in thesaurus.org § Pending** (see P-16)
-  → writes org file FIRST, then JSON (atomic order — prevents inconsistent state if FS fails)
+  → removes from Niv 2 JSON ~aliases_*~ + **reinserts in ~<projId>.thesaurus.json § pending~** (fix P-16, ENG-071)
+  → single atomic JSON write (aliases removal + pending insertion in one ~fs.writeFileSync~)
+  → backup JSON to ~agent/.backups/~ before write
   → calls ~_detectProjectJsonDrift~ → returns ~driftedElements~
 - Niv 3 (alias in thesaurus.org): ALWAYS REFUSED (structural guard, see P-03 of pitfalls)
 

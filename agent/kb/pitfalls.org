@@ -314,10 +314,12 @@ Si un ré-import est fait AVANT le thesaurus-assistant : l'import lit ~thesaurus
 et re-génère un ~_a_confirmer~ — comportement correct mais l'entrée n'est pas dans Niveau 2.
 Ne pas confondre avec un bug : c'est un état transitoire prévu, pas une perte de données.
 
-** Fix potentiel (non appliqué)
-~unconfirmThesaurusAlias~ pourrait écrire directement dans ~<projId>.thesaurus.json § "pending"~
-(symétrique de ce que ~_resolvePendingFromProjectJson~ fait dans l'autre sens).
-Décision technique en suspens — voir Open question 1 du rapport cross-thesaurus.
+** Fix appliqué (commit a59bd5d — 2026-11-20)
+~unconfirmThesaurusAlias~ écrit désormais directement dans ~<projId>.thesaurus.json § pending~.
+Transaction atomique : retrait de ~aliases_*~ + ajout en ~pending~ en une seule écriture JSON.
+Guard WEB-032 adapté : déduplication sur ~lv2Data.pending~ au lieu de ~orgLines~.
+Backup JSON maintenu dans ~agent/.backups/~ avant écriture.
+⛔ ~thesaurus.org § * Pending~ n'est plus modifié par ce chemin — ENG-071 respecté.
 
 * P-17 — Project JSON stale après unconfirmThesaurusAlias : ré-import obligatoire
 
@@ -369,7 +371,10 @@ Des conflits terminologiques réels (mappings contradictoires inter-imports) s'a
 silencieusement.  Sans visibilité dans la webapp, l'ingénieur ne les découvre qu'en lisant
 ~thesaurus.org~ manuellement ou en constatant des verdicts incohérents entre projets.
 
-** Potential fix
-Ajouter ~* Conflicts~ à ~extractOrgTable~ dans ~scanSandboxThesaurus~ et exposer un ~conflicts~
-array dans chaque shard retourné.  Un badge "⚠️ N conflits" dans l'onglet Thésaurus suffit
-pour alerter sans bloquer.  Voir Open question 2 du rapport cross-thesaurus.
+** Fix appliqué (commit a59bd5d — 2026-11-20)
+~scanSandboxThesaurus~ extrait désormais ~* Conflicts~ dans les shards Niveau 3 →
+champ ~conflicts: [{term, existingMapping, newMapping, sourceImport}]~ exposé par l'API.
+~chorus-web.js § renderPvThesaurusTab~ affiche :
+- Badge 🔴 "N conflit(s) terminologique(s)" ancré vers la section (visible à côté du badge ⚠️ Pending)
+- Section ~<details open>~ avec tableau terme / mapping existant / nouveau mapping / source import
+Visible uniquement si ~conflicts.length > 0~.
