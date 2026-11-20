@@ -928,6 +928,13 @@ async function renderPvThesaurusTab() {
     const matchedPending  = hasFilter ? allPending.filter(matches) : allPending;
     const otherPending    = hasFilter ? allPending.filter(p => !matches(p)) : [];
 
+    // P-18 fix — collecter les conflits (mapping collision cross-import)
+    // depuis les shards Niveau 3. Les shards Niveau 2 (JSON projet) n'ont
+    // pas de section Conflicts (uniquement thesaurus.org entity-level).
+    const allConflicts = shardsToUse
+      .filter(s => s.level === 3)
+      .flatMap(s => (s.conflicts || []).map(c => ({ ...c, shard: s.shard || s.entity })));
+
     cached = {
       hasFilter,
       hasAnyThesaurus: thesaurus.length > 0,
@@ -937,11 +944,12 @@ async function renderPvThesaurusTab() {
       resolvedSlotValues:  hasFilter ? allSlotValues.filter(matches)  : allSlotValues,
       pending:             matchedPending,
       otherPending,
+      conflicts:           allConflicts,
     };
     _pvThesaurusCache[cacheKey] = cached;
   }
 
-  const { hasFilter, hasAnyThesaurus, entityId, entityIsolated, resolvedTypeElement, resolvedSlotValues, pending, otherPending } = cached;
+  const { hasFilter, hasAnyThesaurus, entityId, entityIsolated, resolvedTypeElement, resolvedSlotValues, pending, otherPending, conflicts } = cached;
 
   if (!hasAnyThesaurus) {
     panel.innerHTML = '<div class="pv-empty">Aucun thesaurus trouvé pour ce sandbox — aucun import avec alignement terminologique n\'a encore été effectué.</div>';
@@ -1004,14 +1012,25 @@ async function renderPvThesaurusTab() {
   // signaler immédiatement l'existence de termes à confirmer sans dépendre
   // du scroll ni d'un Ctrl+F manuel. Cible l'ancre #pv-thes-pending-section
   // posée sur le conteneur de la section Pending plus bas.
-  if (nPendingTotal > 0) {
-    html += `<div style="margin-bottom:12px">
-      <a href="#pv-thes-pending-section" style="display:inline-flex;align-items:center;gap:6px;
+  const nConflicts = (conflicts || []).length;
+  if (nPendingTotal > 0 || nConflicts > 0) {
+    html += `<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px">`;
+    if (nPendingTotal > 0) {
+      html += `<a href="#pv-thes-pending-section" style="display:inline-flex;align-items:center;gap:6px;
           padding:5px 12px;background:var(--warn,#FEBC2E);color:#1c1c1e;font-weight:600;
           font-size:12px;border-radius:6px;text-decoration:none">
         ⚠️ ${nPendingTotal} terme${nPendingTotal > 1 ? 's' : ''} en attente de confirmation — aller à la section
-      </a>
-    </div>`;
+      </a>`;
+    }
+    if (nConflicts > 0) {
+      html += `<a href="#pv-thes-conflicts-section" style="display:inline-flex;align-items:center;gap:6px;
+          padding:5px 12px;background:var(--error,#FF453A);color:#fff;font-weight:600;
+          font-size:12px;border-radius:6px;text-decoration:none"
+          title="Mappings contradictoires entre imports — arbitrage requis">
+        🔴 ${nConflicts} conflit${nConflicts > 1 ? 's' : ''} terminologique${nConflicts > 1 ? 's' : ''} — aller à la section
+      </a>`;
+    }
+    html += `</div>`;
   }
 
   if (!hasFilter) {
@@ -1217,6 +1236,42 @@ async function renderPvThesaurusTab() {
           </td>
         </tr>`;
         }).join('')}
+        </tbody>
+      </table></div>
+    </details>`;
+  }
+
+  // ── P-18 fix — Conflicts section ───────────────────────────────
+  // Affiche les conflits terminologiques cross-import (même terme,
+  // mappings contradictoires entre deux imports distincts).
+  // La section * Conflicts de thesaurus.org est écrite par le skill
+  // chorus-import-project — arbitrage manuel requis (ré-import après
+  // correction du thésaurus).
+  if (nConflicts > 0) {
+    html += `<details id="pv-thes-conflicts-section" open style="margin-bottom:16px;border:1px solid var(--error,#FF453A);border-radius:6px;padding:6px 10px;scroll-margin-top:16px">
+      <summary style="cursor:pointer;font-size:11px;font-weight:600;color:var(--error,#FF453A);text-transform:uppercase;letter-spacing:.06em">
+        🔴 Conflits terminologiques (${nConflicts}) — arbitrage requis
+      </summary>
+      <div style="font-size:11px;color:var(--text-muted);margin:6px 0 10px">
+        Ces termes ont été alignés différemment lors d'imports distincts sur cette entity.
+        Résoudre en choisissant le mapping correct → puis relancer <code>chorus-import-project</code>.
+        Écrits dans <code>workspace/${escapeHtml(entityId||'')}/thesaurus.org § * Conflicts</code>
+        par le skill <code>chorus-import-project</code>.
+      </div>
+      <div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:12px">
+        <thead><tr style="border-bottom:1px solid var(--border)">
+          <th style="text-align:left;padding:4px 8px;color:var(--text-muted);font-weight:600">Terme projet</th>
+          <th style="text-align:left;padding:4px 8px;color:var(--text-muted);font-weight:600">Mapping existant</th>
+          <th style="text-align:left;padding:4px 8px;color:var(--text-muted);font-weight:600">Nouveau mapping (conflit)</th>
+          <th style="text-align:left;padding:4px 8px;color:var(--text-muted);font-weight:600">Source import</th>
+        </tr></thead>
+        <tbody>${(conflicts || []).map(c => `
+          <tr style="border-bottom:1px solid var(--border-light)">
+            <td style="padding:4px 8px;color:var(--text-secondary);font-weight:600">${escapeHtml(c.term || '')}</td>
+            <td style="padding:4px 8px;color:var(--success);font-family:'JetBrains Mono',monospace;font-size:11px">${escapeHtml(c.existingMapping || '—')}</td>
+            <td style="padding:4px 8px;color:var(--error,#FF453A);font-family:'JetBrains Mono',monospace;font-size:11px">${escapeHtml(c.newMapping || '—')}</td>
+            <td style="padding:4px 8px;color:var(--text-muted);font-size:11px">${escapeHtml(c.sourceImport || '—')}</td>
+          </tr>`).join('')}
         </tbody>
       </table></div>
     </details>`;

@@ -368,7 +368,19 @@ function scanSandboxThesaurus(sbPath) {
     const outOfScope = extractOrgTable(content, /^\*\s+Out-of-scope/i)
       .slice(1).map(r => ({ term: r[0], reason: r[1] }));
 
-    return { entity, shard: entity, level: 3, projId: null, aliasesTypeElement, aliasesSlotValues, pending, outOfScope };
+    // P-18 fix — extraire * Conflicts (mapping collision cross-import).
+    // Colonnes : term | existing mapping | new mapping | source import (optionnel)
+    const conflicts = extractOrgTable(content, /^\*\s+Conflicts?/i)
+      .slice(1)
+      .filter(r => r[0] && r[0] !== 'Project term')
+      .map(r => ({
+        term:            r[0] || '',
+        existingMapping: r[1] || '',
+        newMapping:      r[2] || '',
+        sourceImport:    r[3] || null,
+      }));
+
+    return { entity, shard: entity, level: 3, projId: null, aliasesTypeElement, aliasesSlotValues, pending, outOfScope, conflicts };
   });
 
   // ── Niveau 2 — shards projet (workspace/<entity>/<projId>.thesaurus.json) ─
@@ -893,30 +905,19 @@ function unconfirmThesaurusAlias(sbId, shard, term, sourceImport, opts = {}) {
         const slot        = svIdx >= 0 ? svArr[svIdx].slot          : null;
         const value       = svIdx >= 0 ? svArr[svIdx].value         : null;
 
-        // §1 — Vérifier l'existence du .org ET de la section Pending AVANT
-        // toute modification. Sans cette vérification préalable, le JSON projet
-        // pourrait être vidé de son alias sans qu'aucune réinsertion Pending
-        // ne soit possible (perte silencieuse). Symétrie avec le Niveau Entity
-        // qui lève une erreur dans les mêmes cas.
-        const orgPath    = _thesaurusReadPathForShard(sbPath, shard);
-        const orgContent = readFileSafe(orgPath);
-        if (!orgContent) {
-          throw new Error(
-            `Thésaurus entity introuvable (shard="${shard}") — ` +
-            `annulation impossible sans réinsertion Pending garantie.`
-          );
-        }
-        const orgLines = orgContent.split('\n');
-        const pBounds  = _findOrgSectionBounds(orgLines, /^\*\s+Pending/i);
-        if (!pBounds) {
-          throw new Error(
-            `Section "Pending" introuvable dans ${shard} — ` +
-            `annulation impossible sans réinsertion garantie.`
-          );
-        }
+        // Fix P-16 (ENG-071) — réinsertion Pending dans le JSON projet (Niveau 2)
+        // au lieu de thesaurus.org § * Pending (Niveau 3). Conforme à ENG-071 :
+        // "Pending JAMAIS dans thesaurus.org § * Pending — toujours en Niveau 2".
+        //
+        // Avantage supplémentaire : toute la transaction (retrait aliases + ajout
+        // pending) se fait en une seule écriture JSON atomique — plus besoin d'écrire
+        // le .org en premier pour garantir la cohérence.
 
-        // §1 — Backup du JSON projet avant toute écriture (symétrie avec le
-        // backup .org du Niveau Entity — même convention agent/.backups/).
+        const proposed   = typeElement
+          ? `type_element: ${typeElement} ?`
+          : (slot ? `${slot}: ${value} ?` : '');
+
+        // Backup du JSON projet avant toute modification.
         const backupDir = path.join(sbPath, 'agent', '.backups');
         fs.mkdirSync(backupDir, { recursive: true });
         const ts = new Date().toISOString().replace(/[-:]/g, '').replace('T', '-').slice(0, 15);
@@ -927,34 +928,29 @@ function unconfirmThesaurusAlias(sbId, shard, term, sourceImport, opts = {}) {
           );
         }
 
-        // §1 — Écrire le .org EN PREMIER (réinsertion Pending), puis le JSON.
-        // Si l'écriture .org échoue (erreur FS), le JSON reste intact →
-        // état cohérent. L'ordre inverse était la source du bug original.
-        const proposed   = typeElement
-          ? `type_element: ${typeElement} ?`
-          : (slot ? `${slot}: ${value} ?` : '');
-        const pendingRow = _makeOrgRow([term, proposed, '⚠️ _a_confirmer', sourceImport, shard]);
-        // Guard WEB-032 — déduplication Pending (Niveau 2).
-        // Si une entrée Pending pour le même terme+slot existe déjà (l'entrée
-        // originale de l'import n'a pas été retirée par ECA lors de la
-        // validation dans Aliases), on ne réinsère pas pour éviter le doublon.
-        const _slotPfx2 = proposed ? proposed.split(':')[0].trim() : '';
-        const _dupExists2 = orgLines.slice(pBounds.start, pBounds.end).some(l => {
-          const t = l.trim();
-          if (!t.startsWith('|') || /^\|[-+]+\|?$/.test(t)) return false;
-          const c = t.split('|').slice(1, -1).map(s => s.trim());
-          return c[0] === term && c[1] && c[1].split(':')[0].trim() === _slotPfx2;
-        });
-        if (!_dupExists2) {
-          const ins = _findTableInsertionPoint(orgLines, pBounds.start, pBounds.end);
-          if (ins) orgLines.splice(ins.lastRowIdx + 1, 0, pendingRow);
-          else     orgLines.splice(pBounds.end, 0, pendingRow);
-        }
-        fs.writeFileSync(_thesaurusWritePathForShard(sbPath, shard), orgLines.join('\n'), 'utf8');
+        // Guard WEB-032 (adapté Niveau 2) — déduplication Pending JSON.
+        // Ne pas réinsérer si une entrée pending pour le même terme existe déjà
+        // dans lv2Data.pending (import non retiré, annulation double, etc.).
+        const _pendingArr = lv2Data.pending || [];
+        const _slotPfx2   = proposed ? proposed.split(':')[0].trim() : '';
+        const _dupExists2  = _pendingArr.some(p =>
+          p.term === term && p.source_import === sourceImport &&
+          (p.proposed_mapping || '').split(':')[0].trim() === _slotPfx2
+        );
 
-        // Supprimer du JSON Niveau Projet (après écriture .org réussie).
+        // Supprimer des aliases + ajouter en pending — tout dans le même JSON.
         if (teIdx >= 0) teArr.splice(teIdx, 1);
         if (svIdx >= 0) svArr.splice(svIdx, 1);
+        if (!_dupExists2) {
+          _pendingArr.push({
+            term,
+            proposed_mapping: proposed,
+            flag:         '⚠️ _a_confirmer',
+            source_import: sourceImport,
+            note:         `unconfirmed via chorus-web ${new Date().toISOString().slice(0, 10)}`,
+          });
+        }
+        lv2Data.pending = _pendingArr;
         if (!lv2Data._meta) lv2Data._meta = {};
         lv2Data._meta.updated = new Date().toISOString().slice(0, 10);
         fs.writeFileSync(lv2Path, JSON.stringify(lv2Data, null, 2), 'utf8');
