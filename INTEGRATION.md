@@ -25,7 +25,9 @@ git clone --branch devel https://github.com/civorra/chorus-web ~/Chorus/web
 cd ~/Chorus/web
 ./setup.sh
 #    → clone engine dans ~/Chorus/engine (défaut conventionnel)
-#    → pour un chemin différent : CHORUS_ENGINE_HOME=/autre/chemin ./setup.sh
+#    → pour un chemin différent  : CHORUS_ENGINE_HOME=/autre/chemin ./setup.sh
+#    → pour un fork engine       : CHORUS_ENGINE_REPO=https://github.com/monfork/Chorus.git ./setup.sh
+#    → pour une autre branche    : CHORUS_ENGINE_BRANCH=main ./setup.sh
 
 # 3. Vérifier/éditer .env si nécessaire
 #    setup.sh remplit automatiquement les chemins et guide la clé API
@@ -42,6 +44,11 @@ open http://localhost:3000
 - Clone de `chorus-engine` dans `~/Chorus/engine` (si absent)
 - Création de `.env` depuis `.env.example` avec injection des chemins résolus
 - Détection de `~/.config/anthropic/api_key` et configuration de `ANTHROPIC_API_KEY_FILE`
+
+> **Changer de provider LLM sans rebuild :** éditer `.env` (profil A/B/C ci-dessous)
+> puis `docker compose restart eca-server`. Le fichier `eca-config.json` est monté en
+> volume dans le conteneur et rechargé à chaque démarrage — aucune reconstruction
+> d'image requise.
 
 ---
 
@@ -90,21 +97,52 @@ CHORUS_HOME=~/Chorus
 # SANDBOXES=~/Chorus/sandboxes         # défaut : $CHORUS_HOME/sandboxes
 
 # ── Authentification LLM ─────────────────────────────────────────────────────
-# Option A — Mode OAuth (abonnement Pro/Max, recommandé) :
-#   Aucune variable à définir. setup.sh ne configure rien, ECA utilise OAuth.
+# Profil A — Anthropic Max / Pro (ECA OAuth, recommandé) :
+#   Aucune clé API à définir. ECA utilise OAuth via db.transit.json.
+#   ANTHROPIC_PROVIDER_TYPE=max   # défaut — ne pas modifier sauf profil B/C
 
-# Option B — Mode API key (pay-per-token) :
+# Profil B — GitHub Copilot Enterprise :
+#   Authentifier via Config > Authentification dans la webapp (bouton Copilot).
+#   ECA crée son propre db.transit.json dans le conteneur — aucun mount hôte requis.
+#   Décommenter et ajuster les valeurs suivantes dans .env :
+# ECA_DEFAULT_MODEL=github-copilot/claude-sonnet-5
+# ANTHROPIC_PROVIDER_TYPE=oauth
+# ECA_MODEL_ARCHITECT=github-copilot/claude-sonnet-5
+# ECA_MODEL_CODE=github-copilot/claude-sonnet-5
+# ECA_MODEL_FAST=github-copilot/claude-haiku-4-5
+
+# Profil C — Mode API key Anthropic (pay-per-token) :
 #   Renseigné automatiquement par setup.sh si ~/.config/anthropic/api_key existe.
-#   Sinon, décommenter et renseigner :
+#   Sinon, décommenter :
 # ANTHROPIC_API_KEY_FILE=~/.config/anthropic/api_key
+
+# ── Modèles LLM (optionnel) ───────────────────────────────────────────────────
+# Ces variables contrôlent eca-config.json (monté en volume dans eca-server).
+# Changer de modèle = éditer .env + redémarrer eca-server (pas de rebuild).
+# ECA_DEFAULT_MODEL=anthropic/claude-sonnet-4-6
+# ECA_MODEL_ARCHITECT=anthropic/claude-sonnet-5    # agent architect (thinking étendu)
+# ECA_MODEL_CODE=anthropic/claude-sonnet-4-6       # agent code (défaut)
+# ECA_MODEL_FAST=anthropic/claude-haiku-4-5-20251001  # agent fast (consultation)
 
 # ── Réseau ────────────────────────────────────────────────────────────────────
 PORT=3000
 ECA_REMOTE_PASSWORD=changeme-local-dev   # changer en production
 
-# ── Avancé (optionnel) ────────────────────────────────────────────────────────
-# OAuth client IDs — uniquement si vous enregistrez vos propres OAuth Apps.
+# ── OAuth hôte (optionnel) ────────────────────────────────────────────────────
+# Monte une session OAuth déjà active sur l'hôte (ex. session ECA Emacs) dans
+# le conteneur eca-server, pour éviter une ré-authentification manuelle.
+# Non requis : la webapp permet l'authentification native (Config > Auth).
+# OAUTH_CREDENTIALS=$HOME/.cache/eca/db.transit.json
+
+# ── Webapp ────────────────────────────────────────────────────────────────────
+# Nom du conteneur eca-server (pour /api/auth/reload-eca — restart post-login).
+# Défaut : nommage automatique Compose (<project>-eca-server-1).
+# Vérifier avec : docker ps --format '{{.Names}}' | grep eca
+# ECA_CONTAINER_NAME=web-eca-server-1
+
+# ── OAuth client IDs (avancé) ─────────────────────────────────────────────────
 # Les valeurs par défaut (ECA officiel) fonctionnent pour la plupart des usages.
+# À surcharger uniquement si vous enregistrez vos propres OAuth Apps.
 # ANTHROPIC_OAUTH_CLIENT_ID=...
 # ANTHROPIC_OAUTH_SCOPE=...
 # COPILOT_OAUTH_CLIENT_ID=...
@@ -167,6 +205,24 @@ docker compose logs chorus | grep -A5 "\[entrypoint\]"
 # Vérifier que engine/ est bien monté
 docker compose exec chorus ls /chorus/engine/Makefile.PL
 ```
+
+### ECA ne peut pas se connecter à l'API Anthropic / GitHub depuis le conteneur (VPN actif)
+
+**Symptôme :** opérations IA en erreur (`ECONNREFUSED`, timeout TLS) dès qu'un VPN
+d'entreprise est actif sur l'hôte, alors qu'elles fonctionnent sans VPN.
+
+**Cause :** un ancien correctif figeait `dns: [1.1.1.1, 8.8.8.8]` dans
+`docker-compose.yml`. Les VPN avec split-tunnel filtrent le port 53 vers les
+résolveurs publics — les conteneurs perdent alors toute résolution DNS.
+
+**Solution (déjà appliquée) :** ne pas définir `dns:` dans `docker-compose.yml`. Les
+conteneurs héritent du résolveur de l'hôte, qui bascule correctement entre DNS normal
+et DNS VPN selon le contexte réseau actif.
+
+> Si vous avez forké le `docker-compose.yml` et ajouté `dns:` manuellement,
+> supprimez cette directive pour retrouver la compatibilité VPN.
+
+---
 
 ### Rebuild total (from scratch)
 

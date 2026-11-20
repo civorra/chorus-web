@@ -79,8 +79,11 @@ chorus/                        Sandbox scanning & parsing modules
 eca-client.js                  ECA headless agent client (SSE, chat sessions)
 auth.js, prompts.js            Authentication, LLM prompt templates
 docker-compose.yml             Container deployment (services: eca-server, chorus)
-Dockerfile                     chorus service image (Node + Perl + Python + LibreOffice)
-Dockerfile.eca                 eca-server service image (ECA GraalVM binary)
+Dockerfile                     Multi-stage image (base → chorus / eca-server targets)
+                               base: Perl + Python + LibreOffice tooling (shared)
+                               chorus: Node.js webapp (port 3000)
+                               eca-server: ECA GraalVM headless agent (port 7777)
+eca-config.json                ECA provider config (mounted in eca-server, no rebuild needed)
 chorus-entrypoint.sh           Container startup: make install + npm install + node
 setup.sh                       Host bootstrap: clone engine, create .env
 INTEGRATION.md                 Installation, configuration & troubleshooting guide
