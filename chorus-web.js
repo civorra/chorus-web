@@ -2198,15 +2198,22 @@ function startAuditResolveMapping(projId, entityId) {
   const proj = (PROJECTS[sbId] || []).find(p => p.id === projId);
   const srcFile = proj?.sourceFile || proj?.sourcePath || proj?.path || '';
   const outFile = `workspace/${entityId}/${projId}.json`;
+  // Même projId réutilisé → le fichier Niveau 2 associé porte ce même nom
+  // (cf. startImport() § reimportId branch — rappel 2-niveaux identique).
+  const projThesaurusFile = `workspace/${entityId}/${projId}.thesaurus.json`;
+  const entityThesaurusFile = `workspace/${entityId}/thesaurus.org`;
 
   const cmd = srcFile
     ? `chorus-import-project ${sbId} ${srcFile} --context ${entityId} --out ${outFile} --keep-patches\n`
       + `ℹ️ Résoudre les mappings 🔄 : mettre à jour le thésaurus (global.org ou <client>.org)\n`
-      + `puis relancer chorus-audit-import ${sbId} ${outFile}`
+      + `puis relancer chorus-audit-import ${sbId} ${outFile}\n`
+      + `⛔ Thésaurus — consulter OBLIGATOIREMENT les 2 niveaux avant Phase 3 :\n`
+      + `   • Niveau 2 (projet) : ${projThesaurusFile} — lire en priorité, le créer s'il n'existe pas.\n`
+      + `   • Niveau 3 (entity) : ${entityThesaurusFile} — toujours consulté.`
     : `chorus-audit-import ${sbId} ${outFile}\n`
       + `ℹ️ Résoudre les mappings 🔄 dans le thésaurus, puis relancer chorus-audit-import.`;
 
-  openLevelTerminal('project', { sbId, entityId, projId, projName: proj?.name || projId }, cmd);
+  openLevelTerminal('project', { sbId, entityId, projId, projName: proj?.name || projId, kind: 'reimport-replace' }, cmd);
 }
 
 // ── startAuditEnrichKb ────────────────────────────────────────────────────
@@ -8786,22 +8793,40 @@ function startImport() {
     // Resolved as workspace/<entityId>/<existingProj.id>.json (the flat
     // convention recognised by scanEntity, cf. scanner.js § scanFlatProject).
     const outFile = `workspace/${entityId}/${existingProj.id}.json`;
+    // Même projId réutilisé pour --out → le fichier Niveau 2 associé porte
+    // nécessairement ce nom exact (cf. chorus-import-project.md § "proj_id
+    // dans _meta doit correspondre exactement au stem du fichier JSON produit").
+    const projThesaurusFile = `workspace/${entityId}/${existingProj.id}.thesaurus.json`;
+    const entityThesaurusFile = `workspace/${entityId}/thesaurus.org`;
 
     // Mark existing project as "re-importing" in place — no new entry.
     existingProj.state    = 'importing';
     existingProj.progress = 2;
     renderProjectsTab();
 
+    // ⛔ Rappel explicite des 2 niveaux de thésaurus existants — sans cette
+    // directive, le re-import peut silencieusement ignorer des décisions
+    // déjà actées (Niveau 2 projet ET Niveau 3 entity), voire ne jamais
+    // recréer le fichier Niveau 2 si celui-ci a été supprimé entre-temps
+    // (incident : sandbox 08-ANSSI-PG-083-CENTRIC, entity Apache, reset
+    // manuel 2026-11-20 — .thesaurus.json absent après re-import malgré
+    // 2 nouvelles entrées _a_confirmer).
     const cmd = `chorus-import-project ${sbId} ${sourceFile} --context ${entityId} --out ${outFile}\n`
       + `ℹ️ REMPLACEMENT de "${existingProj.name}" — source et entity inchangées.\n`
       + `⚠️ Ne pas redemander la source : réutilise le document ci-dessus.\n`
-      + `✅ Écrire dans ${outFile} (écrase le fichier existant).`;
+      + `✅ Écrire dans ${outFile} (écrase le fichier existant).\n`
+      + `⛔ Thésaurus — consulter OBLIGATOIREMENT les 2 niveaux avant Phase 3 (§ "How the thesaurus is used in Phase 3") :\n`
+      + `   • Niveau 2 (projet) : ${projThesaurusFile} — lire en priorité, même s'il n'existe pas encore (dans ce cas le créer).\n`
+      + `   • Niveau 3 (entity) : ${entityThesaurusFile} — toujours consulté, quel que soit le projId.\n`
+      + `⛔ Tout terme ⚠️ _a_confirmer nouvellement vu DOIT être écrit dans ${projThesaurusFile} § "pending" ` +
+      `(créer ce fichier s'il n'existe pas) — ne jamais le laisser uniquement dans _import.a_confirmer du JSON projet.`;
 
     openLevelTerminal('project', {
       sbId,
       entityId,
       projId:   existingProj.id,
       projName: existingProj.name,
+      kind:     'reimport-replace',
     }, cmd);
     return;
   }

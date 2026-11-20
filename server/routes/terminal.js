@@ -271,6 +271,42 @@ router.post('/sandboxes/:sbId/terminal', (req, res) => {
         } catch { /* JSON absent ou invalide */ }
       }
 
+      // ── Enrichissement reimport-replace — les 2 niveaux de thésaurus ────
+      // Un re-import "remplacer" (bouton ↺ Re-importer / 🔄 Ré-importer après
+      // thésaurus / ✅ Thésaurus validé → re-import post-assistant) réutilise
+      // le MÊME projId (--out pointe vers le fichier existant) — le fichier
+      // Niveau 2 associé (<projId>.thesaurus.json) porte donc nécessairement
+      // ce même nom et DOIT être relu/réutilisé par chorus-import-project,
+      // au même titre que le thésaurus Niveau 3 (thesaurus.org, entity-wide,
+      // indépendant du projId). Sans cette injection explicite, le LLM peut
+      // silencieusement ignorer des décisions déjà actées aux deux niveaux,
+      // voire ne jamais recréer le fichier Niveau 2 si celui-ci a été
+      // supprimé entre-temps (incident : sandbox 08-ANSSI-PG-083-CENTRIC,
+      // entity Apache, reset manuel 2026-11-20 — .thesaurus.json absent
+      // après re-import malgré 2 nouvelles entrées _a_confirmer).
+      // 'thesaurus-reimport' = déclenché automatiquement par
+      // startThesaurusPostImport() après résolution complète via l'assistant.
+      if ((kind === 'reimport-replace' || kind === 'thesaurus-reimport') && entityId && projId) {
+        try {
+          const sbPath = path.join(chorus.SANDBOXES_DIR(), sbId);
+          const thesFile = path.join(sbPath, 'workspace', entityId, 'thesaurus.org');
+          const thesContent = fs.readFileSync(thesFile, 'utf8');
+          contextBlock += `\n\n[Thésaurus Niveau 3 — entity, ${thesFile}] :\n${thesContent.slice(0, 3000)}`;
+        } catch {
+          contextBlock += `\n\n[Thésaurus Niveau 3 — entity] Fichier absent (workspace/${entityId}/thesaurus.org) — aucune promotion entity existante pour cette entity.`;
+        }
+        try {
+          const sbPath = path.join(chorus.SANDBOXES_DIR(), sbId);
+          const projThesFile = path.join(sbPath, 'workspace', entityId, `${projId}.thesaurus.json`);
+          const projThesContent = fs.readFileSync(projThesFile, 'utf8');
+          contextBlock += `\n\n[Thésaurus Niveau 2 — projet, ${projThesFile}] :\n${projThesContent.slice(0, 3000)}`;
+        } catch {
+          contextBlock += `\n\n[Thésaurus Niveau 2 — projet] Fichier absent (workspace/${entityId}/${projId}.thesaurus.json) — ` +
+            `⛔ RAPPEL : si ce re-import produit au moins une entrée ⚠️ _a_confirmer, ce fichier DOIT être créé ` +
+            `(section "pending") — ne jamais se contenter d'écrire _import.a_confirmer dans le JSON projet.`;
+        }
+      }
+
     } catch (e) { contextBlock = `(contexte indisponible : ${e.message})`; }
 
     // ── chatId isolé par sessionId ─────────────────────────────────────
@@ -399,6 +435,7 @@ router.post('/sandboxes/:sbId/terminal', (req, res) => {
         '⛔ import-report-NNN.org DOIT contenir #+DATE: YYYY-MM-DD ET #+OUTPUT_JSON: workspace/<C>/project-import-<ID>.json — sans ces deux headers le scanner ne peut pas associer le rapport au projet → onglet Imports vide.',
         '⛔ import-report-NNN.org — #+SOURCE: DOIT être un chemin de fichier valide (ex: workspace/<C>/sources/<fichier>-text.md), jamais une description libre ("fusion N fichiers", etc.). En mode Merge/Fusion : utiliser le PREMIER fichier source de la liste. Un #+SOURCE: non-chemin donne sourceBasename invalide → thésaurus filtré → onglet Thésaurus vide.',
         '⛔ _import.source (ou _import.source_file) DOIT être renseigné même en mode Merge — mettre le premier fichier source de la liste. Si absent, le scanner ne peut pas calculer sourceBasename → thésaurus invisible.',
+        '⛔ RE-IMPORT MÊME projId (--out pointe vers un fichier JSON déjà existant, ex: bouton ↺/🔄 Re-importer de la webapp) : le fichier Niveau 2 associé (<projId>.thesaurus.json, même stem que --out) DOIT être lu en priorité ET réutilisé — jamais recréé vide en ignorant son contenu existant. Si ce fichier Niveau 2 n\'existe PAS (supprimé/jamais créé) et que ce re-import produit au moins un ⚠️ _a_confirmer, le CRÉER est OBLIGATOIRE (section "pending") — ne jamais se contenter d\'écrire _import.a_confirmer dans le JSON projet sans le fichier .thesaurus.json correspondant (incident confirmé : sandbox 08-ANSSI-PG-083-CENTRIC, entity Apache, 2026-11-20 — fichier Niveau 2 absent après re-import malgré 2 entrées _a_confirmer nouvelles).',
       ],
     };
 

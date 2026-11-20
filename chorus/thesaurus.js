@@ -168,10 +168,27 @@ function _migrateThesaurusShard(sbPath, entity, legacyFile) {
  * Collecte la liste des entities connues pour ce sandbox.
  * Sources (par ordre de priorité) :
  *  1. workspace/<entity>/thesaurus.org      ← nouveau (WEB-027)
- *  2. agent/thesaurus/<context>.org         ← legacy (pre-WEB-027)
+ *  2. workspace/<entity>/*.thesaurus.json   ← Niveau 2 (projet) — cf. ci-dessous
+ *  3. agent/thesaurus/<context>.org         ← legacy (pre-WEB-027)
  * Les entities "global" du legacy sont gardées comme entité "global" dans
  * les résultats de transition mais ne doivent plus être créées par de
  * nouveaux imports.
+ *
+ * ⛔ Fix (onglet Thésaurus vide après reset manuel de l'entity) : avant ce
+ * correctif, une entity n'était détectée QUE via la présence physique de
+ * `thesaurus.org` (ou son legacy). Si ce fichier est supprimé manuellement
+ * (reset d'entity, nettoyage sandbox) puis qu'un nouveau projet est importé,
+ * chorus-import-project peut créer `<projId>.thesaurus.json` (Niveau 2, avec
+ * des entrées Pending) SANS recréer `thesaurus.org` — l'entity entière
+ * devenait alors invisible au scanner, y compris ses Pending Niveau 2, sans
+ * aucun message d'erreur côté webapp ("Aucun thesaurus trouvé" trompeur,
+ * l'entity existe bel et bien). Un `.thesaurus.json` présent est désormais
+ * un signal suffisant pour détecter l'entity, au même titre que `thesaurus.org`
+ * — avec création à la volée d'un `thesaurus.org` squelette si absent (même
+ * logique que la migration legacy ci-dessous), pour que toute écriture
+ * ultérieure (confirm/reject/promote) ait un fichier cible valide.
+ * (Incident : sandbox 08-ANSSI-PG-083-CENTRIC, entity Apache, reset manuel
+ * 2026-11-20 avant re-import de project-import-1795166275755.)
  */
 function _collectThesaurusEntities(sbPath) {
   const entities = new Map(); // entity → { newPath, legacyPath }
@@ -182,6 +199,26 @@ function _collectThesaurusEntities(sbPath) {
     for (const entry of listDirs(workspacePath)) {
       const p = _thesaurusPathForEntity(sbPath, entry);
       if (fileExists(p)) entities.set(entry, { newPath: p, legacyPath: null });
+    }
+  } catch {}
+
+  // Niveau 2 — workspace/<entity>/*.thesaurus.json sans thesaurus.org associé.
+  // Détecte l'entity même si thesaurus.org a été supprimé/jamais créé ; crée
+  // un thesaurus.org squelette à la volée pour fournir un fichier cible aux
+  // écritures Niveau 3 futures (promotion, out-of-scope, conflicts).
+  try {
+    for (const entry of listDirs(workspacePath)) {
+      if (entities.has(entry)) continue; // déjà détectée via thesaurus.org
+      const entityDir = path.join(workspacePath, entry);
+      let hasProjectThesaurus = false;
+      try {
+        hasProjectThesaurus = fs.readdirSync(entityDir, { withFileTypes: true })
+          .some(f => f.isFile() && f.name.endsWith('.thesaurus.json'));
+      } catch { continue; }
+      if (!hasProjectThesaurus) continue;
+      const newPath = _thesaurusPathForEntity(sbPath, entry);
+      if (!fileExists(newPath)) _createClientShard(newPath, path.basename(sbPath), entry);
+      entities.set(entry, { newPath, legacyPath: null });
     }
   } catch {}
 
