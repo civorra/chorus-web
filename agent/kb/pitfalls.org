@@ -282,3 +282,94 @@ the filepath token changes even though the hash is the same.
 ** Fix in place
 ~normalizeHash(s)~ in ~scanner.js~ takes only the first whitespace-delimited token
 (the hash itself) for comparison.  The filepath portion is ignored.
+
+* P-16 — unconfirmThesaurusAlias (Niveau 2) : réinsertion Pending dans thesaurus.org au lieu du JSON projet
+
+** Symptom
+Après annulation d'un alias Niveau 2 (via le bouton ↩️ de la webapp), l'entrée
+réapparaît dans ~thesaurus.org § * Pending~ (Niveau 3) au lieu de ~<projId>.thesaurus.json § "pending"~.
+Ceci viole la lettre d'ENG-071 : « Pending JAMAIS dans ~thesaurus.org § * Pending~ ».
+
+** Root cause
+~unconfirmThesaurusAlias~ (branche Niveau 2) réinsère la ligne pending dans le fichier
+~.org~ entity (via ~_makeOrgRow~ + ~_findOrgSectionBounds~ + ~fs.writeFileSync(orgPath)~)
+plutôt que dans le JSON projet-scoped.
+
+** Impact réel (end-to-end correct)
+Le comportement global est correct malgré l'état intermédiaire :
+1. Entrée réinsérée dans ~thesaurus.org § * Pending~
+2. Prochain ~chorus-import-project~ lit ~thesaurus.org~ (Phase 1.2b) → retrouve l'entrée en ⚠️
+3. Prochain ~thesaurus-assistant~ draine ~thesaurus.org § * Pending~ → transfère en Niveau 2 "pending" ou résout
+
+~SKILL_CRITICAL_RULES[thesaurus-assistant]~ : « ~thesaurus.org § * Pending~ doit toujours être
+vide à la fin d'une session thesaurus-assistant. »
+
+** Impact intermédiaire
+Entre l'unconfirm et la prochaine session thesaurus-assistant, l'entrée vit dans
+~thesaurus.org § * Pending~ (Niveau 3) au lieu de ~<projId>.thesaurus.json § "pending"~ (Niveau 2).
+Le ~thesaurus-assistant~ doit être lancé pour migrer l'entrée vers Niveau 2.
+
+** Impact if ignored
+Si un ré-import est fait AVANT le thesaurus-assistant : l'import lit ~thesaurus.org § * Pending~
+et re-génère un ~_a_confirmer~ — comportement correct mais l'entrée n'est pas dans Niveau 2.
+Ne pas confondre avec un bug : c'est un état transitoire prévu, pas une perte de données.
+
+** Fix potentiel (non appliqué)
+~unconfirmThesaurusAlias~ pourrait écrire directement dans ~<projId>.thesaurus.json § "pending"~
+(symétrique de ce que ~_resolvePendingFromProjectJson~ fait dans l'autre sens).
+Décision technique en suspens — voir Open question 1 du rapport cross-thesaurus.
+
+* P-17 — Project JSON stale après unconfirmThesaurusAlias : ré-import obligatoire
+
+** Symptom
+Après annulation d'un alias confirmé via la webapp, l'onglet "Résultats" (chorus-check)
+continue d'afficher l'ancien mapping dans les éléments du projet. L'alias est bien annulé
+dans le thésaurus, mais le fichier ~<projId>.json elements[]~ n'est pas modifié.
+
+** Root cause
+~unconfirmThesaurusAlias~ modifie uniquement le thésaurus (Niveau 2 JSON + ~thesaurus.org~).
+Elle ne touche jamais ~<projId>.json~ directement.  Elle appelle ~_detectProjectJsonDrift~
+(qui cherche ~_alignment_source~ contenant le terme annulé dans ~elements[]~) et retourne
+~driftedElements: [elementId, ...]~ pour alerter la webapp — mais c'est informatif seulement.
+
+** Required action
+Un **ré-import obligatoire** est nécessaire pour que les éléments du projet reflètent
+l'état thésaurus mis à jour :
+- Après ré-import, ~chorus-import-project~ lit le thésaurus mis à jour (Phase 1.2b)
+- L'entrée annulée repasse par la résolution ~_a_confirmer~ → nouveau mapping (ou ~_a_confirmer: 1~)
+- Le JSON ~elements[]~ est régénéré avec la nouvelle vérité thésaurus
+
+** ~hasUnintegratedThesaurus~ flag
+~scanFlatProject~ (scanner.js) calcule ~hasUnintegratedThesaurus~ en comparant ~mtime~ du
+JSON projet vs Niveau 2 (~<projId>.thesaurus.json~) et Niveau 3 (~thesaurus.org~).
+Lorsque ~true~, la webapp doit inviter au ré-import — ce flag couvre aussi ce cas.
+
+** Impact if ignored
+L'utilisateur voit un JSON projet incohérent avec le thésaurus (mapping annulé encore présent)
+sans indication claire de la cause.  ~driftedElements~ est retourné par l'API ~unconfirm~
+mais son traitement côté frontend doit afficher une alerte explicite.
+
+* P-18 — Section ~* Conflicts~ de thesaurus.org non extraite par scanSandboxThesaurus
+
+** Symptom
+Des conflits terminologiques s'accumulent dans ~thesaurus.org § * Conflicts~ sans jamais
+être visibles dans la webapp (aucun badge, aucun onglet dédié).
+
+** Root cause
+~scanSandboxThesaurus~ extrait : Aliases type_element, Aliases slot values, Pending, Out-of-scope.
+La section ~* Conflicts~ n'est pas dans la liste des sections extraites.
+
+** When does ~* Conflicts~ get written?
+~chorus-import-project~ (Phase 3 "Immediate thesaurus update") écrit dans ~* Conflicts~ quand
+un terme est déjà présent en Niveau 2/3 avec un **mapping différent** de celui de l'import courant.
+Exemple : premier import dit "RSA-2048 → chiffrement_asymetrique", second dit "RSA-2048 → signature_numerique".
+
+** Impact if ignored
+Des conflits terminologiques réels (mappings contradictoires inter-imports) s'accumulent
+silencieusement.  Sans visibilité dans la webapp, l'ingénieur ne les découvre qu'en lisant
+~thesaurus.org~ manuellement ou en constatant des verdicts incohérents entre projets.
+
+** Potential fix
+Ajouter ~* Conflicts~ à ~extractOrgTable~ dans ~scanSandboxThesaurus~ et exposer un ~conflicts~
+array dans chaque shard retourné.  Un badge "⚠️ N conflits" dans l'onglet Thésaurus suffit
+pour alerter sans bloquer.  Voir Open question 2 du rapport cross-thesaurus.

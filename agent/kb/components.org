@@ -114,6 +114,37 @@ Org-mode and report parsing utilities.  Key exports:
 | ~resolveThesaurusPending~   | Called by ~/api/thesaurus/resolve~ — writes decision to files    |
 | ~unconfirmThesaurusAlias~   | Called by ~/api/thesaurus/unconfirm~ — reverts a confirmed alias |
 
+Key internals:
+- ~_resolveSourceImportBasenameInEntity~ — WEB-028: entity-aware resolver for sequential
+  report IDs (import-report-001…); prevents wrong entity matching in multi-entity sandboxes.
+  Uses entity-local reports/ first, falls back to global scan.
+- ~_collectThesaurusEntities~ — detects entities via thesaurus.org OR ~*.thesaurus.json~
+  (fix: entity remains visible after thesaurus.org reset, see P-08 incident 2026-11-20)
+- ~_resolvePendingFromProjectJson~ — ENG-071 fallback: when pending not in thesaurus.org,
+  looks in ~<projId>.thesaurus.json § pending~ (confirm → Niv 2 aliases; reject → Niv 3 out-of-scope)
+- ~_detectProjectJsonDrift~ — after unconfirm, finds elements[] still using old mapping via
+  ~_alignment_source~ field; returns ~driftedElements~ for webapp alert (see P-17)
+- ~_writeToProjectThesaurus~ — deduplicates before writing to Niv 2 JSON
+- ~_appendThesaurusLog~ — writes to ~workspace/<entity>/reports/thesaurus-log-<projId>.md~
+
+~scanSandboxThesaurus~ extracts from thesaurus.org: Aliases (type_element + slot values),
+Pending, Out-of-scope.  **Does NOT extract ~* Conflicts~** — silent accumulation (see P-18).
+
+~resolveThesaurusPending~ routing:
+- If term found in ~thesaurus.org § * Pending~ → resolves in-place (Niv 3 org)
+  - confirm + projectId present → useLevel2=true → writes to Niv 2 JSON
+  - confirm + no projectId → writes to Niv 3 org Aliases (entity-scoped)
+  - reject → writes to Niv 3 org Out-of-scope
+- If term NOT found in ~thesaurus.org § * Pending~ + projectId available → ENG-071 fallback:
+  calls ~_resolvePendingFromProjectJson~ (reads from Niv 2 JSON § pending)
+
+~unconfirmThesaurusAlias~ routing:
+- Niv 2 (projectId + entityId provided, alias in ~<projId>.thesaurus.json~):
+  → removes from Niv 2 JSON aliases + **reinserts in thesaurus.org § Pending** (see P-16)
+  → writes org file FIRST, then JSON (atomic order — prevents inconsistent state if FS fails)
+  → calls ~_detectProjectJsonDrift~ → returns ~driftedElements~
+- Niv 3 (alias in thesaurus.org): ALWAYS REFUSED (structural guard, see P-03 of pitfalls)
+
 * server/state.js — Shared state
 
 Two singleton objects shared across all routers:

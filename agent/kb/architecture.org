@@ -183,6 +183,77 @@ $SANDBOXES/<sbId>/
 ⛔ The ECA thesaurus-assistant skill MUST NEVER write to thesaurus.org § Aliases —
 entity promotion is exclusively via the webapp 🏢 button (ENG-071).
 
+** Sections per thesaurus file
+
+| Section          | File               | Managed by                                      |
+|------------------+--------------------+-------------------------------------------------|
+| ~* Aliases — type_element~ | Niv 3 .org | Webapp 🏢 (entity-promote) + legacy imports  |
+| ~* Aliases — slot values~  | Niv 3 .org | Webapp 🏢 (entity-promote) + legacy imports  |
+| ~* Pending~      | Niv 3 .org         | Legacy pre-ENG-071 · ~unconfirmThesaurusAlias~ transitoire |
+| ~* Out-of-scope~ | Niv 3 .org         | Skill (reject decision) · ~resolveThesaurusPending(reject)~ |
+| ~* Conflicts~    | Niv 3 .org         | Skill (mapping collision cross-import) — **⚠️ non extrait par scanSandboxThesaurus** |
+| ~aliases_type_element~ | Niv 2 JSON  | Skill / ~resolveThesaurusPending(confirm)~ (projet)  |
+| ~aliases_slot_values~  | Niv 2 JSON  | Skill / ~resolveThesaurusPending(confirm)~ (projet)  |
+| ~pending~         | Niv 2 JSON         | Skill (ENG-071) — toute nouvelle entrée ⚠️           |
+| ~out_of_scope~    | Niv 2 JSON         | ~_resolvePendingFromProjectJson(reject)~              |
+
+** Thesaurus lifecycle (contraintes de cohérence)
+
+#+BEGIN_EXAMPLE
+1. Premier import
+   chorus-import-project Phase 3
+   → ✅ certain    → Niveau 2 JSON § aliases_type_element / aliases_slot_values
+   → ⚠️ nouveau    → Niveau 2 JSON § pending   (⛔ JAMAIS thesaurus.org § Pending — ENG-071)
+   → ⬜ hors-pér.  → Niveau 3 org § Out-of-scope
+   → ⚠️ conflit    → Niveau 3 org § Conflicts  (⚠️ invisible dans la webapp — P-18)
+
+2. Résolution manuelle webapp (onglet Thésaurus)
+   a) Via "Assistant" (thesaurus-assistant ECA skill)
+      → ✅ Confirmer → Niveau 2 JSON § aliases  (⛔ JAMAIS thesaurus.org § Aliases)
+      → ⬜ Hors périmètre → Niveau 3 org § Out-of-scope
+      → ⏭️ Passer  → reste dans Niveau 2 JSON § pending
+   b) Via confirmation unitaire (webapp resolveThesaurusPending)
+      → ✅ Confirmer (projet) → Niveau 2 JSON § aliases  (useLevel2=true)
+      → ✅ Confirmer (entity) → Niveau 3 org § Aliases  (entityPromote=true)
+      → ❌ Rejeter → Niveau 3 org § Out-of-scope
+
+3. Promotion entity (bouton 🏢 — irréversible)
+   → Niveau 3 org § Aliases — IMMUABLE (guard structurel dans unconfirmThesaurusAlias)
+   → ⛔ Jamais annulable depuis la webapp une fois promu
+
+4. Annulation d'un alias confirmé (bouton ↩️)
+   → Niveau 2 : supprimé de Niveau 2 JSON § aliases
+                + réinséré dans Niveau 3 org § Pending  ← état transitoire (voir P-16)
+                + _detectProjectJsonDrift → driftedElements retourné (voir P-17)
+   → Niveau 3 : REFUSÉ (guard structurel — entity-promoted = définitif)
+
+5. Ré-import (obligatoire pour refléter les changements thésaurus dans le JSON projet)
+   → Phase 1.2b lit thesaurus.org § Aliases + Niveau 2 JSON § aliases → appliqués à ✅ confiance
+   → Phase 1.2b lit thesaurus.org § Pending → traités comme ⚠️ (incluant les entrées issues de unconfirm)
+   → Niveau 2 JSON § pending → traités via _a_confirmer tier logic
+   → Produit un JSON projet elements[] à jour avec l'état thésaurus courant
+
+   ⚠️ RÈGLE : tout changement thésaurus (confirm/unconfirm/promote) n'est visible dans
+   elements[] du JSON projet QU'APRÈS un ré-import. hasUnintegratedThesaurus=true signal.
+
+6. Thesaurus-assistant (fin de session obligatoire)
+   → Draine thesaurus.org § Pending : résout ou transfère vers Niveau 2 JSON § pending
+   → Garantit que thesaurus.org § Pending est vide à la fin (ENG-071 restauré)
+#+END_EXAMPLE
+
+** Pending dual-source (thesaurus.org + JSON projet)
+
+Après ENG-071, les entrées Pending doivent être en Niveau 2 JSON.  En pratique deux
+sources coexistent et le ~thesaurus-assistant~ doit les deux drainer :
+
+| Source | Origine | État |
+|--------+---------+------|
+| ~<projId>.thesaurus.json § pending~ | Import post-ENG-071 | Nominal (ENG-071 compliant) |
+| ~thesaurus.org § * Pending~ | Legacy pre-ENG-071 · ~unconfirmThesaurusAlias~ | Transitoire (voir P-16) |
+
+Le ~thesaurus-assistant~ garantit qu'à la fin de chaque session, ~thesaurus.org § * Pending~
+est vide — les entrées non résolues y sont transférées vers ~<projId>.thesaurus.json § pending~.
+
 * Docker deployment
 
 ~docker-compose.yml~ defines two services:
