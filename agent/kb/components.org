@@ -275,6 +275,33 @@ Handles project-level operations: chorus-import-project, chorus-check,
 chorus-complete-report, project creation/deletion, label update.
 Builds full ECA prompts with ~CHORUS_HOME~ and ~ENGINE_AGENTS_MD~ path hints.
 
+** Re-import entry points — options chorus-import-project
+
+Three distinct paths trigger a re-import of an existing project.  Options differ intentionally:
+
+| Entry point | Trigger | Command options | ~kind~ | ~--keep-patches~ |
+|-------------+---------+-----------------+--------+-----------------|
+| ~startThesaurusPostImport~ | Automatic after thesaurus-assistant drains all Pending | ~--context <entity> --out <projId>.json --keep-patches~ | ~thesaurus-reimport~ | ✅ always |
+| ~startAuditResolveMapping~ | Button "🔄 Ré-importer après thésaurus" (Aperçu, ~gapsMapping > 0~ + ~hasUnintegratedThesaurus~) | ~--context <entity> --out <projId>.json --keep-patches~ | ~reimport-replace~ | ✅ always |
+| Modal ↺ — same ~projId~ | User clicks ↺ Remplacer on an existing project in the import modal | ~--context <entity> --out <projId>.json~ | ~reimport-replace~ | ❌ none |
+
+**Why the modal ↺ intentionally omits ~--keep-patches~:**
+Per ~chorus-import-project.md § Patch replay~:
+- Interactive session (user present) + no flag → ECA asks via ~eca__ask_user~: replay or discard?
+- Sub-agent / no user → fail-safe: ~--keep-patches~ automatically
+
+The modal ↺ is a deliberate user action — the user is present, the terminal is interactive,
+~eca__ask_user~ is available.  ECA will ask about prior patches → correct behaviour.
+The thesaurus-driven re-imports use ~--keep-patches~ because they are automated / purpose-driven
+(integrating thesaurus decisions) and patches on other elements are unrelated.
+
+**Options never used in any re-import path:** ~--batch~, ~--check-fidelity~, ~--discard-patches~.
+
+**Thesaurus hints injected by ~terminal.js~ context block** (both ~reimport-replace~ + ~thesaurus-reimport~):
+Niv2 (~<projId>.thesaurus.json~) and Niv3 (~thesaurus.org~) content injected + explicit reminder
+to read both levels before Phase 3.  ~startAuditResolveMapping~ additionally appends file paths
+of both thesaurus files as named reminders in the ECA message.
+
 * server/routes/thesaurus.js — Alias resolution
 
 Exposes the thesaurus resolution API used by the webapp Thesaurus tab:
