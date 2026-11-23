@@ -46,3 +46,5 @@ Whenever a JS source file is significantly modified, update the relevant
 | Trigger | Type | Skill | Agent |
 |---|---|---|---|
 | `deep-webapp [<focus>]` | command | `./agent/skills/deep-webapp.md` — deep implementation analysis of chorus-web JS sources; maps internal data flows, documents non-obvious mechanisms, identifies extension points. Focus options: `eca-client` · `terminal` · `thesaurus` · `auth` · `scanner` *(omit for full analysis)* | `architect` |
+| `deep-cross [<focus>]` | command | `$ENGINE/agent/skills/deep-chorus.md` **then** `./agent/skills/deep-webapp.md` → cross-layer deep analysis (Engine Perl + Web Node.js): integration boundary, data contracts, error propagation, KB/state consistency, extension points. Focus options: `eca-bridge` · `pipeline` · `auth` · `thesaurus` *(omit for full cross-layer analysis)* | `architect` |
+| `skills [--all]` | meta | `eca__directory_tree $WEBAPP/agent/skills/` → name + status `✅` loaded / `○` available. **Complète la liste de `$ENGINE/agent/skills/`** — afficher les deux répertoires ensemble. Sans `--all` : sous-skills masqués (aucun actuellement dans `$WEBAPP`). | `fast` |
